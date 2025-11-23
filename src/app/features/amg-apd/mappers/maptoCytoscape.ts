@@ -1,82 +1,203 @@
-import { ElementDefinition, Stylesheet } from "cytoscape";
-import { AnalysisResult, Detection } from "@/app/features/amg-apd/types";
-import { KIND_COLOR } from "@/app/features/amg-apd/utils/colors";
+import type { ElementDefinition } from "cytoscape";
+import type {
+  AnalysisResult,
+  Detection,
+  DetectionKind,
+  Severity,
+} from "@/app/features/amg-apd/types";
+import {
+  NODE_KIND_COLOR,
+  DETECTION_KIND_COLOR,
+} from "@/app/features/amg-apd/utils/colors";
 
-export function toElements(data: AnalysisResult): ElementDefinition[] {
-  const elements: ElementDefinition[] = [];
-  const { graph, detections } = data;
+// Allow function values in style (which StylesheetCSS wouldn't)
+type StylesheetLike = Array<{
+  selector: string;
+  style: Record<string, any>;
+}>;
 
-  // nodes
-  Object.values(graph.nodes).forEach((n) => {
-    elements.push({
-      data: { id: n.id, label: n.name, kind: n.kind }
-    });
-  });
+const severityWeight: Record<Severity, number> = {
+  LOW: 1,
+  MEDIUM: 2,
+  HIGH: 3,
+};
 
-  // edges (keep index to match detections.edges)
-  graph.edges.forEach((e, idx) => {
-    elements.push({
+type ElementMeta = {
+  severity: Severity;
+  kinds: DetectionKind[];
+};
+
+function upsertMeta(
+  map: Record<string | number, ElementMeta>,
+  key: string | number,
+  detection: Detection
+) {
+  const existing = map[key];
+  if (!existing) {
+    map[key] = { severity: detection.severity, kinds: [detection.kind] };
+    return;
+  }
+
+  if (severityWeight[detection.severity] > severityWeight[existing.severity]) {
+    existing.severity = detection.severity;
+  }
+  if (!existing.kinds.includes(detection.kind)) {
+    existing.kinds.push(detection.kind);
+  }
+}
+
+// ✅ Accept possibly-undefined result
+export function toElements(data?: AnalysisResult): ElementDefinition[] {
+  const nodesObj = data?.graph?.nodes ?? {};
+  const edgesArr = data?.graph?.edges ?? [];
+  const detections = data?.detections ?? [];
+
+  const nodeMeta: Record<string, ElementMeta> = {};
+  const edgeMeta: Record<number, ElementMeta> = {};
+
+  // Build maps of which nodes/edges are affected by which detections
+  for (const det of detections as Detection[]) {
+    if (det.nodes) {
+      for (const nodeId of det.nodes) {
+        upsertMeta(nodeMeta, nodeId, det);
+      }
+    }
+    if (det.edges) {
+      for (const edgeIndex of det.edges) {
+        upsertMeta(edgeMeta, edgeIndex, det);
+      }
+    }
+  }
+
+  const nodeEntries = Object.entries(nodesObj) as [string, any][];
+
+  const nodes: ElementDefinition[] = nodeEntries.map(([id, n]) => {
+    const meta = nodeMeta[id];
+    const primaryDetectionKind = meta?.kinds?.[0];
+
+    return {
       data: {
-        id: `e${idx}`,
-        source: e.from,
-        target: e.to,
-        kind: e.kind,
-        index: idx,
+        id,
+        label: n?.name ?? id,
+        kind: n?.kind ?? "SERVICE",
+        severity: meta?.severity ?? null,
+        primaryDetectionKind: primaryDetectionKind ?? null,
+        detectionKinds: meta?.kinds ?? [],
       },
-    });
+      classes: [
+        (n?.kind ?? "SERVICE").toLowerCase(),
+        meta ? "has-detection" : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
   });
 
-  // attach flags from detections
-  const nodeFlags = new Map<string, string[]>();
-  const edgeFlags = new Map<number, { kind: string; sev: Detection["severity"] }[]>();
+  const edges: ElementDefinition[] = (edgesArr as any[]).map((e, i) => {
+    const meta = edgeMeta[i];
+    const primaryDetectionKind = meta?.kinds?.[0];
 
-  detections.forEach((d) => {
-    d.nodes?.forEach((nid) => nodeFlags.set(nid, [...(nodeFlags.get(nid) ?? []), d.kind]));
-    d.edges?.forEach((i) => {
-      const arr = edgeFlags.get(i) ?? [];
-      arr.push({ kind: d.kind, sev: d.severity });
-      edgeFlags.set(i, arr);
-    });
-  });
-
-  elements.forEach((el) => {
-    if (el.data.index !== undefined) {
-      const f = edgeFlags.get(el.data.index) ?? [];
-      el.data.flags = f.map((x) => x.kind);
-      el.data.sev = f.map((x) => x.sev).sort().pop() ?? "LOW";
+    let label = e?.kind ?? "";
+    if (e?.kind === "CALLS") {
+      const count = e?.attrs?.count ?? 1;
+      const rpm = e?.attrs?.rate_per_min ?? 0;
+      label = `calls (${count} ep), ${rpm}rpm`;
     }
-    // tag nodes too
-    if (graph.nodes[el.data.id]) {
-      (el.data as any).flags = nodeFlags.get(el.data.id) ?? [];
-    }
+
+    return {
+      data: {
+        id: `e${i}`,
+        source: e?.from,
+        target: e?.to,
+        label,
+        kind: e?.kind ?? "",
+        edgeIndex: i,
+        severity: meta?.severity ?? null,
+        primaryDetectionKind: primaryDetectionKind ?? null,
+        detectionKinds: meta?.kinds ?? [],
+      },
+      classes: [
+        (e?.kind ?? "").toLowerCase(),
+        meta ? "has-detection-edge" : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
   });
 
-  return elements;
+  return [...nodes, ...edges];
 }
 
-export function styles(): Stylesheet[] {
-  return [
-    {
-      selector: "node",
-      style: {
-        "background-color": "#0ea5e9",
-        "label": "data(label)",
-        "color": "#0f172a",
-        "font-size": "10px",
-        "text-wrap": "wrap",
-        "text-max-width": "120px",
-        "border-color": "#94a3b8",
-        "border-width": 1,
+export const styles: StylesheetLike = [
+  {
+    selector: "node",
+    style: {
+      "background-color": (ele: any) => {
+        const kind = ele.data("kind") as keyof typeof NODE_KIND_COLOR;
+        return NODE_KIND_COLOR[kind] ?? "#e5e7eb";
       },
+      label: "data(label)",
+      "text-valign": "center",
+      "text-halign": "center",
+      "font-size": 12,
+      color: "#0f172a",
+      "border-width": (ele: any) => {
+        const severity = ele.data("severity") as Severity | null;
+        if (!severity) return 1;
+        return severity === "HIGH" ? 4 : severity === "MEDIUM" ? 3 : 2;
+      },
+      "border-color": (ele: any) => {
+        const k = ele.data("primaryDetectionKind") as
+          | keyof typeof DETECTION_KIND_COLOR
+          | null;
+        return k ? DETECTION_KIND_COLOR[k] : "#94a3b8";
+      },
+      shape: (ele: any) => {
+        const kind = ele.data("kind") as string;
+        return kind === "DATABASE" ? "ellipse" : "round-rectangle";
+      },
+      padding: "6px",
     },
-    { selector: 'node[kind = "DATABASE"]', style: { "shape": "round-rectangle", "background-color": "#60a5fa" } },
-    { selector: "edge", style: { "line-color": "#64748b", "width": 2, "target-arrow-shape": "triangle", "target-arrow-color": "#64748b", "curve-style": "bezier" } },
-    // heat-coded edges by rule
-    ...Object.entries(KIND_COLOR).map(([kind, color]) => ({
-      selector: `edge[flags @ "${kind}"]`,
-      style: { "line-color": color, "target-arrow-color": color, "width": 4, "z-index": 9 },
-    })),
-    // ring around implicated nodes
-    { selector: 'node[flags][flags != "" ]', style: { "border-width": 4, "border-color": "#ef4444" } },
-  ];
-}
+  },
+  {
+    selector: "edge",
+    style: {
+      "curve-style": "bezier",
+      "target-arrow-shape": "triangle",
+      "line-color": (ele: any) => {
+        const k = ele.data("primaryDetectionKind") as
+          | keyof typeof DETECTION_KIND_COLOR
+          | null;
+        if (k) return DETECTION_KIND_COLOR[k];
+        const kind = ele.data("kind") as string;
+        if (kind === "WRITES") return "#ea580c";
+        return "#94a3b8";
+      },
+      "target-arrow-color": (ele: any) => {
+        const k = ele.data("primaryDetectionKind") as
+          | keyof typeof DETECTION_KIND_COLOR
+          | null;
+        if (k) return DETECTION_KIND_COLOR[k];
+        const kind = ele.data("kind") as string;
+        if (kind === "WRITES") return "#ea580c";
+        return "#94a3b8";
+      },
+      width: (ele: any) => {
+        const severity = ele.data("severity") as Severity | null;
+        if (!severity) return 2;
+        return severity === "HIGH" ? 5 : severity === "MEDIUM" ? 4 : 3;
+      },
+      label: "data(label)",
+      "font-size": 10,
+      "text-background-color": "#ffffff",
+      "text-background-opacity": 1,
+      "text-background-padding": 2,
+    },
+  },
+  {
+    selector: "edge.reads",
+    style: {
+      "line-style": "dashed",
+    },
+  },
+];

@@ -28,9 +28,11 @@ export type DetectionKind =
   | "cross_db_read"
   | "chatty_calls";
 
+export type Severity = "LOW" | "MEDIUM" | "HIGH";
+
 export interface Detection {
   kind: DetectionKind;
-  severity: "LOW" | "MEDIUM" | "HIGH";
+  severity: Severity;
   title: string;
   summary?: string;
   nodes?: string[];
