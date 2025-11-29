@@ -137,13 +137,17 @@ export const styles: StylesheetLike = [
         return NODE_KIND_COLOR[kind] ?? "#e5e7eb";
       },
       label: "data(label)",
+      "text-wrap": "wrap",
+      "text-max-width": 140,
       "text-valign": "center",
       "text-halign": "center",
-      "font-size": 12,
+      "text-margin-y": 2,
+      "font-size": 14,
+      "min-zoomed-font-size": 8,
       color: "#0f172a",
       "border-width": (ele: any) => {
         const severity = ele.data("severity") as Severity | null;
-        if (!severity) return 1;
+        if (!severity) return 1.5;
         return severity === "HIGH" ? 4 : severity === "MEDIUM" ? 3 : 2;
       },
       "border-color": (ele: any) => {
@@ -156,7 +160,33 @@ export const styles: StylesheetLike = [
         const kind = ele.data("kind") as string;
         return kind === "DATABASE" ? "ellipse" : "round-rectangle";
       },
-      padding: "6px",
+      padding: "12px",
+      "background-opacity": 1,
+      "text-background-color": "#ffffff",
+      "text-background-opacity": 0.8,
+      "text-background-padding": 2,
+    },
+  },
+  {
+    selector: "node.has-detection",
+    style: {
+      "border-style": "solid",
+      "border-opacity": 0.95,
+    },
+  },
+  {
+    selector: "node:selected",
+    style: {
+      "border-width": 5,
+      "border-color": "#0f172a",
+      "z-index": 9999,
+    },
+  },
+  {
+    selector: "node:hover",
+    style: {
+      cursor: "pointer",
+      "border-width": 4,
     },
   },
   {
@@ -192,12 +222,26 @@ export const styles: StylesheetLike = [
       "text-background-color": "#ffffff",
       "text-background-opacity": 1,
       "text-background-padding": 2,
+      "min-zoomed-font-size": 7,
     },
   },
   {
     selector: "edge.reads",
     style: {
       "line-style": "dashed",
+    },
+  },
+  {
+    selector: "edge:hover",
+    style: {
+      cursor: "pointer",
+      width: 4,
+    },
+  },
+  {
+    selector: ".has-detection-edge",
+    style: {
+      "line-style": "solid",
     },
   },
 ];

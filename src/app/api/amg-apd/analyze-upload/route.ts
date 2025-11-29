@@ -2,14 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 const BASE = process.env.NEXT_PUBLIC_BACKEND_BASE ?? "http://localhost:8080";
 
-// Optional: quick sanity check in browser
 export async function GET() {
   return NextResponse.json({ ok: true, where: "next: analyze-upload" });
 }
 
-// POST /api/amg-apd/analyze-upload
-// - expects form-data with: file (required), title (optional), out_dir (optional)
-// - forwards YAML text to Go backend /api/v1/amg-apd/analyze-raw
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
