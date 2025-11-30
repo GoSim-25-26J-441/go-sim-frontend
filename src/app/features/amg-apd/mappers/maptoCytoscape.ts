@@ -10,7 +10,6 @@ import {
   DETECTION_KIND_COLOR,
 } from "@/app/features/amg-apd/utils/colors";
 
-// Allow function values in style (which StylesheetCSS wouldn't)
 type StylesheetLike = Array<{
   selector: string;
   style: Record<string, any>;
@@ -46,7 +45,6 @@ function upsertMeta(
   }
 }
 
-// ✅ Accept possibly-undefined result
 export function toElements(data?: AnalysisResult): ElementDefinition[] {
   const nodesObj = data?.graph?.nodes ?? {};
   const edgesArr = data?.graph?.edges ?? [];
@@ -55,7 +53,6 @@ export function toElements(data?: AnalysisResult): ElementDefinition[] {
   const nodeMeta: Record<string, ElementMeta> = {};
   const edgeMeta: Record<number, ElementMeta> = {};
 
-  // Build maps of which nodes/edges are affected by which detections
   for (const det of detections as Detection[]) {
     if (det.nodes) {
       for (const nodeId of det.nodes) {
@@ -145,6 +142,11 @@ export const styles: StylesheetLike = [
       "font-size": 14,
       "min-zoomed-font-size": 8,
       color: "#0f172a",
+
+      width: "label",
+      height: "label",
+      padding: "12px",
+
       "border-width": (ele: any) => {
         const severity = ele.data("severity") as Severity | null;
         if (!severity) return 1.5;
@@ -160,11 +162,7 @@ export const styles: StylesheetLike = [
         const kind = ele.data("kind") as string;
         return kind === "DATABASE" ? "ellipse" : "round-rectangle";
       },
-      padding: "12px",
       "background-opacity": 1,
-      "text-background-color": "#ffffff",
-      "text-background-opacity": 0.8,
-      "text-background-padding": 2,
     },
   },
   {
@@ -194,13 +192,12 @@ export const styles: StylesheetLike = [
     style: {
       "curve-style": "bezier",
       "target-arrow-shape": "triangle",
+
       "line-color": (ele: any) => {
         const k = ele.data("primaryDetectionKind") as
           | keyof typeof DETECTION_KIND_COLOR
           | null;
         if (k) return DETECTION_KIND_COLOR[k];
-        const kind = ele.data("kind") as string;
-        if (kind === "WRITES") return "#ea580c";
         return "#94a3b8";
       },
       "target-arrow-color": (ele: any) => {
@@ -208,10 +205,9 @@ export const styles: StylesheetLike = [
           | keyof typeof DETECTION_KIND_COLOR
           | null;
         if (k) return DETECTION_KIND_COLOR[k];
-        const kind = ele.data("kind") as string;
-        if (kind === "WRITES") return "#ea580c";
         return "#94a3b8";
       },
+
       width: (ele: any) => {
         const severity = ele.data("severity") as Severity | null;
         if (!severity) return 2;

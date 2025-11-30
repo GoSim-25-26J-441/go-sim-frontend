@@ -12,23 +12,31 @@ import {
   toElements,
   styles,
 } from "@/app/features/amg-apd/mappers/mapToCytoscape";
-import type { AnalysisResult, Detection } from "@/app/features/amg-apd/types";
+import type {
+  AnalysisResult,
+  EdgeKind,
+  NodeKind,
+  SelectedItem,
+  EditTool,
+} from "@/app/features/amg-apd/types";
 import ControlPanel, {
   type LayoutName,
+  type GraphStats,
 } from "@/app/features/amg-apd/components/ControlPanel";
+import EditToolbar from "@/app/features/amg-apd/components/EditToolbar";
+import SelectedDetails from "@/app/features/amg-apd/components/SelectedDetails";
+import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import {
+  validateGraphForSave,
+  exportGraphToYaml,
+} from "@/app/features/amg-apd/utils/graphEditUtils";
 
 cytoscape.use(dagre);
 cytoscape.use(coseBilkent);
 cytoscape.use(cola);
 cytoscape.use(elk);
 
-type Selected =
-  | { type: "node"; data: any }
-  | { type: "edge"; data: any }
-  | null;
-
 export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
-  // Guard when no graph is loaded yet
   if (!data?.graph) {
     return (
       <div className="border rounded p-4 text-sm text-slate-600 bg-white shadow-sm">
@@ -39,20 +47,52 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
 
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [layoutName, setLayoutName] = useState<LayoutName>("dagre");
-  const [selected, setSelected] = useState<Selected>(null);
+  const [selected, setSelected] = useState<SelectedItem>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [tool, setTool] = useState<EditTool>("select");
+  const [pendingSource, setPendingSource] = useState<string | null>(null);
+
+  const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
+
+  const [stats, setStats] = useState<GraphStats>(() =>
+    computeStatsFromData(data)
+  );
 
   const elements = useMemo(() => toElements(data), [data]);
 
   const layout =
     layoutName === "dagre"
-      ? { name: "dagre", padding: 50, rankDir: "LR" }
+      ? {
+          name: "dagre",
+          padding: 80,
+          rankDir: "LR",
+          rankSep: 120,
+          nodeSep: 80,
+          edgeSep: 80,
+        }
       : layoutName === "cose-bilkent"
-      ? { name: "cose-bilkent", animate: false }
+      ? {
+          name: "cose-bilkent",
+          animate: false,
+          nodeRepulsion: 4500,
+          idealEdgeLength: 150,
+        }
       : layoutName === "cola"
-      ? { name: "cola", fit: true }
-      : { name: "elk", elk: { "elk.direction": "RIGHT" } };
+      ? {
+          name: "cola",
+          fit: true,
+          nodeSpacing: 40,
+          edgeLengthVal: 120,
+        }
+      : {
+          name: "elk",
+          elk: {
+            "elk.direction": "RIGHT",
+            "elk.layered.spacing.nodeNodeBetweenLayers": 80,
+            "elk.spacing.nodeNode": 60,
+          },
+        };
 
-  // Fit graph on data / layout change
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -60,20 +100,112 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
     cy.fit();
   }, [elements, layoutName]);
 
-  // Click handlers for node/edge/background
+  useEffect(() => {
+    setStats(computeStatsFromData(data));
+  }, [data]);
+
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
 
     const onNodeTap = (evt: any) => {
-      const node = evt.target;
+      const node = evt.target as cytoscape.NodeSingular;
+
+      if (
+        editMode &&
+        (tool === "connect-calls" ||
+          tool === "connect-reads" ||
+          tool === "connect-writes")
+      ) {
+        const edgeKind: EdgeKind =
+          tool === "connect-calls"
+            ? "CALLS"
+            : tool === "connect-reads"
+            ? "READS"
+            : "WRITES";
+
+        const id = node.id();
+
+        if (!pendingSource) {
+          setPendingSource(id);
+          cy.elements().removeClass("selected");
+          node.addClass("selected");
+        } else if (pendingSource === id) {
+          setPendingSource(null);
+          cy.elements().removeClass("selected");
+        } else {
+          const sourceId = pendingSource;
+          const targetId = id;
+
+          const edgeId = `e-${Date.now().toString(36)}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+
+          let label: string;
+          let attrs: any | undefined;
+
+          if (edgeKind === "CALLS") {
+            const endpointsInput = window.prompt(
+              "Endpoints for this call (comma-separated).\nExample: GET /users/:id, POST /users",
+              ""
+            );
+            const endpoints =
+              endpointsInput
+                ?.split(",")
+                .map((s) => s.trim())
+                .filter(Boolean) ?? [];
+
+            const rpmInput = window.prompt(
+              "Approximate calls per minute (rpm) for this edge?",
+              "0"
+            );
+            let rpm = parseInt(rpmInput ?? "0", 10);
+            if (Number.isNaN(rpm) || rpm < 0) rpm = 0;
+
+            attrs = {
+              endpoints,
+              rate_per_min: rpm,
+            };
+
+            if (endpoints.length || rpm > 0) {
+              label = `calls (${endpoints.length} ep), ${rpm}rpm`;
+            } else {
+              label = "calls";
+            }
+          } else {
+            label = edgeKind === "READS" ? "reads" : "writes";
+          }
+
+          const edgeData: any = {
+            id: edgeId,
+            source: sourceId,
+            target: targetId,
+            kind: edgeKind,
+            label,
+          };
+          if (attrs) {
+            edgeData.attrs = attrs;
+          }
+
+          cy.add({
+            group: "edges",
+            data: edgeData,
+          });
+
+          setPendingSource(null);
+          cy.elements().removeClass("selected");
+          recomputeStats();
+        }
+        return;
+      }
+
       cy.elements().removeClass("selected");
       node.addClass("selected");
       setSelected({ type: "node", data: node.data() });
     };
 
     const onEdgeTap = (evt: any) => {
-      const edge = evt.target;
+      const edge = evt.target as cytoscape.EdgeSingular;
       cy.elements().removeClass("selected");
       edge.addClass("selected");
       setSelected({ type: "edge", data: edge.data() });
@@ -81,8 +213,36 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
 
     const onBgTap = (evt: any) => {
       if (evt.target === cy) {
+        if (editMode && (tool === "add-service" || tool === "add-database")) {
+          const pos = evt.position;
+          const idBase = tool === "add-service" ? "service" : "db";
+          const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
+            .toString(36)
+            .slice(2, 6)}`;
+          const label = tool === "add-service" ? "new-service" : "new-database";
+          const kind: NodeKind =
+            tool === "add-service" ? "SERVICE" : "DATABASE";
+
+          cy.add({
+            group: "nodes",
+            data: { id, label, kind },
+            position: pos,
+          });
+
+          const node = cy.getElementById(id);
+          if (!node.empty()) {
+            cy.elements().removeClass("selected");
+            node.addClass("selected");
+            setSelected({ type: "node", data: node.data() });
+          }
+
+          recomputeStats();
+          return;
+        }
+
         cy.elements().removeClass("selected");
         setSelected(null);
+        setPendingSource(null);
       }
     };
 
@@ -95,12 +255,85 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
       cy.off("tap", "edge", onEdgeTap);
       cy.off("tap", onBgTap);
     };
-  }, []);
+  }, [editMode, tool, pendingSource, data]);
+
+  function recomputeStats() {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    const nodes = cy.nodes();
+    const services = nodes.filter((n) => n.data("kind") === "SERVICE").length;
+    const databases = nodes.filter((n) => n.data("kind") === "DATABASE").length;
+    const edges = cy.edges().length;
+
+    const detections = Array.isArray(data?.detections)
+      ? data.detections.length
+      : 0;
+
+    setStats({ services, databases, edges, detections });
+  }
 
   function handleFit() {
     const cy = cyRef.current;
     if (!cy) return;
     cy.fit();
+  }
+
+  function handleToggleEdit() {
+    setEditMode((prev) => !prev);
+    setTool("select");
+    setPendingSource(null);
+  }
+
+  function handleDeleteSelected() {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const sel = cy.$(".selected");
+    if (!sel.length) {
+      window.alert("Nothing is selected to delete.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Delete ${sel.length} selected element${
+          sel.length > 1 ? "s" : ""
+        } from the graph?`
+      )
+    ) {
+      return;
+    }
+    sel.remove();
+    setSelected(null);
+    setPendingSource(null);
+    recomputeStats();
+  }
+
+  function handleSaveChanges() {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    const error = validateGraphForSave(cy);
+    if (error) {
+      window.alert(error);
+      return;
+    }
+
+    const yaml = exportGraphToYaml(cy);
+    setEditedYaml(yaml);
+
+    console.log("Edited YAML (frontend only for now):\n", yaml);
+    window.alert(
+      "Updated YAML has been generated and stored in memory.\n\nUse 'Download updated YAML' to download file."
+    );
+  }
+
+  function handleRenameNode(id: string, newLabel: string) {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const node = cy.getElementById(id);
+    if (!node.empty()) {
+      node.data("label", newLabel);
+    }
   }
 
   return (
@@ -109,10 +342,22 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
         layoutName={layoutName}
         onLayoutChange={setLayoutName}
         onFit={handleFit}
+        stats={stats}
+        editMode={editMode}
+        onToggleEdit={handleToggleEdit}
+        onSaveChanges={handleSaveChanges}
         data={data}
       />
 
-      <div className="h-[60vh] rounded border bg-white shadow-sm overflow-hidden">
+      <div className="relative h-[60vh] overflow-hidden rounded border bg-white shadow-sm">
+        <EditToolbar
+          editMode={editMode}
+          tool={tool}
+          pendingSourceId={pendingSource}
+          onToolChange={setTool}
+          onDeleteSelected={handleDeleteSelected}
+        />
+
         <CytoscapeComponent
           cy={(cy) => {
             cyRef.current = cy;
@@ -132,151 +377,24 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
         />
       </div>
 
-      <SelectedDetails data={data} selected={selected} />
+      <SelectedDetails
+        data={data}
+        selected={selected}
+        editMode={editMode}
+        onRenameNode={handleRenameNode}
+      />
     </div>
   );
 }
 
-function SelectedDetails({
-  data,
-  selected,
-}: {
-  data: AnalysisResult;
-  selected: Selected;
-}) {
-  const detections = useMemo(() => {
-    // Safely handle nil slice -> null from Go
-    const all: Detection[] = Array.isArray(data?.detections)
-      ? (data.detections as Detection[])
-      : [];
+function computeStatsFromData(data?: AnalysisResult): GraphStats {
+  const nodeValues = data?.graph?.nodes ? Object.values(data.graph.nodes) : [];
+  const services = nodeValues.filter((n: any) => n.kind === "SERVICE").length;
+  const databases = nodeValues.filter((n: any) => n.kind === "DATABASE").length;
+  const edges = Array.isArray(data?.graph?.edges) ? data.graph.edges.length : 0;
+  const detections = Array.isArray(data?.detections)
+    ? data.detections.length
+    : 0;
 
-    if (!selected) return [] as Detection[];
-
-    if (selected.type === "node") {
-      const id = selected.data.id as string;
-      return all.filter((d) => d.nodes?.includes(id));
-    }
-
-    const idx = selected.data.edgeIndex as number;
-    return all.filter((d) => d.edges?.includes(idx));
-  }, [selected, data]);
-
-  if (!selected) {
-    return (
-      <div className="rounded border bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        Click a <strong>service</strong>, <strong>database</strong>, or{" "}
-        <strong>edge</strong> in the graph to see more details here.
-      </div>
-    );
-  }
-
-  if (selected.type === "node") {
-    const nodeId = selected.data.id as string;
-    const node = data.graph.nodes[nodeId];
-    const attrs = node?.attrs ?? {};
-
-    return (
-      <div className="rounded border bg-white px-3 py-3 text-xs text-slate-700 shadow-sm">
-        <div className="mb-2 flex items-center justify-between">
-          <div>
-            <div className="text-[11px] uppercase text-slate-500">
-              {node.kind === "SERVICE" ? "Service" : "Database"}
-            </div>
-            <div className="text-sm font-semibold">{node.name}</div>
-          </div>
-          <div className="text-[11px] text-slate-400">ID: {node.id}</div>
-        </div>
-
-        {Object.keys(attrs).length > 0 && (
-          <div className="mb-2">
-            <div className="mb-1 text-[11px] font-semibold text-slate-600">
-              Extra info
-            </div>
-            <ul className="space-y-0.5">
-              {Object.entries(attrs).map(([k, v]) => (
-                <li key={k}>
-                  <span className="font-medium">{k}:</span>{" "}
-                  <span className="text-slate-600">
-                    {typeof v === "string" ? v : JSON.stringify(v)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <DetectionsList detections={detections} />
-      </div>
-    );
-  }
-
-  // Edge details
-  const edgeIndex = selected.data.edgeIndex as number;
-  const edge = data.graph.edges[edgeIndex];
-  const attrs = edge?.attrs ?? {};
-
-  return (
-    <div className="rounded border bg-white px-3 py-3 text-xs text-slate-700 shadow-sm">
-      <div className="mb-2 text-[11px] uppercase text-slate-500">Edge</div>
-      <div className="mb-1 text-sm font-semibold">
-        {edge.from} → {edge.to}
-      </div>
-      <div className="mb-2 text-[11px] text-slate-500">
-        Kind: <span className="font-semibold">{edge.kind}</span>
-      </div>
-
-      {Object.keys(attrs).length > 0 && (
-        <div className="mb-2">
-          <div className="mb-1 text-[11px] font-semibold text-slate-600">
-            Extra info
-          </div>
-          <ul className="space-y-0.5">
-            {Object.entries(attrs).map(([k, v]) => (
-              <li key={k}>
-                <span className="font-medium">{k}:</span>{" "}
-                <span className="text-slate-600">
-                  {typeof v === "string" ? v : JSON.stringify(v)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <DetectionsList detections={detections} />
-    </div>
-  );
-}
-
-function DetectionsList({ detections }: { detections: Detection[] }) {
-  if (!detections.length) {
-    return (
-      <div className="mt-1 text-[11px] text-slate-500">
-        No anti-patterns directly linked to this item.
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-2">
-      <div className="mb-1 text-[11px] font-semibold text-slate-600">
-        Anti-patterns affecting this
-      </div>
-      <ul className="space-y-1">
-        {detections.map((d, idx) => (
-          <li key={idx} className="rounded bg-slate-50 px-2 py-1">
-            <div className="text-[11px] font-semibold">
-              {d.title}{" "}
-              <span className="ml-1 text-[10px] uppercase text-slate-500">
-                ({d.severity})
-              </span>
-            </div>
-            {d.summary && (
-              <div className="text-[11px] text-slate-600">{d.summary}</div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+  return { services, databases, edges, detections };
 }

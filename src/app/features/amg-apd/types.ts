@@ -46,3 +46,16 @@ export interface AnalysisResult {
   svg_path: string;
   detections: Detection[];
 }
+
+export type EditTool =
+  | "select"
+  | "add-service"
+  | "add-database"
+  | "connect-calls"
+  | "connect-reads"
+  | "connect-writes";
+
+export type SelectedItem =
+  | { type: "node"; data: any }
+  | { type: "edge"; data: any }
+  | null;
