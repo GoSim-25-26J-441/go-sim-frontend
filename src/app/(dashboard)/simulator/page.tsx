@@ -1,3 +1,3 @@
-export default function Page() {
-  return <div className="p-6">Module: simulator</div>;
+export default function SimulatorPage() {
+  return <div className="text-xl">Simulator page</div>;
 }

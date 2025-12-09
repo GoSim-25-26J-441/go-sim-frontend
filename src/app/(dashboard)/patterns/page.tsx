@@ -1,3 +1,3 @@
-export default function Page() {
-  return <div className="p-6">Module: patterns</div>;
+export default function PatternsPage() {
+  return <div className="text-xl">Patterns page</div>;
 }
