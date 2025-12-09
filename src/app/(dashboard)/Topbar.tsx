@@ -20,6 +20,7 @@ export default function Topbar() {
               <Link href="/input" className="px-3 py-1.5 rounded-lg border border-border">Input</Link>
               <Link href="/patterns" className="px-3 py-1.5 rounded-lg border border-border">Patterns</Link>
               <Link href="/simulator" className="px-3 py-1.5 rounded-lg border border-border">Simulator</Link>
+              <Link href="/cost" className="px-3 py-1.5 rounded-lg border border-border">Cost</Link>
             </>
           )}
         </nav>
