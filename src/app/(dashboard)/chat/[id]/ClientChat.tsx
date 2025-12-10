@@ -1,20 +1,16 @@
+// src/app/(dashboard)/chat/[id]/ClientChat.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useChats } from "@/modules/chat/useChats";
+import { useEffect, useState } from "react";
+import Bubble, { BUBBLE_VERSION } from "@/components/chat/Bubble";
 import { getHistory, type HistoryMsg } from "@/modules/design-input/chatClient";
 import { send as sendChat, type ChatReply } from "@/modules/di/api";
-import Bubble, { BUBBLE_VERSION } from "@/components/chat/Bubble";
 
 type Props = { id: string };
 
-const UID = "demo-user";
-const JOB_ID = "fe3592f2-bc0b-4ac6-8f5a-96a8b855a789";
-
 type UiRole = "user" | "ai";
 type ServerRole = "user" | "assistant" | "rag" | "llm" | "ai";
-const toUiRole = (r: ServerRole | UiRole): UiRole =>
-  r === "user" ? "user" : "ai";
+const toUiRole = (r: ServerRole): UiRole => (r === "user" ? "user" : "ai");
 
 const RESET_SIG = {
   peak: "",
@@ -26,15 +22,12 @@ const RESET_SIG = {
 };
 
 export default function ClientChat({ id }: Props) {
-  const { chats, createIfMissing, append, rename } = useChats(UID);
-  const chat = useMemo(() => chats.find((c) => c.id === id), [chats, id]);
-
   const [input, setInput] = useState("");
   const [serverHistory, setServerHistory] = useState<HistoryMsg[]>([]);
   const [reply, setReply] = useState<ChatReply | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);   // “thinking…” indicator
   const [err, setErr] = useState<string | null>(null);
-  const [forceLLM, setForceLLM] = useState(false);
+  const [forceLLM, setForceLLM] = useState(false); // optional toggle, kept for future
 
   // quick sizing signals
   const [sig, setSig] = useState({ ...RESET_SIG });
@@ -56,51 +49,52 @@ export default function ClientChat({ id }: Props) {
     } vCPU. ${text}`;
   }
 
-  // ensure a local chat exists if user lands directly on /chat/[id]
+  // load server history whenever job id changes
   useEffect(() => {
-    if (id && !chat) createIfMissing(String(id), "New chat");
-  }, [id, chat, createIfMissing]);
-
-  // load server history once
-  useEffect(() => {
-    getHistory(JOB_ID)
-      .then(setServerHistory)
-      .catch(() => setServerHistory([]));
-  }, []);
+    let alive = true;
+    (async () => {
+      setErr(null);
+      try {
+        const h = await getHistory(id);
+        if (alive) setServerHistory(h);
+      } catch (e) {
+        if (alive) setServerHistory([]);
+        console.error("getHistory failed:", e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id]);
 
   async function handleSend() {
-    if (!input.trim() || !chat) return;
     const text = input.trim();
+    if (!text) return;
 
-    // local user echo
-    append(chat.id, {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-      ts: Date.now(),
-    });
+    // optimistic user bubble
+    setServerHistory((h) => [
+      ...h,
+      { role: "user", message: text, ts: Date.now() } as HistoryMsg,
+    ]);
 
     // clear inputs immediately
     setInput("");
     setSig({ ...RESET_SIG });
 
-    // show "thinking…" state
+    // show “thinking…”
     setLoading(true);
     setErr(null);
-
     try {
-      const r = await sendChat(JOB_ID, buildSizingPrompt(text), { forceLLM });
+      const r = await sendChat(id, buildSizingPrompt(text), { forceLLM });
       setReply(r);
 
-      // assistant echo
-      append(chat.id, {
-        id: crypto.randomUUID(),
-        role: "ai",
-        content: r.answer,
-        ts: Date.now(),
-      });
-
-      if (chat.title === "New chat") rename(chat.id, text.slice(0, 30));
+      // assistant bubble
+      const roleFromSource: ServerRole =
+        (r.source as ServerRole) || "assistant";
+      setServerHistory((h) => [
+        ...h,
+        { role: roleFromSource, message: r.answer, ts: Date.now() } as HistoryMsg,
+      ]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to send");
     } finally {
@@ -108,14 +102,12 @@ export default function ClientChat({ id }: Props) {
     }
   }
 
-  if (!chat) return <div className="p-4">Loading…</div>;
-
   return (
     <div className="h-[calc(96dvh-56px)] flex flex-col">
       {/* header */}
       <div className="border-b border-border p-3 text-sm opacity-80">
-        Chat actions…{" "}
-        <span className="opacity-60">Bubble {BUBBLE_VERSION}</span>
+        Chat (server-only) · Job: <span className="font-mono">{id}</span>{" "}
+        <span className="opacity-60">· Bubble {BUBBLE_VERSION}</span>
       </div>
 
       {/* quick sizing inputs */}
@@ -159,34 +151,23 @@ export default function ClientChat({ id }: Props) {
       </div>
 
       {/* messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-    
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs opacity-90">
-          <div className="opacity-70 text-xs mb-2">
-            Server history (JOB {JOB_ID}):
-          </div>
-
-          {serverHistory.map((m, i) => (
-            <Bubble
-              key={`srv-${i}`}
-              role={toUiRole(m.role as ServerRole)}
-              text={m.message}
-            />
-          ))}
-
-          {chat.messages.map((m) => (
-            <Bubble
-              key={m.id}
-              role={toUiRole(m.role as ServerRole)}
-              text={m.content}
-            />
-          ))}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs opacity-90">
+        <div className="opacity-70 text-xs mb-2">
+          Server history (JOB {id}):
         </div>
+
+        {serverHistory.map((m, i) => (
+          <Bubble
+            key={`srv-${i}`}
+            role={toUiRole(m.role as ServerRole)}
+            text={m.message}
+          />
+        ))}
 
         {/* thinking indicator while waiting for server */}
         {loading && (
-          <div className="animate-pulse">
-            <p className="text-sm">{"Thinking..."}</p>
+          <div className="max-w-[70ch] w-fit rounded-2xl px-4 py-2 border border-border bg-card animate-pulse">
+            <span className="opacity-70">Thinking…</span>
           </div>
         )}
 

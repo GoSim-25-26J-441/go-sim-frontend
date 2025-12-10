@@ -1,18 +1,28 @@
+// src/app/api/di/jobs/[id]/chat/history/route.ts
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+
+export const dynamic = "force-dynamic";
+
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
-  const { id } = await ctx.params;              
-  const BASE = process.env.BACKEND_BASE_URL!;
+  const BASE = process.env.DESIGN_INPUT_API_BASE!;
   const KEY  = process.env.DESIGN_INPUT_API_KEY!;
+  const uid  = (await cookies()).get("uid")?.value || "demo-user";
 
-  const r = await fetch(`${BASE}/jobs/${id}/chat/history`, {
-    headers: { "X-API-Key": KEY, "X-User-Id": "demo-user" },
+  const r = await fetch(`${BASE}/jobs/${params.id}/chat/history`, {
+    headers: { "X-API-Key": KEY, "X-User-Id": uid },
     cache: "no-store",
   });
 
-  return new Response(await r.text(), {
-    status: r.status,
-    headers: { "content-type": "application/json" },
-  });
+  const text = await r.text();
+  if (!r.ok) {
+    return NextResponse.json(
+      { ok: false, error: `backend ${r.status}: ${text}` },
+      { status: 502 }
+    );
+  }
+  return NextResponse.json(JSON.parse(text));
 }

@@ -1,36 +1,78 @@
+// src/app/(dashboard)/Sidebar.tsx
 "use client";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useChats } from "@/modules/chat/useChats";
 
-const UID = "demo-user"; // replace with real user later
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useSession } from "@/modules/session/context";
+
+type RemoteChat = {
+  jobId: string;
+  title: string;
+  lastAt: number | null;
+  lastBy: string | null;
+};
 
 export default function Sidebar() {
-  const { chats, create } = useChats(UID);
-  const router = useRouter();
   const pathname = usePathname();
-  const activeId = pathname.split("/").pop();
+  const { userId } = useSession();
+  const [remote, setRemote] = useState<RemoteChat[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  function onNew() {
-    const c = create();
-    router.push(`/chat/${c.id}`);
-  }
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await fetch("/api/di/chats", { cache: "no-store" });
+        const raw = await r.text();
+        if (!r.ok) {
+          console.error("GET /api/di/chats failed:", r.status, raw);
+          return;
+        }
+        const j = JSON.parse(raw);
+        if (alive && j?.ok) setRemote(j.chats as RemoteChat[]);
+      } catch (e) {
+        console.error("GET /api/di/chats error:", e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
-    <aside className="border-r border-border p-3 flex flex-col min-h-[calc(100dvh-56px)]">
-      <button onClick={onNew} className="w-full mb-3 px-3 py-2 rounded-lg bg-brand text-white">+ New chat</button>
-      <div className="flex-1 space-y-1 overflow-auto">
-        {chats.map(c => (
-          <Link key={c.id} href={`/chat/${c.id}`}
-            className={`block px-2 py-2 rounded-lg border ${activeId===c.id ? "border-brand" : "border-border hover:bg-surface"}`}>
-            <div className="truncate">{c.title}</div>
-          </Link>
-        ))}
-        {chats.length === 0 && <div className="text-sm opacity-70 px-1">No chats yet.</div>}
+    <aside className="p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs opacity-60">UID: {userId}</div>
       </div>
-      <div className="mt-3 border-t border-border pt-3 text-sm opacity-80">
-        <div className="font-medium">Signed in</div>
-        <div>{UID}</div>
+
+      <div>
+        <div className="text-[10px] uppercase opacity-50 mb-1">Server</div>
+        {loading && <div className="text-xs opacity-60">Loading…</div>}
+        {!loading && !remote.length && (
+          <div className="text-xs opacity-60">No server chats.</div>
+        )}
+        <nav className="space-y-1">
+          {remote.map((rc) => {
+            const href = `/chat/${rc.jobId}`;
+            const active = pathname === href;
+            return (
+              <Link
+                key={rc.jobId}
+                href={href}
+                className={`block rounded px-2 py-1 text-sm truncate ${
+                  active ? "bg-card border border-border" : "hover:bg-surface"
+                }`}
+                title={rc.title}
+              >
+                {rc.title || rc.jobId}
+              </Link>
+            );
+          })}
+        </nav>
       </div>
     </aside>
   );
