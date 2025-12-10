@@ -1,19 +1,19 @@
-export const BUBBLE_VERSION = "v4"; 
+// src/components/chat/Bubble.tsx
+export const BUBBLE_VERSION = "1.1";
 
-type Role = "user" | "ai";
+type Props = {
+  role: "user" | "ai";
+  text: string;
+};
 
-export default function Bubble({ role, text }: { role: Role; text: string }) {
+export default function Bubble({ role, text }: Props) {
   const isUser = role === "user";
   return (
-    <div style={{ display: "grid" }}>
+    <div className={`w-full flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        style={{ justifySelf: isUser ? "end" : "start" }} // hard align
         className={[
-          "max-w-[70ch] whitespace-pre-wrap rounded-2xl px-4 py-2 border",
-          // TEMP: loud colors so you can SEE the difference immediately
-          isUser
-            ? "bg-indigo-600 text-white border-indigo-600"
-            : "bg-neutral-900 text-neutral-50 border-neutral-700",
+          "max-w-[72ch] whitespace-pre-wrap rounded-2xl px-4 py-2 border border-border",
+          isUser ? "bg-brand text-white" : "bg-card",
         ].join(" ")}
       >
         {text}

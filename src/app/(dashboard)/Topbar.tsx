@@ -15,7 +15,7 @@ export default function Topbar() {
       <div className="h-full mx-auto max-w-6xl px-4 flex items-center justify-between">
         <div className="font-semibold">GO-SIM</div>
         <nav className="flex gap-2">
-          {hasChats && (
+          {/* {hasChats && (
             <>
               <Link
                 href="/patterns"
@@ -36,7 +36,7 @@ export default function Topbar() {
                 Cost
               </Link>
             </>
-          )}
+          )} */}
         </nav>
       </div>
     </header>

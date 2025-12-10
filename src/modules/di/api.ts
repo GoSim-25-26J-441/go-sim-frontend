@@ -1,9 +1,10 @@
-// keep your existing HistoryMsg + getHistory here…
+// src/modules/di/api.ts
+// keep your existing HistoryMsg + getHistory in chatClient.ts
 
 export type ChatReply = {
   ok: boolean;
   answer: string;
-  source?: "rag" | "llm" | "sizing-prompts";
+  source?: "rag" | "llm" | "sizing-prompts" | "guardrails";
   signals?: {
     rps_peak?: number | null;
     rps_avg?: number | null;
@@ -17,7 +18,7 @@ export type ChatReply = {
 export async function send(
   jobId: string,
   message: string,
-  opts?: { mode?: string; forceLLM?: boolean }
+  opts?: { mode?: string; forceLLM?: boolean },
 ): Promise<ChatReply> {
   const body: Record<string, unknown> = { message };
   if (opts?.mode) body.mode = opts.mode;
@@ -31,4 +32,3 @@ export async function send(
   if (!res.ok) throw new Error(await res.text());
   return (await res.json()) as ChatReply;
 }
-
