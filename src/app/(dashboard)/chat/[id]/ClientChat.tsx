@@ -27,7 +27,7 @@ export default function ClientChat({ id }: Props) {
   const [reply, setReply] = useState<ChatReply | null>(null);
   const [loading, setLoading] = useState(false);   // “thinking…” indicator
   const [err, setErr] = useState<string | null>(null);
-  const [forceLLM, setForceLLM] = useState(false); // optional toggle, kept for future
+  const [forceLLM, setForceLLM] = useState(false); 
 
   // quick sizing signals
   const [sig, setSig] = useState({ ...RESET_SIG });
@@ -104,7 +104,6 @@ export default function ClientChat({ id }: Props) {
 
   return (
     <div className="h-[calc(96dvh-56px)] flex flex-col">
-      {/* header */}
       <div className="border-b border-border p-3 text-sm opacity-80">
         Chat (server-only) · Job: <span className="font-mono">{id}</span>{" "}
         <span className="opacity-60">· Bubble {BUBBLE_VERSION}</span>
