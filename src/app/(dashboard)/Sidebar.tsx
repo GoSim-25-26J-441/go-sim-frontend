@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // // src/app/(dashboard)/Sidebar.tsx
 // "use client";
 
@@ -153,8 +154,6 @@
 //   );
 // }
 
-
-
 // src/app/(dashboard)/Sidebar.tsx
 "use client";
 
@@ -164,19 +163,48 @@ import { useChats } from "@/modules/chat/useChats";
 import { useSession } from "@/modules/session/context";
 import { useEffect, useState } from "react";
 
-type RemoteChat = { jobId: string; title: string; lastAt: number | null; lastBy: string | null; };
+type RemoteChat = {
+  jobId: string;
+  title: string;
+  lastAt: number | null;
+  lastBy: string | null;
+};
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { userId } = useSession();
-  const { chats, create, ensureByJob } = useChats(userId || "");
+  const { chats} = useChats(userId || "");
   const [remote, setRemote] = useState<RemoteChat[]>([]);
   const [loading, setLoading] = useState(false);
 
-  function onNew() {
-    const chat = create("New chat");
-    router.push(`/chat/${chat.id}`); // <-- no upload here; blank chat opens
+  async function onNew() {
+    const r = await fetch("/api/di/new-job", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-user-id": userId },
+      body: "{}",
+    });
+
+    // safer parse
+    const raw = await r.text();
+    let j: any;
+    try {
+      j = JSON.parse(raw);
+    } catch {
+      console.error("new-job not JSON:", raw);
+      return;
+    }
+
+    if (!r.ok || !j?.jobId) {
+      console.error(j?.error || "new-job failed");
+      return;
+    }
+    // go to summary of the newly created server job
+    router.push(`/chat/${j.jobId}/summary`);
+  }
+
+  function openServerChat(rc: { jobId: string; title: string }) {
+    router.push(`/chat/${rc.jobId}/summary`);
   }
 
   useEffect(() => {
@@ -186,8 +214,10 @@ export default function Sidebar() {
         const r = await fetch("/api/di/chats", { cache: "no-store" });
         const j = await r.json();
         if (j?.ok) setRemote(j.chats as RemoteChat[]);
-      } catch {}
-      finally { setLoading(false); }
+      } catch {
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -195,7 +225,10 @@ export default function Sidebar() {
     <aside className="p-3 space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-xs opacity-60">UID: {userId}</div>
-        <button onClick={onNew} className="px-2 py-1 rounded bg-brand text-white text-xs">
+        <button
+          onClick={onNew}
+          className="px-2 py-1 rounded bg-brand text-white text-xs"
+        >
           New
         </button>
       </div>
@@ -210,7 +243,9 @@ export default function Sidebar() {
                 <Link
                   key={c.id}
                   href={`/chat/${c.id}`}
-                  className={`block rounded px-2 py-1 text-sm truncate ${active ? "bg-card border border-border" : "hover:bg-surface"}`}
+                  className={`block rounded px-2 py-1 text-sm truncate ${
+                    active ? "bg-card border border-border" : "hover:bg-surface"
+                  }`}
                   title={c.title}
                 >
                   {c.title || "Untitled"}
@@ -224,15 +259,14 @@ export default function Sidebar() {
       <div>
         <div className="text-[10px] uppercase opacity-50 mb-1">Server</div>
         {loading && <div className="text-xs opacity-60">Loading…</div>}
-        {!loading && !remote.length && <div className="text-xs opacity-60">No server chats.</div>}
+        {!loading && !remote.length && (
+          <div className="text-xs opacity-60">No server chats.</div>
+        )}
         <nav className="space-y-1">
           {remote.map((rc) => (
             <button
               key={rc.jobId}
-              onClick={() => {
-                ensureByJob(rc.jobId, rc.title);
-                location.assign(`/chat/${rc.jobId}`);
-              }}
+              onClick={() => openServerChat(rc)}
               className="w-full text-left block rounded px-2 py-1 text-sm truncate hover:bg-surface"
               title={rc.title}
             >

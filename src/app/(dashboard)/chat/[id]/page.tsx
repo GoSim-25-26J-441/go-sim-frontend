@@ -1,5 +1,4 @@
-import ClientChat from "./ClientChat";
-
+import { redirect } from "next/navigation";
 export default function Page({ params }: { params: { id: string } }) {
-  return <ClientChat id={params.id} />;
+  redirect(`/chat/${params.id}/summary`);
 }

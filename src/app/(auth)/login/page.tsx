@@ -8,7 +8,7 @@ export default function Login() {
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();         
-    router.push("/chat");       
+    router.push("/dashboard");       
   }
 
   return (
