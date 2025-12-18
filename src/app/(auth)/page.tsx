@@ -1,9 +1,9 @@
-"use client";
+"use client"
 
-import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-export default function Login() {
+export default function Home() {
   const router = useRouter();
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

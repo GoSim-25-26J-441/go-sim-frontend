@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -25,7 +26,7 @@ export default function Signup() {
           {loading ? "Creating…" : "Sign up"}
         </button>
         <p className="text-sm opacity-70">
-          Already have an account? <a href="/login" className="text-brand">Log in</a>
+          Already have an account? <Link href="/" className="text-brand">Log in</Link>
         </p>
       </form>
     </div>
