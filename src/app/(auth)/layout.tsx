@@ -1,9 +1,18 @@
-import Navbar from "@/components/nav/Navbar";
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
+import CookieConsent from "@/components/common/cookies/CookieConsent";
+import { cookies } from "next/headers";
+
+export default async function AuthLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const hasConsent = (await cookies()).has("gs_cookie_consent");
   return (
     <>
-      <Navbar />
-      <main className="pt-14">{children}</main>
+      <main className="min-h-screen bg-linear-to-b from-[#1F1F1F] to-black">
+        {children}
+      </main>
+      {!hasConsent && <CookieConsent />}
     </>
   );
 }

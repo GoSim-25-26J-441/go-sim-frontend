@@ -1,33 +1,40 @@
 "use client";
-import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import RightSection from "@/components/auth/signUp/rightSection/page";
+import SignUpForm from "@/components/auth/signUp/signUpForm/page";
 
 export default function Signup() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-
-  async function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setLoading(true);
-    // TODO: call your real signup API here
-    // await fetch("/api/auth/signup", { method: "POST", body: new FormData(e.currentTarget) })
-    router.push("/login?from=signup"); // go to login after “signup”
-  }
-
   return (
-    <div className="min-h-dvh grid place-items-center">
-      <form onSubmit={onSubmit} className="w-full max-w-sm bg-card border border-border p-6 rounded-xl space-y-3">
-        <h1 className="text-xl font-semibold">Create your account</h1>
-        <input name="name" placeholder="Full name" className="w-full bg-surface border border-border rounded-md p-2" required />
-        <input name="email" type="email" placeholder="you@example.com" className="w-full bg-surface border border-border rounded-md p-2" required />
-        <input name="password" type="password" placeholder="Password" className="w-full bg-surface border border-border rounded-md p-2" required />
-        <button disabled={loading} className="w-full rounded-md bg-brand text-white py-2">
-          {loading ? "Creating…" : "Sign up"}
-        </button>
-        <p className="text-sm opacity-70">
-          Already have an account? <a href="/login" className="text-brand">Log in</a>
-        </p>
-      </form>
-    </div>
+    <section className="max-w-7xl mx-auto min-h-[calc(100vh-4rem)] flex items-center overflow-hidden">
+      <div className="grid lg:grid-cols-2 gap-12 items-center py-10 lg:py-0">
+        {/* Left */}
+        <div>
+          <SignUpForm />
+        </div>
+        {/* Right */}
+        <div className="flex flex-col justify-between space-y-8 pl-10 h-full relative overflow-hidden">
+          <div
+            className="absolute left-0 w-0.5 bg-white animate-grow-center"
+            style={{ height: "100%" }}
+          ></div>
+          <RightSection />
+        </div>
+      </div>
+
+      <style jsx>{`
+        @keyframes grow-center {
+          from {
+            height: 0%;
+            opacity: 0;
+          }
+          to {
+            height: 100%;
+            opacity: 1;
+          }
+        }
+        .animate-grow-center {
+          animation: grow-center 1.5s ease-out forwards;
+        }
+      `}</style>
+    </section>
   );
 }
