@@ -62,7 +62,7 @@ export default function CookieConsent() {
                 Cookie Settings
               </h3>
 
-              <p className="text-sm text-black/70 leading-relaxed mt-1">
+              <p className="text-xs font-normal text-black/70 leading-relaxed mt-1">
                 We use essential cookies to make GO-SIM work properly and improve
                 your experience. By clicking <span className="font-semibold text-black">Accept</span>,
                 you agree to our use of cookies. Learn more in our{" "}
@@ -77,22 +77,22 @@ export default function CookieConsent() {
             </div>
 
             {/* Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3 text-xm font-bold md:justify-end md:items-center">
+            <div className="flex flex-col sm:flex-row gap-3 md:justify-end md:items-center">
               <button
                 onClick={accept}
-                className="px-5 py-2.5 bg-black text-white rounded-lg hover:bg-black/90 transition-colors"
+                className="px-5 py-2 bg-black text-xs font-bold text-white rounded-lg hover:bg-black/90 transition-colors"
               >
                 Accept
               </button>
               <button
                 onClick={decline}
-                className="px-5 py-2.5 bg-white text-black rounded-lg border border-black/20 hover:bg-black/[0.03] transition-colors"
+                className="px-5 py-2 text-xs font-bold bg-white text-black rounded-lg border border-black/20 hover:bg-black/[0.03] transition-colors"
               >
                 Decline
               </button>
               <a
                 href="/privacy"
-                className="px-5 py-2.5 text-black/70 hover:text-black rounded-lg hover:bg-black/[0.03] transition-colors text-center"
+                className="px-5 py-2 text-xs font-bold text-black/70 hover:text-black rounded-lg hover:bg-black/[0.03] transition-colors text-center"
               >
                 Preferences
               </a>
