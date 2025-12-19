@@ -146,9 +146,10 @@ export default function SignUpForm() {
     <section className="px-4 sm:px-6 lg:px-8">
       <div className="max-w-3xl mx-auto">
         {/* Header */}
-        <div className="flex flex-col justify-start gap-4 py-8">
+        <div className="flex flex-col justify-start gap-2 py-8">
           <h1 className="text-2xl font-bold text-white">GO-SIM</h1>
           <h2 className="text-4xl font-bold text-white">Create your account</h2>
+          
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
             <p className="text-xs font-normal text-white/80">
               Start analyzing your microservice architectures in minutes.
@@ -157,6 +158,8 @@ export default function SignUpForm() {
               Free plan • No credit card required
             </p>
           </div>
+
+          <div className="bg-white w-full h-0.5" />
         </div>
 
         <div className="space-y-6">
