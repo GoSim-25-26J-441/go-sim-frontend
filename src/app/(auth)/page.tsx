@@ -57,7 +57,6 @@ class Particle {
 export default function Login() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const router = useRouter();
-  const toPath = (r?: string) => (r ? (r.startsWith("/") ? r : `/${r}`) : "/");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -148,28 +147,36 @@ export default function Login() {
   }, []);
 
   return (
-    <section className="max-w-7xl mx-auto min-h-[calc(100vh-4rem)] flex items-center overflow-hidden">
-      <div className="grid lg:grid-cols-2 gap-12 items-center py-10 lg:py-0">
-        {/* Left */}
-        <div>
-          <div className="relative h-80 sm:h-[400px] lg:h-[560px]">
+    <section className="max-w-7xl mx-auto min-h-screen px-4 sm:px-6 lg:px-8">
+      <div className="grid lg:grid-cols-[1fr_auto_1fr] gap-0 py-10 lg:py-0 min-h-screen lg:items-center">
+        
+        {/* Left - Animation & Bottom Section */}
+        <div className="flex flex-col justify-center py-10 lg:py-20">
+          <div className="relative h-64 sm:h-80 lg:h-[500px] mb-6">
             <canvas ref={canvasRef} className="w-full h-full rounded-2xl" />
           </div>
           <SectionBottom />
         </div>
-        {/* Right */}
-        <div className="flex flex-col justify-between space-y-8 pl-10 h-full relative overflow-hidden">
-          <div
-            className="absolute left-0 w-0.5 bg-white animate-grow-center"
-            style={{ height: "100%" }}
-          ></div>
 
+        {/* Vertical Line - Desktop Only */}
+        <div className="hidden lg:block relative w-px bg-white/30 my-20">
+          <div className="absolute top-0 left-0 w-px bg-white animate-grow-vertical"></div>
+        </div>
+
+        {/* Horizontal Line - Mobile Only */}
+        <div className="lg:hidden w-full h-px bg-white/30 my-8 relative">
+          <div className="absolute left-0 top-0 h-px bg-white animate-grow-horizontal"></div>
+        </div>
+
+        {/* Right - Login Form */}
+        <div className="flex flex-col justify-center py-10 lg:py-20 lg:pl-12">
           <Form />
         </div>
+        
       </div>
 
       <style jsx>{`
-        @keyframes grow-center {
+        @keyframes grow-vertical {
           from {
             height: 0%;
             opacity: 0;
@@ -179,8 +186,23 @@ export default function Login() {
             opacity: 1;
           }
         }
-        .animate-grow-center {
-          animation: grow-center 1.5s ease-out forwards;
+        @keyframes grow-horizontal {
+          from {
+            width: 0%;
+            opacity: 0;
+          }
+          to {
+            width: 100%;
+            opacity: 1;
+          }
+        }
+        .animate-grow-vertical {
+          transform-origin: top;
+          animation: grow-vertical 1.5s ease-out forwards;
+        }
+        .animate-grow-horizontal {
+          transform-origin: left;
+          animation: grow-horizontal 1.5s ease-out forwards;
         }
       `}</style>
     </section>
