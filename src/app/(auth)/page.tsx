@@ -2,7 +2,6 @@
 
 import Form from "@/components/auth/login/form/page";
 import SectionBottom from "@/components/auth/login/sectionBottom/sectionBottom";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 class Particle {
@@ -56,7 +55,6 @@ class Particle {
 
 export default function Login() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const router = useRouter();
 
   useEffect(() => {
     const canvas = canvasRef.current;
