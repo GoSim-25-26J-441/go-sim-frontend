@@ -15,6 +15,8 @@ import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
 import S3 from "../../../../public/diagram-icons/S3.svg";
 import S4 from "../../../../public/diagram-icons/S4.svg";
+import { useSession } from "@/modules/session";
+import { useOpenInChat } from "@/modules/di/useOpenInChat";
 
 type NodeKind =
   | "service"
@@ -43,6 +45,12 @@ interface DiagramEdge {
   sync: boolean;
   label?: string;
 }
+
+type OpenOpts = {
+  seed?: string;
+  runIntermediate?: boolean;
+  runFuse?: boolean;
+};
 
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 60;
@@ -563,18 +571,25 @@ export default function DrawDiagram() {
     img.src = url;
   };
 
-  // "Open in chat" helper – copies JSON and navigates
+  const openInChat = useOpenInChat();
 
   const handleOpenInChat = async () => {
     try {
       await navigator.clipboard.writeText(exportJson);
     } catch {
-      // ignore clipboard errors
+      /* ignore clipboard errors */
     }
-    router.push("/chat"); // adjust if your chat route is different
-  };
 
-  // Render
+    // ensure we pass an object to the hook
+    const doc =
+      typeof exportJson === "string" ? JSON.parse(exportJson) : exportJson;
+
+    await openInChat(doc, {
+      seed: "~200 RPS; internal gRPC", // optional
+      runIntermediate: true, // optional
+      runFuse: true, // optional
+    });
+  };
 
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
@@ -757,9 +772,7 @@ export default function DrawDiagram() {
                     isSelected
                       ? "border-sky-400 ring-2 ring-sky-500/40"
                       : "border-black/10",
-                    isConnectingFrom
-                      ? "outline outline-1 outline-amber-400"
-                      : "",
+                    isConnectingFrom ? "outline-1 outline-amber-400" : "",
                   ].join(" ")}
                   onMouseDown={handleNodeMouseDown(node.id)}
                   onClick={handleNodeClick(node.id)}
