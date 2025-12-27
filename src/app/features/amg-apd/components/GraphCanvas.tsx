@@ -39,7 +39,7 @@ cytoscape.use(elk);
 export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   if (!data?.graph) {
     return (
-      <div className="border rounded p-4 text-sm text-slate-600 bg-white shadow-sm">
+      <div className="border rounded bg-white p-4 text-sm text-slate-600 shadow-sm">
         No graph to display yet. Upload a YAML and run analysis.
       </div>
     );
@@ -51,8 +51,10 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   const [editMode, setEditMode] = useState(false);
   const [tool, setTool] = useState<EditTool>("select");
   const [pendingSource, setPendingSource] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
+  const setLast = useAmgApdStore((s) => s.setLast);
 
   const [stats, setStats] = useState<GraphStats>(() =>
     computeStatsFromData(data)
@@ -309,22 +311,63 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   }
 
   function handleSaveChanges() {
-    const cy = cyRef.current;
-    if (!cy) return;
+    void (async () => {
+      const cy = cyRef.current;
+      if (!cy) return;
 
-    const error = validateGraphForSave(cy);
-    if (error) {
-      window.alert(error);
-      return;
-    }
+      const error = validateGraphForSave(cy);
+      if (error) {
+        window.alert(error);
+        return;
+      }
 
-    const yaml = exportGraphToYaml(cy);
-    setEditedYaml(yaml);
+      const yaml = exportGraphToYaml(cy);
+      setEditedYaml(yaml);
 
-    console.log("Edited YAML (frontend only for now):\n", yaml);
-    window.alert(
-      "Updated YAML has been generated and stored in memory.\n\nUse 'Download updated YAML' to download file."
-    );
+      setIsGenerating(true);
+      try {
+        const blob = new Blob([yaml], { type: "text/yaml" });
+        const fd = new FormData();
+        fd.append("file", blob, "edited-architecture.yaml");
+        fd.append("title", "Edited architecture");
+        fd.append("out_dir", "/app/out");
+
+        const res = await fetch("/api/amg-apd/analyze-upload", {
+          method: "POST",
+          body: fd,
+        });
+
+        if (!res.ok) {
+          const msg = await res.text();
+          throw new Error(msg || "Re-analysis failed");
+        }
+
+        const updated: AnalysisResult = await res.json();
+
+        setLast(updated);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("amg_last", JSON.stringify(updated));
+        }
+
+        setEditMode(false);
+        setTool("select");
+        setPendingSource(null);
+        setSelected(null);
+        setStats(computeStatsFromData(updated));
+
+        window.alert(
+          "Graph regenerated from backend.\nAnti-patterns and stats have been updated."
+        );
+      } catch (err: any) {
+        console.error(err);
+        window.alert(
+          "Failed to regenerate graph from backend: " +
+            (err?.message ?? "Unknown error")
+        );
+      } finally {
+        setIsGenerating(false);
+      }
+    })();
   }
 
   function handleRenameNode(id: string, newLabel: string) {
@@ -347,6 +390,7 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
         onToggleEdit={handleToggleEdit}
         onSaveChanges={handleSaveChanges}
         data={data}
+        isGenerating={isGenerating}
       />
 
       <div className="relative h-[60vh] overflow-hidden rounded border bg-white shadow-sm">

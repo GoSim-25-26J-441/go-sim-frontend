@@ -22,6 +22,8 @@ type Props = {
   onToggleEdit: () => void;
   onSaveChanges: () => void;
 
+  isGenerating?: boolean;
+
   data?: AnalysisResult;
 };
 
@@ -33,6 +35,7 @@ export default function ControlPanel({
   editMode,
   onToggleEdit,
   onSaveChanges,
+  isGenerating = false,
 }: Props) {
   const { services, databases, edges, detections } = stats;
 
@@ -53,7 +56,7 @@ export default function ControlPanel({
         <button
           type="button"
           onClick={onFit}
-          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs hover:bg-slate-100 text-slate-700"
+          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
         >
           Fit to screen
         </button>
@@ -90,10 +93,11 @@ export default function ControlPanel({
           <button
             type="button"
             onClick={onSaveChanges}
+            disabled={!editMode || isGenerating}
             style={{ visibility: editMode ? "visible" : "hidden" }}
             className="rounded bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
           >
-            Update Changes
+            {isGenerating ? "Generating…" : "Generate Graph"}
           </button>
         </div>
       </div>

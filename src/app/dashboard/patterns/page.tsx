@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import Link from "next/link";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
@@ -8,24 +7,12 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 
 export default function PatternsPage() {
   const last = useAmgApdStore((s) => s.last);
-  const setLast = useAmgApdStore((s) => s.setLast);
   const editedYaml = useAmgApdStore((s) => s.editedYaml);
-
-  useEffect(() => {
-    if (!last?.graph && typeof window !== "undefined") {
-      const raw = window.sessionStorage.getItem("amg_last");
-      if (raw) {
-        try {
-          setLast(JSON.parse(raw));
-        } catch {}
-      }
-    }
-  }, [last, setLast]);
 
   function handleDownloadYaml() {
     if (!editedYaml) {
       alert(
-        "No edited YAML file found.\n\nUse Edit mode → Update Changes to generate an edited YAML file."
+        "No edited YAML file found.\n\nUse Edit mode → Generate Graph to produce an updated YAML (this also re-runs analysis)."
       );
       return;
     }
@@ -61,7 +48,7 @@ export default function PatternsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold">
-            Graph Vizualization with Anti-Patterns
+            Graph Visualization with Anti-Patterns
           </h1>
         </div>
 

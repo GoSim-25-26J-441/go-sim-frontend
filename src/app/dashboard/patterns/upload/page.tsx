@@ -21,27 +21,37 @@ export default function UploadPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("title", title);
+      fd.append("title", title || "Uploaded");
       fd.append("out_dir", "/app/out");
 
       const res = await fetch("/api/amg-apd/analyze-upload", {
         method: "POST",
         body: fd,
       });
+
       if (!res.ok) {
         const msg = await res.text();
         throw new Error(msg || "Request failed");
       }
 
       const data: AnalysisResult = await res.json();
+
+      // quick safety check – if backend didn't send a graph, don't proceed
+      if (!data || !data.graph) {
+        throw new Error("Backend did not return a graph in the response.");
+      }
+
+      // store in Zustand (which is also persisted to sessionStorage)
       setLast(data);
 
+      // debug helper in case we need to inspect later
       if (typeof window !== "undefined") {
-        window.sessionStorage.setItem("amg_last", JSON.stringify(data));
+        console.log("AnalysisResult from backend:", data);
       }
 
       router.push("/dashboard/patterns");
     } catch (err: any) {
+      console.error(err);
       alert("Analyze failed: " + (err?.message ?? "Unknown error"));
       setLoading(false);
     }
@@ -56,7 +66,7 @@ export default function UploadPage() {
               <h1 className="text-lg font-semibold text-slate-600">
                 Analyzing architecture…
               </h1>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="mt-1 text-xs text-slate-500">
                 We&apos;re parsing your YAML data, building the service graph,
                 and running anti-pattern detectors.
               </p>
@@ -80,12 +90,12 @@ export default function UploadPage() {
             </div>
 
             <div className="space-y-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-700 text-[11px] uppercase">
+              <div className="text-[11px] font-semibold uppercase text-slate-700">
                 Steps in progress
               </div>
               <ul className="space-y-1.5">
                 <li>
-                  • Reading YAML file: <strong>{title}</strong>
+                  • Reading YAML file: <strong>{title || "(untitled)"}</strong>
                 </li>
                 <li>
                   • Building in-memory architecture graph (services & DBs)
@@ -97,7 +107,7 @@ export default function UploadPage() {
                 <li>• Preparing visualization layout</li>
               </ul>
               <p className="mt-2 text-[11px] text-slate-500">
-                You will be redirected automatically to once the graph is
+                You will be redirected automatically once the graph is
                 generated.
               </p>
             </div>
@@ -127,7 +137,7 @@ export default function UploadPage() {
         <div className="space-y-1">
           <label className="block text-sm font-medium">Title</label>
           <input
-            className="border rounded p-2 block w-full"
+            className="block w-full rounded border p-2"
             value={title}
             placeholder="Enter a Title"
             onChange={(e) => setTitle(e.target.value)}
@@ -135,7 +145,7 @@ export default function UploadPage() {
         </div>
 
         <button
-          className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
           disabled={!file || loading}
         >
           {loading ? "Analyzing…" : "Analyze & Visualize"}

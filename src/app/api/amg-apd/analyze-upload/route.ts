@@ -19,7 +19,6 @@ export async function POST(req: NextRequest) {
 
     const yamlText = await file.text();
 
-    // Forward to backend raw endpoint
     const res = await fetch(`${BASE}/api/v1/amg-apd/analyze-raw`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -93,12 +93,34 @@ export function toElements(data?: AnalysisResult): ElementDefinition[] {
   const edges: ElementDefinition[] = (edgesArr as any[]).map((e, i) => {
     const meta = edgeMeta[i];
     const primaryDetectionKind = meta?.kinds?.[0];
+    const attrs = e?.attrs ?? {};
 
     let label = e?.kind ?? "";
+
     if (e?.kind === "CALLS") {
-      const count = e?.attrs?.count ?? 1;
-      const rpm = e?.attrs?.rate_per_min ?? 0;
-      label = `calls (${count} ep), ${rpm}rpm`;
+      const endpoints = Array.isArray(attrs.endpoints)
+        ? (attrs.endpoints as string[])
+        : [];
+      let rpm = 0;
+      if (typeof attrs.rate_per_min === "number") {
+        rpm = attrs.rate_per_min;
+      } else if (typeof attrs.rate_per_min === "string") {
+        const parsed = parseInt(attrs.rate_per_min, 10);
+        rpm = Number.isNaN(parsed) ? 0 : parsed;
+      }
+
+      const count =
+        typeof attrs.count === "number"
+          ? attrs.count
+          : endpoints.length > 0
+          ? endpoints.length
+          : 0;
+
+      if (count > 0 || rpm > 0) {
+        label = `calls (${count} ep), ${rpm}rpm`;
+      } else {
+        label = "calls";
+      }
     }
 
     return {
@@ -109,6 +131,7 @@ export function toElements(data?: AnalysisResult): ElementDefinition[] {
         label,
         kind: e?.kind ?? "",
         edgeIndex: i,
+        attrs,
         severity: meta?.severity ?? null,
         primaryDetectionKind: primaryDetectionKind ?? null,
         detectionKinds: meta?.kinds ?? [],
