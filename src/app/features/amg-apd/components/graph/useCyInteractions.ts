@@ -1,3 +1,4 @@
+// features/amg-apd/components/graph/useCyInteractions.ts
 import { useEffect } from "react";
 import type cytoscape from "cytoscape";
 import type {
@@ -27,8 +28,15 @@ export function useCyInteractions({
   useEffect(() => {
     if (!cy) return;
 
+    const safeUnselectAll = () => {
+      try {
+        cy.elements().unselect();
+      } catch {}
+    };
+
     const onNodeTap = (evt: any) => {
       const node = evt.target as cytoscape.NodeSingular;
+      if (!node || !node.isNode?.()) return;
       if (node.hasClass("halo")) return;
 
       // connect tools
@@ -49,14 +57,16 @@ export function useCyInteractions({
 
         if (!pendingSource) {
           setPendingSource(id);
-          cy.elements().removeClass("selected");
-          node.addClass("selected");
+          safeUnselectAll();
+          node.select();
+          setSelected({ type: "node", data: node.data() });
           return;
         }
 
         if (pendingSource === id) {
           setPendingSource(null);
-          cy.elements().removeClass("selected");
+          safeUnselectAll();
+          setSelected(null);
           return;
         }
 
@@ -112,20 +122,25 @@ export function useCyInteractions({
         cy.add({ group: "edges", data: edgeData });
 
         setPendingSource(null);
-        cy.elements().removeClass("selected");
+        safeUnselectAll();
         recomputeStats();
         return;
       }
 
-      cy.elements().removeClass("selected");
-      node.addClass("selected");
+      // normal selection
+      safeUnselectAll();
+      node.select();
       setSelected({ type: "node", data: node.data() });
     };
 
     const onEdgeTap = (evt: any) => {
       const edge = evt.target as cytoscape.EdgeSingular;
-      cy.elements().removeClass("selected");
-      edge.addClass("selected");
+      if (!edge || !edge.isEdge?.()) return;
+
+      try {
+        cy.elements().unselect();
+      } catch {}
+      edge.select();
       setSelected({ type: "edge", data: edge.data() });
     };
 
@@ -146,8 +161,10 @@ export function useCyInteractions({
 
         const node = cy.getElementById(id);
         if (!node.empty()) {
-          cy.elements().removeClass("selected");
-          node.addClass("selected");
+          try {
+            cy.elements().unselect();
+          } catch {}
+          node.select();
           setSelected({ type: "node", data: node.data() });
         }
 
@@ -155,7 +172,8 @@ export function useCyInteractions({
         return;
       }
 
-      cy.elements().removeClass("selected");
+      // clear selection
+      safeUnselectAll();
       setSelected(null);
       setPendingSource(null);
     };

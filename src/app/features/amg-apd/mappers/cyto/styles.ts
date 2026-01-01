@@ -1,3 +1,4 @@
+// features/amg-apd/mappers/cyto/styles.ts
 import type { DetectionKind, Severity } from "@/app/features/amg-apd/types";
 import {
   NODE_KIND_COLOR,
@@ -13,9 +14,25 @@ const EDGE_KIND_COLOR: Record<string, string> = {
   WRITES: "#94a3b8",
 };
 
-export const cyStyles: StylesheetLike = [
-  // ✅ Halo styling removed completely
+function borderWidthForSeverity(sev: Severity | null) {
+  if (sev === "HIGH") return 7;
+  if (sev === "MEDIUM") return 6;
+  if (sev === "LOW") return 5;
+  return 3;
+}
 
+function borderColorForNode(ele: any) {
+  const kinds = (ele.data("detectionKinds") as DetectionKind[]) ?? [];
+  if (!kinds.length) return "#334155"; // slate-700 default
+
+  // If multiple kinds, pick based on phase (we’ll animate phase in GraphCanvas)
+  const phase = (ele.data("phase") as number) ?? 0;
+  const pick = kinds[phase % kinds.length];
+
+  return DETECTION_KIND_COLOR[pick] ?? "#334155";
+}
+
+export const cyStyles: StylesheetLike = [
   {
     selector: "node",
     style: {
@@ -23,6 +40,7 @@ export const cyStyles: StylesheetLike = [
         const kind = ele.data("kind") as keyof typeof NODE_KIND_COLOR;
         return NODE_KIND_COLOR[kind] ?? "#e5e7eb";
       },
+
       label: "data(label)",
       "text-wrap": "wrap",
       "text-max-width": 140,
@@ -31,18 +49,30 @@ export const cyStyles: StylesheetLike = [
       "font-size": 14,
       "min-zoomed-font-size": 8,
       color: "#0f172a",
+
       width: "label",
       height: "label",
       padding: "12px",
 
-      // ✅ Make border apply to ALL nodes (otherwise .has-detection lost border)
-      "border-width": 4,
-      "border-color": "#0f172a",
+      // ✅ Border now depends on detections (+ phase for multi-kind)
+      "border-width": (ele: any) => {
+        const sev = (ele.data("severity") as Severity | null) ?? null;
+        const kinds = (ele.data("detectionKinds") as DetectionKind[]) ?? [];
+        return kinds.length ? borderWidthForSeverity(sev) : 3;
+      },
+      "border-color": (ele: any) => borderColorForNode(ele),
+
+      // Optional: make multi-kind visually “more obvious” even if animation is missed
+      "border-style": (ele: any) => {
+        const kinds = (ele.data("detectionKinds") as DetectionKind[]) ?? [];
+        return kinds.length > 1 ? "double" : "solid";
+      },
 
       shape: (ele: any) => {
         const kind = ele.data("kind") as string;
         return kind === "DATABASE" ? "ellipse" : "round-rectangle";
       },
+
       "z-index": 10,
     },
   },
@@ -50,7 +80,7 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "node:selected",
     style: {
-      "border-width": 6,
+      "border-width": 8,
       "border-color": "#0f172a",
       "z-index": 9999,
     },

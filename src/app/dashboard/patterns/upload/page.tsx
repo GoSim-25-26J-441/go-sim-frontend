@@ -1,16 +1,88 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
+
+function decodeSafe(v: string) {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
+
   const setLast = useAmgApdStore((s) => s.setLast);
+  const editedYaml = useAmgApdStore((s) => s.editedYaml);
+
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const regen = searchParams.get("regen") === "1";
+  const regenTitleRaw = searchParams.get("title") ?? "Edited architecture";
+  const regenTitle = decodeSafe(regenTitleRaw);
+
+  // ✅ Prevent double-run in Next dev (React strict mode)
+  const ranRef = useRef(false);
+
+  // ✅ Auto-run analysis when coming from Generate Graph
+  useEffect(() => {
+    if (!regen) return;
+    if (ranRef.current) return;
+    ranRef.current = true;
+
+    if (!editedYaml) {
+      alert(
+        "No edited YAML found.\n\nIf you refreshed this page, the edited YAML in session storage may be gone.\nGo back to the graph and click Generate Graph again."
+      );
+      router.replace("/dashboard/patterns");
+      return;
+    }
+
+    setTitle(regenTitle);
+    setLoading(true);
+
+    (async () => {
+      try {
+        const blob = new Blob([editedYaml], { type: "text/yaml" });
+        const fd = new FormData();
+        fd.append("file", blob, "edited-architecture.yaml");
+        fd.append("title", regenTitle || "Edited architecture");
+        fd.append("out_dir", "/app/out");
+
+        const res = await fetch("/api/amg-apd/analyze-upload", {
+          method: "POST",
+          body: fd,
+        });
+
+        if (!res.ok) {
+          const msg = await res.text();
+          throw new Error(msg || "Request failed");
+        }
+
+        const data: AnalysisResult = await res.json();
+
+        if (!data || !data.graph) {
+          throw new Error("Backend did not return a graph in the response.");
+        }
+
+        setLast(data);
+
+        // ✅ Back to visualization (fresh render)
+        router.replace("/dashboard/patterns");
+      } catch (err: any) {
+        console.error(err);
+        alert("Analyze failed: " + (err?.message ?? "Unknown error"));
+        setLoading(false);
+      }
+    })();
+  }, [regen, editedYaml, regenTitle, router, setLast]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -36,15 +108,12 @@ export default function UploadPage() {
 
       const data: AnalysisResult = await res.json();
 
-      // quick safety check – if backend didn't send a graph, don't proceed
       if (!data || !data.graph) {
         throw new Error("Backend did not return a graph in the response.");
       }
 
-      // store in Zustand (which is also persisted to sessionStorage)
       setLast(data);
 
-      // debug helper in case we need to inspect later
       if (typeof window !== "undefined") {
         console.log("AnalysisResult from backend:", data);
       }
