@@ -11,25 +11,31 @@ import elk from "cytoscape-elk";
 import {
   toElements,
   styles,
-} from "@/app/features/amg-apd/mappers/mapToCytoscape";
+} from "@/app/features/amg-apd/mappers/maptoCytoscape";
 import type {
   AnalysisResult,
-  EdgeKind,
-  NodeKind,
   SelectedItem,
   EditTool,
 } from "@/app/features/amg-apd/types";
+
 import ControlPanel, {
   type LayoutName,
   type GraphStats,
 } from "@/app/features/amg-apd/components/ControlPanel";
 import EditToolbar from "@/app/features/amg-apd/components/EditToolbar";
 import SelectedDetails from "@/app/features/amg-apd/components/SelectedDetails";
+
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import {
   validateGraphForSave,
   exportGraphToYaml,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
+
+import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayout";
+import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCyInteractions";
+import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyTooltip";
+import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
+import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
 
 cytoscape.use(dagre);
 cytoscape.use(coseBilkent);
@@ -45,7 +51,11 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
     );
   }
 
-  const cyRef = useRef<cytoscape.Core | null>(null);
+  const analysis = data as AnalysisResult;
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [cy, setCy] = useState<cytoscape.Core | null>(null);
+
   const [layoutName, setLayoutName] = useState<LayoutName>("dagre");
   const [selected, setSelected] = useState<SelectedItem>(null);
   const [editMode, setEditMode] = useState(false);
@@ -57,228 +67,41 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   const setLast = useAmgApdStore((s) => s.setLast);
 
   const [stats, setStats] = useState<GraphStats>(() =>
-    computeStatsFromData(data)
+    computeStatsFromData(analysis)
   );
 
-  const elements = useMemo(() => toElements(data), [data]);
+  const elements = useMemo(() => toElements(analysis), [analysis]);
+  const layout = useMemo(() => getCyLayout(layoutName), [layoutName]);
 
-  const layout =
-    layoutName === "dagre"
-      ? {
-          name: "dagre",
-          padding: 80,
-          rankDir: "LR",
-          rankSep: 120,
-          nodeSep: 80,
-          edgeSep: 80,
-        }
-      : layoutName === "cose-bilkent"
-      ? {
-          name: "cose-bilkent",
-          animate: false,
-          nodeRepulsion: 4500,
-          idealEdgeLength: 150,
-        }
-      : layoutName === "cola"
-      ? {
-          name: "cola",
-          fit: true,
-          nodeSpacing: 40,
-          edgeLengthVal: 120,
-        }
-      : {
-          name: "elk",
-          elk: {
-            "elk.direction": "RIGHT",
-            "elk.layered.spacing.nodeNodeBetweenLayers": 80,
-            "elk.spacing.nodeNode": 60,
-          },
-        };
+  const { tooltip } = useCyTooltip({
+    cy,
+    data: analysis,
+    containerRef,
+  });
+
+  useCyInteractions({
+    cy,
+    editMode,
+    tool,
+    pendingSource,
+    setPendingSource,
+    setSelected,
+    recomputeStats: () => recomputeStats(cy, analysis, setStats),
+  });
+
+  // Use exported cyStyles as-is
+  const stylesheet = useMemo(() => styles as any, []);
 
   useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.resize();
-    cy.fit();
-  }, [elements, layoutName]);
-
-  useEffect(() => {
-    setStats(computeStatsFromData(data));
-  }, [data]);
-
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-
-    const onNodeTap = (evt: any) => {
-      const node = evt.target as cytoscape.NodeSingular;
-
-      if (
-        editMode &&
-        (tool === "connect-calls" ||
-          tool === "connect-reads" ||
-          tool === "connect-writes")
-      ) {
-        const edgeKind: EdgeKind =
-          tool === "connect-calls"
-            ? "CALLS"
-            : tool === "connect-reads"
-            ? "READS"
-            : "WRITES";
-
-        const id = node.id();
-
-        if (!pendingSource) {
-          setPendingSource(id);
-          cy.elements().removeClass("selected");
-          node.addClass("selected");
-        } else if (pendingSource === id) {
-          setPendingSource(null);
-          cy.elements().removeClass("selected");
-        } else {
-          const sourceId = pendingSource;
-          const targetId = id;
-
-          const edgeId = `e-${Date.now().toString(36)}-${Math.random()
-            .toString(36)
-            .slice(2, 8)}`;
-
-          let label: string;
-          let attrs: any | undefined;
-
-          if (edgeKind === "CALLS") {
-            const endpointsInput = window.prompt(
-              "Endpoints for this call (comma-separated).\nExample: GET /users/:id, POST /users",
-              ""
-            );
-            const endpoints =
-              endpointsInput
-                ?.split(",")
-                .map((s) => s.trim())
-                .filter(Boolean) ?? [];
-
-            const rpmInput = window.prompt(
-              "Approximate calls per minute (rpm) for this edge?",
-              "0"
-            );
-            let rpm = parseInt(rpmInput ?? "0", 10);
-            if (Number.isNaN(rpm) || rpm < 0) rpm = 0;
-
-            attrs = {
-              endpoints,
-              rate_per_min: rpm,
-            };
-
-            if (endpoints.length || rpm > 0) {
-              label = `calls (${endpoints.length} ep), ${rpm}rpm`;
-            } else {
-              label = "calls";
-            }
-          } else {
-            label = edgeKind === "READS" ? "reads" : "writes";
-          }
-
-          const edgeData: any = {
-            id: edgeId,
-            source: sourceId,
-            target: targetId,
-            kind: edgeKind,
-            label,
-          };
-          if (attrs) {
-            edgeData.attrs = attrs;
-          }
-
-          cy.add({
-            group: "edges",
-            data: edgeData,
-          });
-
-          setPendingSource(null);
-          cy.elements().removeClass("selected");
-          recomputeStats();
-        }
-        return;
-      }
-
-      cy.elements().removeClass("selected");
-      node.addClass("selected");
-      setSelected({ type: "node", data: node.data() });
-    };
-
-    const onEdgeTap = (evt: any) => {
-      const edge = evt.target as cytoscape.EdgeSingular;
-      cy.elements().removeClass("selected");
-      edge.addClass("selected");
-      setSelected({ type: "edge", data: edge.data() });
-    };
-
-    const onBgTap = (evt: any) => {
-      if (evt.target === cy) {
-        if (editMode && (tool === "add-service" || tool === "add-database")) {
-          const pos = evt.position;
-          const idBase = tool === "add-service" ? "service" : "db";
-          const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
-            .toString(36)
-            .slice(2, 6)}`;
-          const label = tool === "add-service" ? "new-service" : "new-database";
-          const kind: NodeKind =
-            tool === "add-service" ? "SERVICE" : "DATABASE";
-
-          cy.add({
-            group: "nodes",
-            data: { id, label, kind },
-            position: pos,
-          });
-
-          const node = cy.getElementById(id);
-          if (!node.empty()) {
-            cy.elements().removeClass("selected");
-            node.addClass("selected");
-            setSelected({ type: "node", data: node.data() });
-          }
-
-          recomputeStats();
-          return;
-        }
-
-        cy.elements().removeClass("selected");
-        setSelected(null);
-        setPendingSource(null);
-      }
-    };
-
-    cy.on("tap", "node", onNodeTap);
-    cy.on("tap", "edge", onEdgeTap);
-    cy.on("tap", onBgTap);
-
-    return () => {
-      cy.off("tap", "node", onNodeTap);
-      cy.off("tap", "edge", onEdgeTap);
-      cy.off("tap", onBgTap);
-    };
-  }, [editMode, tool, pendingSource, data]);
-
-  function recomputeStats() {
-    const cy = cyRef.current;
-    if (!cy) return;
-
-    const nodes = cy.nodes();
-    const services = nodes.filter((n) => n.data("kind") === "SERVICE").length;
-    const databases = nodes.filter((n) => n.data("kind") === "DATABASE").length;
-    const edges = cy.edges().length;
-
-    const detections = Array.isArray(data?.detections)
-      ? data.detections.length
-      : 0;
-
-    setStats({ services, databases, edges, detections });
-  }
+    setStats(computeStatsFromData(analysis));
+  }, [analysis]);
 
   function handleFit() {
-    const cy = cyRef.current;
     if (!cy) return;
-    cy.fit();
+    try {
+      cy.resize();
+      cy.fit(cy.elements(), 40);
+    } catch {}
   }
 
   function handleToggleEdit() {
@@ -288,13 +111,11 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   }
 
   function handleDeleteSelected() {
-    const cy = cyRef.current;
     if (!cy) return;
+
     const sel = cy.$(".selected");
-    if (!sel.length) {
-      window.alert("Nothing is selected to delete.");
-      return;
-    }
+    if (!sel.length) return window.alert("Nothing is selected to delete.");
+
     if (
       !window.confirm(
         `Delete ${sel.length} selected element${
@@ -304,22 +125,20 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
     ) {
       return;
     }
+
     sel.remove();
+
     setSelected(null);
     setPendingSource(null);
-    recomputeStats();
+    recomputeStats(cy, analysis, setStats);
   }
 
   function handleSaveChanges() {
     void (async () => {
-      const cy = cyRef.current;
       if (!cy) return;
 
       const error = validateGraphForSave(cy);
-      if (error) {
-        window.alert(error);
-        return;
-      }
+      if (error) return window.alert(error);
 
       const yaml = exportGraphToYaml(cy);
       setEditedYaml(yaml);
@@ -336,18 +155,13 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
           method: "POST",
           body: fd,
         });
-
-        if (!res.ok) {
-          const msg = await res.text();
-          throw new Error(msg || "Re-analysis failed");
-        }
+        if (!res.ok)
+          throw new Error((await res.text()) || "Re-analysis failed");
 
         const updated: AnalysisResult = await res.json();
 
         setLast(updated);
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem("amg_last", JSON.stringify(updated));
-        }
+        window.sessionStorage.setItem("amg_last", JSON.stringify(updated));
 
         setEditMode(false);
         setTool("select");
@@ -371,7 +185,6 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   }
 
   function handleRenameNode(id: string, newLabel: string) {
-    const cy = cyRef.current;
     if (!cy) return;
     const node = cy.getElementById(id);
     if (!node.empty()) {
@@ -389,11 +202,14 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
         editMode={editMode}
         onToggleEdit={handleToggleEdit}
         onSaveChanges={handleSaveChanges}
-        data={data}
+        data={analysis}
         isGenerating={isGenerating}
       />
 
-      <div className="relative h-[60vh] overflow-hidden rounded border bg-white shadow-sm">
+      <div
+        ref={containerRef}
+        className="relative h-[60vh] overflow-hidden rounded border bg-white shadow-sm"
+      >
         <EditToolbar
           editMode={editMode}
           tool={tool}
@@ -403,26 +219,34 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
         />
 
         <CytoscapeComponent
-          cy={(cy) => {
-            cyRef.current = cy;
-            cy.fit();
+          cy={(c) => {
+            setCy((prev) => prev ?? c);
+
+            c.ready(() => {
+              requestAnimationFrame(() => {
+                try {
+                  if ((c as any).destroyed?.()) return;
+                  if (!(c as any).container?.()) return;
+                  c.resize();
+                  c.fit(c.elements(), 40);
+                } catch {}
+              });
+            });
           }}
           elements={elements}
-          stylesheet={styles}
-          layout={layout}
-          style={{
-            width: "100%",
-            height: "100%",
-            backgroundColor: "#f9fafb",
-          }}
+          stylesheet={stylesheet}
+          layout={layout as any}
+          style={{ width: "100%", height: "100%", backgroundColor: "#f9fafb" }}
           minZoom={0.2}
           maxZoom={3}
           wheelSensitivity={0.2}
         />
+
+        <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
       </div>
 
       <SelectedDetails
-        data={data}
+        data={analysis}
         selected={selected}
         editMode={editMode}
         onRenameNode={handleRenameNode}
@@ -431,7 +255,7 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   );
 }
 
-function computeStatsFromData(data?: AnalysisResult): GraphStats {
+function computeStatsFromData(data: AnalysisResult): GraphStats {
   const nodeValues = data?.graph?.nodes ? Object.values(data.graph.nodes) : [];
   const services = nodeValues.filter((n: any) => n.kind === "SERVICE").length;
   const databases = nodeValues.filter((n: any) => n.kind === "DATABASE").length;
@@ -439,6 +263,5 @@ function computeStatsFromData(data?: AnalysisResult): GraphStats {
   const detections = Array.isArray(data?.detections)
     ? data.detections.length
     : 0;
-
   return { services, databases, edges, detections };
 }

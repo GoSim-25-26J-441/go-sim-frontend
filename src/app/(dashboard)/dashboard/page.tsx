@@ -22,13 +22,30 @@ export default function DashboardLanding() {
     <div className="p-6 space-y-4">
       <h2 className="text-lg font-medium">Architecture workspace</h2>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Link href="/diagram" className="rounded-xl border border-border p-4 hover:bg-surface">
+        <Link
+          href="/diagram"
+          className="rounded-xl border border-border p-4 hover:bg-surface"
+        >
           <div className="font-medium">Draw a diagram</div>
           <div className="opacity-60 text-sm">Open the canvas</div>
         </Link>
-        <button onClick={onNewChat} className="rounded-xl border border-border p-4 text-left hover:bg-surface">
+
+        <Link
+          href="/dashboard/patterns/upload"
+          className="rounded-xl border border-border p-4 hover:bg-surface"
+        >
+          <div className="font-medium">AMG &amp; APD</div>
+          <div className="opacity-60 text-sm">Upload &amp; analyze YAML</div>
+        </Link>
+
+        <button
+          onClick={onNewChat}
+          className="rounded-xl border border-border p-4 text-left hover:bg-surface"
+        >
           <div className="font-medium">Start a new chat</div>
-          <div className="opacity-60 text-sm">Creates a job and opens summary</div>
+          <div className="opacity-60 text-sm">
+            Creates a job and opens summary
+          </div>
         </button>
       </div>
     </div>
