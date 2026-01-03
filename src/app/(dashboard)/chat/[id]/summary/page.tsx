@@ -1,3 +1,4 @@
+import ExportButtons from "@/components/chat/export-buttons/page";
 import Link from "next/link";
 
 export default function Summary({ params }: { params: { id: string } }) {
@@ -25,6 +26,8 @@ export default function Summary({ params }: { params: { id: string } }) {
           <div className="font-medium">Reports</div>
           <div className="opacity-60 text-sm">Export & summaries</div>
         </Link>
+
+        <ExportButtons jobId={id} />
       </div>
     </div>
   );
