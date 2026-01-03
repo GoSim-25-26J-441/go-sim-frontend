@@ -8,8 +8,10 @@ type State = {
   last?: AnalysisResult;
   setLast: (r?: AnalysisResult) => void;
 
+  // We'll treat this as the "current YAML" at all times
   editedYaml?: string;
   setEditedYaml: (yaml?: string) => void;
+  clearEditedYaml: () => void;
 };
 
 export const useAmgApdStore = create<State>()(
@@ -19,16 +21,14 @@ export const useAmgApdStore = create<State>()(
       setLast: (r?: AnalysisResult) =>
         set({
           last: r,
-          // whenever we get a fresh analysis from backend,
-          // clear any previous edited YAML
-          editedYaml: undefined,
+          // ✅ DO NOT clear editedYaml here — it is needed for suggestions/apply
         }),
 
       editedYaml: undefined,
       setEditedYaml: (yaml?: string) => set({ editedYaml: yaml }),
+      clearEditedYaml: () => set({ editedYaml: undefined }),
     }),
     {
-      // IMPORTANT: new key → avoids conflict with previous manual "amg_last"
       name: "amg_apd_store",
       storage: createJSONStorage(() => sessionStorage),
     }
