@@ -20,7 +20,7 @@ export async function send(
   message: string,
   opts?: { mode?: string; forceLLM?: boolean },
 ): Promise<ChatReply> {
-  const body: Record<string, unknown> = { message };
+  const body: Record<string, unknown> = { message }; 
   if (opts?.mode) body.mode = opts.mode;
   if (opts?.forceLLM) body.force_llm = true;
 
