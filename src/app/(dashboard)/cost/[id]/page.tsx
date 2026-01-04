@@ -724,7 +724,6 @@ export default function CostPage2() {
                 </div>
                 <div className="mt-8 pt-6 border-t border-gray-800">
                     <div className="text-center text-sm text-gray-600">
-                        <p>Data fetched from cloud provider APIs on {new Date(costData.stored_at).toLocaleString()}</p>
                         <p className="mt-1">Prices are estimates based on public pricing and may vary based on actual usage, commitments, and additional services</p>
                     </div>
                 </div>
