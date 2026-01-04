@@ -13,10 +13,10 @@ export default function Topbar() {
         </Link>
         <Link
           href="/dashboard/patterns/upload"
-          className="rounded-xl border border-border p-4 hover:bg-surface"
+          className="border border-border my-1 p-2 hover:bg-surface"
         >
-          <div className="font-medium">AMG &amp; APD</div>
-          <div className="opacity-60 text-sm">Upload &amp; analyze YAML</div>
+          <div className="text-xs font-bold">AMG &amp; APD</div>
+          <div className="opacity-60 text-xs">Upload &amp; analyze YAML</div>
         </Link>
       </div>
     </header>
