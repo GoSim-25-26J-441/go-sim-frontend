@@ -18,9 +18,9 @@ export default function Summary({ params }: { params: { id: string } }) {
           <div className="font-medium">Graph</div>
           <div className="opacity-60 text-sm">Visualize services & edges</div>
         </Link>
-        <Link href={`/analysis/${id}`} className="rounded-xl border border-border p-4 hover:bg-surface">
-          <div className="font-medium">Analysis</div>
-          <div className="opacity-60 text-sm">Anti-patterns & sizing</div>
+        <Link href={`/cost`} className="rounded-xl border border-border p-4 hover:bg-surface">
+          <div className="font-medium">Cost Analysis</div>
+          <div className="opacity-60 text-sm">Sizing</div>
         </Link>
         <Link href={`/reports/${id}`} className="rounded-xl border border-border p-4 hover:bg-surface">
           <div className="font-medium">Reports</div>
