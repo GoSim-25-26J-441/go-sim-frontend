@@ -38,7 +38,7 @@ export default function SuggestionModal({
               Suggestions to fix anti-patterns
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Simple, human-readable steps you can apply automatically.
+              Simple steps that can be applied automatically.
             </p>
           </div>
 
