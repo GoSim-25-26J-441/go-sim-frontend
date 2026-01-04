@@ -23,6 +23,7 @@ import {
     TrendingUp,
     Calendar
 } from "lucide-react";
+import { getRegionDisplayName } from "@/utils/regionFormatter";
 
 interface ClusterCostResult {
     provider: string;
@@ -98,7 +99,18 @@ export default function CostPage2() {
 
     useEffect(() => {
         if (requestId) {
-            handleFetchCostData();
+            if (selectedProvider === "aws") {
+                setSelectedRegion("argentinabuenosaires");
+            } else if (selectedProvider === "azure") {
+                setSelectedRegion("attdallas1");
+            }
+
+            if (selectedProvider === "aws") {
+                handleFetchCostData("aws", "argentinabuenosaires");
+            } else if (selectedProvider === "azure") {
+                handleFetchCostData("azure", "attdallas1");
+            }
+
             handleFetchRegions(selectedProvider);
         } else {
             setError("No request ID provided");
@@ -109,16 +121,20 @@ export default function CostPage2() {
     useEffect(() => {
         if (requestId) {
             handleFetchRegions(selectedProvider);
+
+            if (selectedProvider === "aws") {
+                setSelectedRegion("argentinabuenosaires");
+                handleFetchCostData("aws", "argentinabuenosaires");
+            } else if (selectedProvider === "azure") {
+                setSelectedRegion("attdallas1");
+                handleFetchCostData("azure", "attdallas1");
+            }
         }
     }, [selectedProvider, requestId]);
 
     const handleRegionChange = async (region: string) => {
         setSelectedRegion(region);
-        if (region) {
-            await handleFetchCostData(selectedProvider, region);
-        } else {
-            await handleFetchCostData();
-        }
+        await handleFetchCostData(selectedProvider, region);
     };
 
     const formatCurrency = (v: number) =>
@@ -264,7 +280,7 @@ export default function CostPage2() {
                     </div>
 
                     <div>
-                        <p className="text-sm text-gray-500 mb-3">Select Region (Optional):</p>
+                        <p className="text-sm text-gray-500 mb-3">Select Region:</p>
                         <div className="flex gap-3 items-center">
                             <select
                                 className="bg-black text-white p-3 rounded-lg border border-gray-800 focus:border-gray-700 focus:outline-none w-full max-w-md"
@@ -272,10 +288,9 @@ export default function CostPage2() {
                                 onChange={(e) => handleRegionChange(e.target.value)}
                                 disabled={regions.length === 0}
                             >
-                                <option value="">All Regions</option>
                                 {regions.map((r) => (
                                     <option key={r} value={r}>
-                                        {r}
+                                        {getRegionDisplayName(r, selectedProvider)}
                                     </option>
                                 ))}
                             </select>
@@ -286,6 +301,9 @@ export default function CostPage2() {
                                 </span>
                             )}
                         </div>
+                        <p className="text-xs text-gray-600 mt-2">
+                            Default: {getRegionDisplayName(selectedProvider === "aws" ? "argentinabuenosaires" : "attdallas1", selectedProvider)}
+                        </p>
                     </div>
                 </div>
 
@@ -295,6 +313,11 @@ export default function CostPage2() {
                         <h2 className="text-2xl font-bold">Pricing Options Breakdown</h2>
                         <div className="text-sm text-gray-500">
                             Showing {currentCosts.length} pricing option{currentCosts.length !== 1 ? 's' : ''}
+                            {selectedRegion && (
+                                <span className="ml-2">
+                                    in {getRegionDisplayName(selectedRegion, selectedProvider)}
+                                </span>
+                            )}
                         </div>
                     </div>
 
@@ -302,7 +325,7 @@ export default function CostPage2() {
                         <div className="text-center py-12 bg-black border border-gray-800 rounded-lg">
                             <Server className="w-12 h-12 text-gray-600 mx-auto mb-4" />
                             <p className="text-gray-500">No instances found for {selectedProvider.toUpperCase()}</p>
-                            {selectedRegion && <p className="text-sm text-gray-600 mt-2">in region: {selectedRegion}</p>}
+                            {selectedRegion && <p className="text-sm text-gray-600 mt-2">in region: {getRegionDisplayName(selectedRegion, selectedProvider)}</p>}
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -369,7 +392,7 @@ export default function CostPage2() {
                                                     </div>
                                                     <div className="flex items-center gap-1">
                                                         <MapPin className="w-4 h-4" />
-                                                        <span>{cost.region}</span>
+                                                        <span>{getRegionDisplayName(cost.region, selectedProvider)}</span>
                                                     </div>
                                                     <div className="flex items-center gap-1">
                                                         <Users className="w-4 h-4" />
