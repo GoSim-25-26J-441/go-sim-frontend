@@ -4,11 +4,11 @@ import { InputField } from "@/components/common/inputFeild/page";
 import { TextAreaField } from "@/components/common/inputFeild/page";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { signUpWithEmail } from "@/lib/firebase/auth";
+import { signUpWithEmail, signOut as firebaseSignOut } from "@/lib/firebase/auth";
 import { updateProfile } from "firebase/auth";
 import { syncUser } from "@/lib/api-client/auth";
 import { useAuth } from "@/providers/auth-context";
-import { AuthError } from "firebase/auth";
+import { getFirebaseErrorMessage } from "@/utils/firebase-errors";
 
 export default function SignUpForm() {
   const router = useRouter();
@@ -84,23 +84,6 @@ export default function SignUpForm() {
     }));
 
     return error;
-  };
-
-  const getFirebaseErrorMessage = (error: AuthError): string => {
-    switch (error.code) {
-      case "auth/email-already-in-use":
-        return "An account with this email already exists.";
-      case "auth/invalid-email":
-        return "Invalid email address.";
-      case "auth/weak-password":
-        return "Password is too weak. Please use a stronger password.";
-      case "auth/operation-not-allowed":
-        return "Email/password accounts are not enabled. Please contact support.";
-      case "auth/network-request-failed":
-        return "Network error. Please check your connection.";
-      default:
-        return "Failed to create account. Please try again.";
-    }
   };
 
   const handleSubmit = async () => {
@@ -192,21 +175,29 @@ export default function SignUpForm() {
         if (syncedProfile) {
           if (syncedProfile.organization !== formData.organization.trim() || 
               syncedProfile.role !== formData.role.trim()) {
-            console.warn("Synced profile data doesn't match submitted data:", {
+            console.error("Synced profile data doesn't match submitted data:", {
               submitted: { organization: formData.organization, role: formData.role },
               received: { organization: syncedProfile.organization, role: syncedProfile.role },
             });
+            // This is a critical backend synchronization error
+            // Treat this as a sync failure so the user is notified and can retry
+            throw new Error("Profile data was not saved correctly. Please try again or contact support if this persists.");
           }
         }
-        
-        // Small delay to ensure backend has fully processed and stored the data
-        // This prevents AuthProvider from overwriting during initial sync
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (syncError: any) {
+      } catch (syncError) {
         console.error("Failed to sync user with backend:", syncError);
-        const errorMessage = syncError?.message || "Unknown error occurred";
+        
+        // Roll back the Firebase account creation since backend sync failed
+        try {
+          await firebaseSignOut();
+          console.log("Firebase account sign-out completed after sync failure");
+        } catch (signOutError) {
+          console.error("Failed to sign out after sync error:", signOutError);
+        }
+        
+        // Show sanitized error message to user
         setErrors({ 
-          general: `Account created but failed to save profile information: ${errorMessage}. Please update your profile after signing in.` 
+          general: "Account created but we couldn't save your profile information. Please try signing in and updating your profile, or contact support if the issue persists."
         });
         setIsSubmitting(false);
         return;

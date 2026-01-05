@@ -11,6 +11,7 @@ export default function Topbar() {
   const router = useRouter();
   const { signOut, userProfile, user } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState(false);
 
   const handleLogout = async () => {
     try {
@@ -52,28 +53,21 @@ export default function Topbar() {
           <div className="flex items-center gap-3 border-l border-border pl-4">
             {/* Avatar Circle */}
             <div className="relative">
-              {photoUrl ? (
+              {photoUrl && !imageLoadError ? (
                 <img
                   src={photoUrl}
                   alt={displayName}
                   className="w-8 h-8 rounded-full object-cover border border-border"
-                  onError={(e) => {
-                    // Fallback to initials if image fails to load
-                    e.currentTarget.style.display = "none";
-                    if (e.currentTarget.nextElementSibling) {
-                      (e.currentTarget.nextElementSibling as HTMLElement).style.display = "flex";
-                    }
-                  }}
+                  onError={() => setImageLoadError(true)}
                 />
-              ) : null}
-              <div
-                className={`w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-semibold border border-border ${
-                  photoUrl ? "hidden" : "flex"
-                }`}
-                title={displayName}
-              >
-                {initials}
-              </div>
+              ) : (
+                <div
+                  className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-semibold border border-border"
+                  title={displayName}
+                >
+                  {initials}
+                </div>
+              )}
             </div>
 
             <button
