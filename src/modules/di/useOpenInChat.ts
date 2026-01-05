@@ -36,13 +36,35 @@ export function useOpenInChat() {
     const jobId: string = a.jobId;
 
     // 2) (optional) build intermediate + fuse
-    if (opts?.runIntermediate)
-      await fetch(`/api/di/jobs/${jobId}/intermediate?refresh=true`, { method: "GET" });
-    if (opts?.runFuse)
-      await fetch(`/api/di/jobs/${jobId}/fuse`, { method: "POST" });
+    if (opts?.runIntermediate) {
+      const r = await fetch(`/api/di/jobs/${jobId}/intermediate?refresh=true`, {
+        method: "GET",
+      });
+      if (!r.ok) {
+        throw new Error(`intermediate failed: ${r.status}`);
+      }
+    }
 
-    // 3) go to the chat page
+    if (opts?.runFuse) {
+      const r = await fetch(`/api/di/jobs/${jobId}/fuse`, { method: "POST" });
+      if (!r.ok) {
+        throw new Error(`fuse failed: ${r.status}`);
+      }
+
+      // 🔹 Warm the export once so the chat page doesn’t hit a 404 immediately
+      // if it calls /export on first load.
+      try {
+        await fetch(
+          `/api/di/jobs/${jobId}/export?format=json&download=false`,
+          { method: "GET" },
+        );
+      } catch {
+        // best-effort warmup – ignore failures here
+      }
+    }
+
     router.push(`/chat/${jobId}/talk`);
     return jobId;
   };
 }
+
