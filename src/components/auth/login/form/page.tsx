@@ -5,9 +5,14 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import GoogleIcon from "../../../../../public/icon/google.png";
+import { signInWithEmail, signInWithGoogle } from "@/lib/firebase/auth";
+import { isFirebaseInitialized } from "@/lib/firebase/config";
+import { useAuth } from "@/providers/auth-context";
+import { AuthError } from "firebase/auth";
 
 export default function Form() {
   const router = useRouter();
+  const { isLoggedIn, isLoading: authLoading } = useAuth();
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -16,6 +21,7 @@ export default function Form() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [rememberMe, setRememberMe] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Load remembered email on component mount
   useEffect(() => {
@@ -25,6 +31,13 @@ export default function Form() {
       setRememberMe(true);
     }
   }, []);
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!authLoading && isLoggedIn) {
+      router.push("/dashboard");
+    }
+  }, [isLoggedIn, authLoading, router]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -76,6 +89,36 @@ export default function Form() {
     setRememberMe(!rememberMe);
   };
 
+  const getFirebaseErrorMessage = (error: AuthError | Error): string => {
+    // Check if it's a Firebase AuthError with a code
+    if ('code' in error && error.code) {
+      switch (error.code) {
+        case "auth/user-not-found":
+          return "No account found with this email address.";
+        case "auth/wrong-password":
+          return "Incorrect password. Please try again.";
+        case "auth/invalid-email":
+          return "Invalid email address.";
+        case "auth/user-disabled":
+          return "This account has been disabled.";
+        case "auth/too-many-requests":
+          return "Too many failed attempts. Please try again later.";
+        case "auth/network-request-failed":
+          return "Network error. Please check your connection.";
+        default:
+          console.error("Firebase auth error:", error.code, error);
+          return "Sign in failed. Please try again.";
+      }
+    }
+    
+    // Handle non-Firebase errors (like Firebase not initialized)
+    console.error("Authentication error:", error);
+    if (error instanceof Error && error.message.includes("Firebase Auth is not initialized")) {
+      return "Firebase authentication is not configured. Please check your environment variables.";
+    }
+    return "Sign in failed. Please try again.";
+  };
+
   const handleSubmit = async () => {
     // Validate all fields
     const newErrors: Record<string, string> = {};
@@ -94,7 +137,26 @@ export default function Form() {
       return;
     }
 
+    setIsSubmitting(true);
+    setErrors({});
+
     try {
+      // Check if Firebase is initialized
+      if (!isFirebaseInitialized) {
+        console.error(
+          "❌ Firebase is not initialized.\n" +
+          "Please ensure you have:\n" +
+          "1. Created a .env.local file from .env.example\n" +
+          "2. Filled in all Firebase configuration variables\n" +
+          "3. Restarted your development server (npm run dev)"
+        );
+        setErrors({ 
+          general: "Firebase authentication is not configured. Please check your .env.local file and restart the development server." 
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
       // Handle remember me
       if (rememberMe) {
         localStorage.setItem("gs_remembered_email", formData.email);
@@ -102,40 +164,71 @@ export default function Form() {
         localStorage.removeItem("gs_remembered_email");
       }
 
-      // TODO: Replace with your actual sign-in API call
-      console.log("Signing in with:", formData);
+      // Sign in with Firebase
+      const { user, error } = await signInWithEmail(formData.email, formData.password);
 
-      // Example API call (uncomment and modify):
-      // const response = await fetch('/api/auth/signin', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify(formData),
-      // });
-      //
-      // if (!response.ok) {
-      //   throw new Error('Sign in failed');
-      // }
-      //
-      // const data = await response.json();
-      // // Store auth token
-      // localStorage.setItem('gs_auth_token', data.token);
+      if (error) {
+        console.error("Sign in error details:", error);
+        setErrors({ general: getFirebaseErrorMessage(error) });
+        setIsSubmitting(false);
+        return;
+      }
 
-      // Success - redirect to dashboard
-      alert("Sign in successful!");
-      router.push("/dashboard");
-
-      // Reset form
-      setFormData({ email: rememberMe ? formData.email : "", password: "" });
-      setTouched({});
-      setErrors({});
+      if (user) {
+        // AuthProvider will handle the redirect via useEffect
+        // Reset form
+        setFormData({ email: rememberMe ? formData.email : "", password: "" });
+        setTouched({});
+        setErrors({});
+        router.push("/dashboard");
+      }
     } catch (error) {
       console.error("Sign in error:", error);
-      setErrors({ general: "Sign in failed. Please try again." });
+      setErrors({ general: "An unexpected error occurred. Please try again." });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleGoogleSignIn = () => {
-    router.push("/dashboard");
+  const handleGoogleSignIn = async () => {
+    setIsSubmitting(true);
+    setErrors({});
+
+    // Check if Firebase is initialized
+    if (!isFirebaseInitialized) {
+      console.error("Firebase is not initialized. Please check your environment variables.");
+      setErrors({ 
+        general: "Firebase authentication is not configured. Please check your .env.local file and restart the development server." 
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const { user, error } = await signInWithGoogle();
+
+      if (error) {
+        // Handle user cancellation gracefully
+        if ('code' in error && (error.code === "auth/popup-closed-by-user" || error.code === "auth/cancelled-popup-request")) {
+          // User closed the popup, don't show error
+          setIsSubmitting(false);
+          return;
+        }
+        setErrors({ general: getFirebaseErrorMessage(error) });
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (user) {
+        // AuthProvider will handle the redirect via useEffect
+        router.push("/dashboard");
+      }
+    } catch (error) {
+      console.error("Google sign in error:", error);
+      setErrors({ general: "Google sign in failed. Please try again." });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleForgotPassword = () => {
@@ -153,7 +246,7 @@ export default function Form() {
     }
   };
 
-  const isFormValid = formData.email.trim() && formData.password.trim();
+  const isFormValid = formData.email.trim() && formData.password.trim() && !isSubmitting;
 
   return (
     <section className="px-4 sm:px-6 lg:px-8" onKeyPress={handleKeyPress}>
@@ -227,10 +320,10 @@ export default function Form() {
           <div className="flex flex-col justify-center pt-2">
             <button
               onClick={handleSubmit}
-              disabled={!isFormValid}
+              disabled={!isFormValid || isSubmitting}
               className="px-4 py-2 bg-white text-black text-sm font-semibold rounded-lg hover:bg-white/80 transition-all disabled:bg-gray-600 disabled:text-white disabled:cursor-not-allowed"
             >
-              Sign In
+              {isSubmitting ? "Signing in..." : "Sign In"}
             </button>
           </div>
         </div>
@@ -260,7 +353,8 @@ export default function Form() {
       <div className="flex flex-col">
         <button
           onClick={handleGoogleSignIn}
-          className="flex flex-row justify-center gap-3 px-4 py-2 bg-white text-black text-sm font-semibold rounded-full hover:bg-white/80 transition-all"
+          disabled={isSubmitting}
+          className="flex flex-row justify-center gap-3 px-4 py-2 bg-white text-black text-sm font-semibold rounded-full hover:bg-white/80 transition-all disabled:bg-gray-600 disabled:text-white disabled:cursor-not-allowed"
         >
           <Image
             src={GoogleIcon}
