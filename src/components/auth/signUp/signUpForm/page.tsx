@@ -179,8 +179,9 @@ export default function SignUpForm() {
               submitted: { organization: formData.organization, role: formData.role },
               received: { organization: syncedProfile.organization, role: syncedProfile.role },
             });
+            // This is a critical backend synchronization error
             // Treat this as a sync failure so the user is notified and can retry
-            throw new Error("Profile data mismatch after syncing with the server.");
+            throw new Error("Profile data was not saved correctly. Please try again or contact support if this persists.");
           }
         }
       } catch (syncError) {
