@@ -1,4 +1,3 @@
-// features/amg-apd/components/graph/useCyInteractions.ts
 import { useEffect } from "react";
 import type cytoscape from "cytoscape";
 import type {
@@ -39,7 +38,6 @@ export function useCyInteractions({
       if (!node || !node.isNode?.()) return;
       if (node.hasClass("halo")) return;
 
-      // connect tools
       if (
         editMode &&
         (tool === "connect-calls" ||
@@ -127,7 +125,6 @@ export function useCyInteractions({
         return;
       }
 
-      // normal selection
       safeUnselectAll();
       node.select();
       setSelected({ type: "node", data: node.data() });
@@ -147,7 +144,6 @@ export function useCyInteractions({
     const onBgTap = (evt: any) => {
       if (evt.target !== cy) return;
 
-      // add node tools
       if (editMode && (tool === "add-service" || tool === "add-database")) {
         const pos = evt.position;
         const idBase = tool === "add-service" ? "service" : "db";
@@ -172,7 +168,6 @@ export function useCyInteractions({
         return;
       }
 
-      // clear selection
       safeUnselectAll();
       setSelected(null);
       setPendingSource(null);

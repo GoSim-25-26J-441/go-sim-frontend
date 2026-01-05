@@ -95,6 +95,5 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     };
   });
 
-  // ✅ No halos anymore
   return [...nodes, ...edges];
 }
