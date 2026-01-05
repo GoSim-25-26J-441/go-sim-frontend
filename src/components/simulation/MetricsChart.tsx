@@ -1,7 +1,7 @@
 "use client";
 
 import { TimeSeriesData } from "@/types/simulation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -75,6 +75,31 @@ export function MetricsChart({
 }: MetricsChartProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [chartKey, setChartKey] = useState(0);
+
+  // Inject custom styles for brush component
+  useEffect(() => {
+    const styleId = "recharts-brush-dark-theme";
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = `
+        .recharts-brush-traveller {
+          fill: #ffffff40 !important;
+          stroke: #ffffff60 !important;
+        }
+        .recharts-brush-slide {
+          fill: #ffffff10 !important;
+        }
+        .recharts-brush-texts text {
+          fill: #ffffff60 !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    return () => {
+      // Don't remove on unmount as other charts might use it
+    };
+  }, []);
 
   // Transform data for Recharts
   const chartData = useMemo(() => {
@@ -227,8 +252,10 @@ export function MetricsChart({
               <Brush
                 dataKey="timestamp"
                 height={30}
-                stroke="#3b82f6"
+                stroke="#ffffff20"
+                fill="#ffffff10"
                 tickFormatter={(value) => new Date(value).toLocaleTimeString()}
+                travellerWidth={10}
               />
             )}
 
