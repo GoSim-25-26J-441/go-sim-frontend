@@ -18,6 +18,9 @@
     "cytoscape-dagre": "^2.5.0",
     "cytoscape-elk": "^2.3.0",
     "elkjs": "^0.11.0",
+    "html2canvas": "^1.4.1",
+    "lucide-react": "^0.562.0",
+    "next": "15.5.4",
     "firebase": "^12.7.0",
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.562.0",
@@ -27,6 +30,7 @@
     "react-cytoscapejs": "^2.0.0",
     "react-dom": "19.1.0",
     "react-redux": "^9.2.0",
+    "recharts": "^3.6.0",
     "zod": "^4.1.13",
     "zustand": "^5.0.8"
   },
