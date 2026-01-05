@@ -2,7 +2,6 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import React, {
   useState,
   useRef,
@@ -15,7 +14,6 @@ import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
 import S3 from "../../../../public/diagram-icons/S3.svg";
 import S4 from "../../../../public/diagram-icons/S4.svg";
-import { useSession } from "@/modules/session";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 
 type NodeKind =
@@ -45,12 +43,6 @@ interface DiagramEdge {
   sync: boolean;
   label?: string;
 }
-
-type OpenOpts = {
-  seed?: string;
-  runIntermediate?: boolean;
-  runFuse?: boolean;
-};
 
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 60;
@@ -114,7 +106,6 @@ function colorForKind(kind: NodeKind): string {
 }
 
 export default function DrawDiagram() {
-  const router = useRouter();
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);

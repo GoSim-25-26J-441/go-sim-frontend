@@ -1,28 +1,36 @@
-// src/app/api/di/jobs/[id]/chat/history/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: Request,
-  { params }: { params: { id: string } }
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }   // 👈 params is a Promise
 ) {
-  const BASE = process.env.DESIGN_INPUT_API_BASE!;
-  const KEY  = process.env.DESIGN_INPUT_API_KEY!;
-  const uid  = (await cookies()).get("uid")?.value || "demo-user";
+  const { id } = await ctx.params;           // 👈 await it
 
-  const r = await fetch(`${BASE}/jobs/${params.id}/chat/history`, {
-    headers: { "X-API-Key": KEY, "X-User-Id": uid },
-    cache: "no-store",
-  });
-
-  const text = await r.text();
-  if (!r.ok) {
+  const base = process.env.DESIGN_INPUT_API_BASE;
+  const apiKey = process.env.DESIGN_INPUT_API_KEY;
+  if (!base || !apiKey) {
     return NextResponse.json(
-      { ok: false, error: `backend ${r.status}: ${text}` },
-      { status: 502 }
+      { ok: false, error: "Missing env: DESIGN_INPUT_API_BASE or DESIGN_INPUT_API_KEY" },
+      { status: 500 }
     );
   }
-  return NextResponse.json(JSON.parse(text));
+
+  const uid = req.headers.get("x-user-id") || (await cookies()).get("uid")?.value || "demo-user";
+  const upstream = `${base}/jobs/${encodeURIComponent(id)}/chat/history`;
+
+  const r = await fetch(upstream, { headers: { "X-API-Key": apiKey, "X-User-Id": uid } });
+  const body = await r.text();
+
+  if (!r.ok) {
+    return NextResponse.json({ ok: false, error: `backend ${r.status}: ${body}` }, { status: 502 });
+  }
+
+  try {
+    return NextResponse.json(JSON.parse(body), { status: 200 });
+  } catch {
+    return new NextResponse(body, { status: 200, headers: { "content-type": "application/json" } });
+  }
 }

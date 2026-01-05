@@ -1,12 +1,13 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// Node runtime is fine; this route proxies to your backend to create a job
+
 import { NextResponse } from "next/server";
 import { cookies, headers } from "next/headers";
 
-const BASE = process.env.DESIGN_INPUT_API_BASE!; // e.g. http://localhost:8080/api/v1/design-input
+const BASE = process.env.DESIGN_INPUT_API_BASE!;
 const KEY  = process.env.DESIGN_INPUT_API_KEY!;
 
-export async function POST(req: Request) {
+export async function POST(_req: Request) {
   try {
     const hdrs = await headers();
     const uidFromHdr = hdrs.get("x-user-id") || "";

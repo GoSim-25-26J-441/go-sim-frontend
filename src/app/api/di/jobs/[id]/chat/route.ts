@@ -1,16 +1,31 @@
-// src/app/api/di/jobs/[id]/chat/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const BASE = process.env.DESIGN_INPUT_API_BASE!;
-  const KEY  = process.env.DESIGN_INPUT_API_KEY!;
-  const uid  = (await cookies()).get("uid")?.value || "demo-user";
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> } 
+) {
+  const { id } = await ctx.params;       
+
+  const BASE = process.env.DESIGN_INPUT_API_BASE;
+  const KEY  = process.env.DESIGN_INPUT_API_KEY;
+  if (!BASE || !KEY) {
+    return NextResponse.json(
+      { ok: false, error: "Missing env: DESIGN_INPUT_API_BASE or DESIGN_INPUT_API_KEY" },
+      { status: 500 }
+    );
+  }
+
+  // cookies() is synchronous; also allow header override
+  const store = cookies();
+  const uid = req.headers.get("x-user-id") || (await store).get("uid")?.value || "demo-user";
+
   const body = await req.text();
 
-  const r = await fetch(`${BASE}/jobs/${params.id}/chat`, {
+  const upstream = `${BASE}/jobs/${encodeURIComponent(id)}/chat`;
+  const r = await fetch(upstream, {
     method: "POST",
     headers: {
       "X-API-Key": KEY,
@@ -21,11 +36,20 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   });
 
   const text = await r.text();
+
   if (!r.ok) {
     return NextResponse.json(
       { ok: false, error: `backend ${r.status}: ${text}` },
       { status: 502 }
     );
   }
-  return NextResponse.json(JSON.parse(text));
+
+  try {
+    return NextResponse.json(JSON.parse(text));
+  } catch {
+    return new NextResponse(text, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
 }
