@@ -290,7 +290,7 @@ export default function SimulatorPage() {
                   <div className="flex items-center gap-2 ml-4">
                     {run.status === "completed" && run.results && (
                       <Link
-                        href={`/simulator/${run.id}/analysis`}
+                        href="/cost"
                         onClick={(e) => e.stopPropagation()}
                         className="p-2 hover:bg-white/10 rounded-lg transition-colors"
                         title="View analysis dashboard"
