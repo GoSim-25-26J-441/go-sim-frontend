@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,9 +14,12 @@ import {
   Users,
   TrendingUp,
   BarChart3,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
-import { SimulationRun } from "@/types/simulation";
+import { SimulationRun, TimeSeriesData, NodeMetrics } from "@/types/simulation";
 import { getSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
+import { SimulationStream, createSimulationStream } from "@/lib/api-client/simulation-stream";
 import { MetricsChart } from "@/components/simulation/MetricsChart";
 import { MultiAxisChart } from "@/components/simulation/MultiAxisChart";
 import { NodeMetricsCard } from "@/components/simulation/NodeMetricsCard";
@@ -31,9 +34,11 @@ export default function SimulationDetailPage() {
   const id = params.id as string;
   const [run, setRun] = useState<SimulationRun | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamRef = useRef<SimulationStream | null>(null);
 
+  // Fetch initial simulation run data
   useEffect(() => {
-    // Fetch simulation run from API (currently uses dummy data)
     getSimulationRun(id)
       .then((data) => {
         setRun(data);
@@ -44,6 +49,185 @@ export default function SimulationDetailPage() {
         setLoading(false);
       });
   }, [id]);
+
+  // Set up real-time streaming for running simulations
+  useEffect(() => {
+    if (!run || run.status !== "running") {
+      // Clean up stream if simulation is not running
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+      }
+      return;
+    }
+
+    // Only start streaming if we don't already have a stream
+    if (streamRef.current) {
+      return;
+    }
+
+    // Create and start the stream
+    const stream = createSimulationStream({
+      runId: id,
+      onMetricsUpdate: (event) => {
+        setRun((currentRun) => {
+          if (!currentRun) {
+            // If no current run, we can't update - this shouldn't happen
+            return currentRun;
+          }
+
+          if (!currentRun.results) {
+            // Initialize results if they don't exist
+            const eventSummary = event.data.summary || {};
+            return {
+              ...currentRun,
+              results: {
+                summary: {
+                  total_requests: eventSummary.total_requests ?? 0,
+                  successful_requests: eventSummary.successful_requests ?? 0,
+                  failed_requests: eventSummary.failed_requests ?? 0,
+                  avg_latency_ms: eventSummary.avg_latency_ms ?? 0,
+                  p95_latency_ms: eventSummary.p95_latency_ms ?? 0,
+                  p99_latency_ms: eventSummary.p99_latency_ms ?? 0,
+                  avg_rps: eventSummary.avg_rps ?? 0,
+                  peak_rps: eventSummary.peak_rps ?? 0,
+                },
+                node_metrics: event.data.node_metrics || [],
+                time_series: event.data.time_series
+                  ? [event.data.time_series]
+                  : [],
+                workload_metrics: {
+                  concurrent_users: { min: 0, max: 0, avg: 0 },
+                  rps: { min: 0, max: 0, avg: 0 },
+                  latency: { min_ms: 0, max_ms: 0, avg_ms: 0, p50_ms: 0, p95_ms: 0, p99_ms: 0 },
+                },
+              },
+            };
+          }
+
+          // Update existing results
+          const updatedTimeSeries = event.data.time_series
+            ? [...currentRun.results.time_series, event.data.time_series]
+            : currentRun.results.time_series;
+
+          const eventSummary = event.data.summary;
+          return {
+            ...currentRun,
+            results: {
+              ...currentRun.results,
+              summary: eventSummary
+                ? {
+                    total_requests: eventSummary.total_requests ?? currentRun.results.summary.total_requests,
+                    successful_requests: eventSummary.successful_requests ?? currentRun.results.summary.successful_requests,
+                    failed_requests: eventSummary.failed_requests ?? currentRun.results.summary.failed_requests,
+                    avg_latency_ms: eventSummary.avg_latency_ms ?? currentRun.results.summary.avg_latency_ms,
+                    p95_latency_ms: eventSummary.p95_latency_ms ?? currentRun.results.summary.p95_latency_ms,
+                    p99_latency_ms: eventSummary.p99_latency_ms ?? currentRun.results.summary.p99_latency_ms,
+                    avg_rps: eventSummary.avg_rps ?? currentRun.results.summary.avg_rps,
+                    peak_rps: eventSummary.peak_rps ?? currentRun.results.summary.peak_rps,
+                  }
+                : currentRun.results.summary,
+              node_metrics: event.data.node_metrics || currentRun.results.node_metrics,
+              time_series: updatedTimeSeries,
+            },
+          };
+        });
+      },
+      onStatusChange: (event) => {
+        setRun((currentRun) => {
+          if (!currentRun) return currentRun;
+          return {
+            ...currentRun,
+            status: event.data.status,
+          };
+        });
+
+        // Stop streaming if simulation is no longer running
+        if (event.data.status !== "running") {
+          stream.close();
+          streamRef.current = null;
+          setIsStreaming(false);
+        }
+      },
+      onError: (event) => {
+        console.error("[SimulationStream] Error:", event.data);
+        setRun((currentRun) => {
+          if (!currentRun) return currentRun;
+          return {
+            ...currentRun,
+            error: event.data.error,
+          };
+        });
+      },
+      onComplete: async (event) => {
+        console.log("[SimulationStream] Simulation completed:", event.data);
+        
+        // Fetch final run state from backend
+        try {
+          const finalRun = await getSimulationRun(id);
+          if (finalRun) {
+            setRun(finalRun);
+          }
+        } catch (error) {
+          console.error("Failed to fetch final run state:", error);
+        }
+
+        // Close stream
+        stream.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+      },
+      onConnectionOpen: () => {
+        console.log("[SimulationStream] Connection opened");
+        setIsStreaming(true);
+      },
+      onConnectionClose: () => {
+        console.log("[SimulationStream] Connection closed");
+        setIsStreaming(false);
+      },
+      onConnectionError: (error) => {
+        console.error("[SimulationStream] Connection error:", error);
+        setIsStreaming(false);
+      },
+      reconnect: true,
+      reconnectInterval: 5000,
+      maxReconnectAttempts: 10,
+    });
+
+    streamRef.current = stream;
+    stream.connect();
+
+    // Cleanup on unmount
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+      }
+    };
+  }, [id, run?.status]);
+
+  // Poll for status updates when not streaming (fallback)
+  useEffect(() => {
+    if (!run || run.status !== "running" || isStreaming) {
+      return;
+    }
+
+    // Poll every 5 seconds if streaming is not available
+    const interval = setInterval(async () => {
+      try {
+        const updatedRun = await getSimulationRun(id);
+        if (updatedRun) {
+          setRun(updatedRun);
+        }
+      } catch (error) {
+        console.error("Failed to poll simulation status:", error);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [id, run?.status, isStreaming]);
 
   if (loading) {
     return (
@@ -84,7 +268,24 @@ export default function SimulationDetailPage() {
             <ArrowLeft className="w-5 h-5 text-white" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-white">{run.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-white">{run.name}</h1>
+              {isRunning && (
+                <div className="flex items-center gap-2">
+                  {isStreaming ? (
+                    <div className="flex items-center gap-1 text-green-400 text-xs">
+                      <Wifi className="w-4 h-4" />
+                      <span>Live</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-yellow-400 text-xs">
+                      <WifiOff className="w-4 h-4" />
+                      <span>Polling</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <p className="text-sm text-white/60 mt-1">
               {run.config.description || "Simulation run details"}
             </p>
