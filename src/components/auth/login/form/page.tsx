@@ -89,34 +89,98 @@ export default function Form() {
     setRememberMe(!rememberMe);
   };
 
-  const getFirebaseErrorMessage = (error: AuthError | Error): string => {
+  const getFirebaseErrorMessage = (error: AuthError | Error, authMethod: 'email' | 'google' = 'email'): string => {
     // Check if it's a Firebase AuthError with a code
     if ('code' in error && error.code) {
       switch (error.code) {
+        // Authentication errors (email/password specific)
         case "auth/user-not-found":
-          return "No account found with this email address.";
+          return "No account found with this email address. Please check your email or sign up for a new account.";
         case "auth/wrong-password":
-          return "Incorrect password. Please try again.";
+          return "Incorrect password. Please try again or use 'Forgot password?' to reset it.";
         case "auth/invalid-email":
-          return "Invalid email address.";
+          return "Please enter a valid email address.";
+        case "auth/invalid-credential":
+          return authMethod === 'email' 
+            ? "Invalid email or password. Please check your credentials and try again."
+            : "Invalid credentials. Please try again.";
         case "auth/user-disabled":
-          return "This account has been disabled.";
+          return "This account has been disabled. Please contact support for assistance.";
+        
+        // Rate limiting
         case "auth/too-many-requests":
-          return "Too many failed attempts. Please try again later.";
+          return authMethod === 'email'
+            ? "Too many failed login attempts. Please wait a few minutes and try again, or reset your password."
+            : "Too many failed login attempts. Please wait a few minutes and try again.";
+        case "auth/operation-not-allowed":
+          return authMethod === 'email'
+            ? "Email/password sign-in is not enabled. Please contact support."
+            : "Google sign-in is not enabled. Please contact support or try email/password sign-in instead.";
+        
+        // Network errors
         case "auth/network-request-failed":
-          return "Network error. Please check your connection.";
+          return "Network error. Please check your internet connection and try again.";
+        case "auth/weak-password":
+          return "The password is too weak. Please use a stronger password.";
+        
+        // Configuration errors
+        case "auth/api-key-not-valid":
+          return "Authentication service configuration error. Please contact support.";
+        case "auth/app-not-authorized":
+          return "This app is not authorized. Please contact support.";
+        
+        // Google sign-in specific errors
+        case "auth/account-exists-with-different-credential":
+          return "An account already exists with the same email address but different sign-in method. Please sign in using your original method.";
+        case "auth/credential-already-in-use":
+          return "This account is already associated with a different user. Please contact support.";
+        case "auth/popup-blocked":
+          return "Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.";
+        case "auth/popup-closed-by-user":
+        case "auth/cancelled-popup-request":
+          return ""; // Silent error - user cancelled intentionally
+        
+        // Generic Firebase errors
+        case "auth/internal-error":
+          return "An internal error occurred. Please try again in a moment.";
+        case "auth/invalid-api-key":
+          return "Configuration error. Please contact support.";
+        case "auth/unauthorized-domain":
+          return "This domain is not authorized for authentication. Please contact support.";
+        case "auth/configuration-not-found":
+          return "Authentication configuration error. Please contact support.";
+        
         default:
-          console.error("Firebase auth error:", error.code, error);
-          return "Sign in failed. Please try again.";
+          // Log unknown error codes for debugging
+          console.error("Unhandled Firebase auth error:", error.code, error);
+          // Try to extract a message from the error if available
+          if ('message' in error && error.message) {
+            return `Sign in failed: ${error.message}. Please try again.`;
+          }
+          return authMethod === 'email'
+            ? "Sign in failed. Please check your credentials and try again."
+            : "Google sign-in failed. Please try again or use email/password sign-in.";
       }
     }
     
     // Handle non-Firebase errors (like Firebase not initialized)
     console.error("Authentication error:", error);
-    if (error instanceof Error && error.message.includes("Firebase Auth is not initialized")) {
-      return "Firebase authentication is not configured. Please check your environment variables.";
+    if (error instanceof Error) {
+      if (error.message.includes("Firebase Auth is not initialized")) {
+        return "Firebase authentication is not configured. Please check your .env.local file and restart the development server.";
+      }
+      if (error.message.includes("network") || error.message.includes("fetch")) {
+        return "Network error. Please check your internet connection and try again.";
+      }
+      // Return the actual error message if it's helpful
+      if (error.message && error.message.length < 100) {
+        return error.message;
+      }
     }
-    return "Sign in failed. Please try again.";
+    
+    return authMethod === 'email'
+      ? "Sign in failed. Please check your credentials and try again."
+      : "Google sign-in failed. Please try again.";
   };
 
   const handleSubmit = async () => {
@@ -169,7 +233,11 @@ export default function Form() {
 
       if (error) {
         console.error("Sign in error details:", error);
-        setErrors({ general: getFirebaseErrorMessage(error) });
+        const errorMessage = getFirebaseErrorMessage(error, 'email');
+        // Only set error if there's a message (some errors like popup-closed are silent)
+        if (errorMessage) {
+          setErrors({ general: errorMessage });
+        }
         setIsSubmitting(false);
         return;
       }
@@ -184,7 +252,11 @@ export default function Form() {
       }
     } catch (error) {
       console.error("Sign in error:", error);
-      setErrors({ general: "An unexpected error occurred. Please try again." });
+      // Handle unexpected errors with a helpful message
+      const errorMessage = error instanceof Error 
+        ? getFirebaseErrorMessage(error, 'email')
+        : "An unexpected error occurred. Please try again.";
+      setErrors({ general: errorMessage });
     } finally {
       setIsSubmitting(false);
     }
@@ -208,13 +280,12 @@ export default function Form() {
       const { user, error } = await signInWithGoogle();
 
       if (error) {
-        // Handle user cancellation gracefully
-        if ('code' in error && (error.code === "auth/popup-closed-by-user" || error.code === "auth/cancelled-popup-request")) {
-          // User closed the popup, don't show error
-          setIsSubmitting(false);
-          return;
+        console.error("Google sign in error details:", error);
+        const errorMessage = getFirebaseErrorMessage(error, 'google');
+        // Only set error if there's a message (popup-closed errors are silent)
+        if (errorMessage) {
+          setErrors({ general: errorMessage });
         }
-        setErrors({ general: getFirebaseErrorMessage(error) });
         setIsSubmitting(false);
         return;
       }
@@ -225,7 +296,10 @@ export default function Form() {
       }
     } catch (error) {
       console.error("Google sign in error:", error);
-      setErrors({ general: "Google sign in failed. Please try again." });
+      const errorMessage = error instanceof Error
+        ? getFirebaseErrorMessage(error, 'google')
+        : "Google sign in failed. Please try again.";
+      setErrors({ general: errorMessage });
     } finally {
       setIsSubmitting(false);
     }
@@ -292,7 +366,9 @@ export default function Form() {
 
           {/* General error message */}
           {errors.general && (
-            <p className="text-red-400 text-sm">{errors.general}</p>
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3">
+              <p className="text-red-400 text-sm font-medium">{errors.general}</p>
+            </div>
           )}
 
           {/* Remember Me & Forgot Password */}
