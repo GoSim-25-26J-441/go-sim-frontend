@@ -23,8 +23,15 @@ export default function Topbar() {
     }
   };
 
-  // Get display name for the logout button area
+  // Get display name and photo for avatar
   const displayName = userProfile?.display_name || user?.displayName || user?.email || "User";
+  const photoUrl = userProfile?.photo_url || user?.photoURL;
+  const initials = displayName
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
   return (
     <header className="h-14 border-b border-border bg-bg/80 backdrop-blur sticky top-0 z-40">
@@ -43,9 +50,32 @@ export default function Topbar() {
           </Link>
 
           <div className="flex items-center gap-3 border-l border-border pl-4">
-            <div className="text-xs opacity-60 truncate max-w-[150px]" title={displayName}>
-              {displayName}
+            {/* Avatar Circle */}
+            <div className="relative">
+              {photoUrl ? (
+                <img
+                  src={photoUrl}
+                  alt={displayName}
+                  className="w-8 h-8 rounded-full object-cover border border-border"
+                  onError={(e) => {
+                    // Fallback to initials if image fails to load
+                    e.currentTarget.style.display = "none";
+                    if (e.currentTarget.nextElementSibling) {
+                      (e.currentTarget.nextElementSibling as HTMLElement).style.display = "flex";
+                    }
+                  }}
+                />
+              ) : null}
+              <div
+                className={`w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-semibold border border-border ${
+                  photoUrl ? "hidden" : "flex"
+                }`}
+                title={displayName}
+              >
+                {initials}
+              </div>
             </div>
+
             <button
               onClick={handleLogout}
               disabled={isSigningOut}
