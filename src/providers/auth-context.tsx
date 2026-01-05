@@ -32,11 +32,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (firebaseUser) {
         try {
-          // First sync/ensure user exists in backend (creates if new, updates last_login if existing)
-          await syncUser({
-            display_name: firebaseUser.displayName || undefined,
-            photo_url: firebaseUser.photoURL || undefined,
-          });
+          // First, try to fetch existing profile to check if user already has data
+          let existingProfile: UserProfile | null = null;
+          try {
+            existingProfile = await getUserProfile();
+          } catch (fetchError) {
+            // User might not exist in backend yet, that's okay - will be created on sync
+            console.log("User profile not found in backend, will create new one");
+          }
+
+          // Sync/ensure user exists in backend
+          // Only send display_name and photo_url updates
+          // Backend will preserve existing organization/role/preferences if not provided
+          // This prevents overwriting data that was set during signup
+          const syncData: { display_name?: string; photo_url?: string } = {};
+          
+          // Only include display_name if it exists and is different
+          if (firebaseUser.displayName) {
+            syncData.display_name = firebaseUser.displayName;
+          }
+          
+          // Only include photo_url if it exists
+          if (firebaseUser.photoURL) {
+            syncData.photo_url = firebaseUser.photoURL;
+          }
+
+          await syncUser(syncData);
           
           // Then fetch the complete user profile with all backend data (role, organization, preferences, etc.)
           const profile = await getUserProfile();

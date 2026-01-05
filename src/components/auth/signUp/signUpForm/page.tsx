@@ -170,22 +170,49 @@ export default function SignUpForm() {
       }
 
       // Sync user with backend including additional profile data
+      // This must complete before redirect, otherwise AuthProvider's onAuthStateChange
+      // will sync again with only display_name/photo_url and might overwrite our data
       try {
-        await syncUser({
-          display_name: formData.fullName,
-          organization: formData.organization,
-          role: formData.role,
+        const syncPayload = {
+          display_name: formData.fullName.trim(),
+          organization: formData.organization.trim(),
+          role: formData.role.trim(),
           preferences: {
-            purpose: formData.purpose || undefined,
-            sendUpdates,
+            ...(formData.purpose.trim() && { purpose: formData.purpose.trim() }),
+            sendUpdates: sendUpdates,
           },
-        });
-      } catch (syncError) {
+        };
+        
+        console.log("Syncing user data with backend:", syncPayload);
+        
+        const syncedProfile = await syncUser(syncPayload);
+        console.log("User synced successfully with backend:", syncedProfile);
+        
+        // Verify that the data was saved correctly
+        if (syncedProfile) {
+          if (syncedProfile.organization !== formData.organization.trim() || 
+              syncedProfile.role !== formData.role.trim()) {
+            console.warn("Synced profile data doesn't match submitted data:", {
+              submitted: { organization: formData.organization, role: formData.role },
+              received: { organization: syncedProfile.organization, role: syncedProfile.role },
+            });
+          }
+        }
+        
+        // Small delay to ensure backend has fully processed and stored the data
+        // This prevents AuthProvider from overwriting during initial sync
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (syncError: any) {
         console.error("Failed to sync user with backend:", syncError);
-        // Continue even if sync fails - user is still created in Firebase
+        const errorMessage = syncError?.message || "Unknown error occurred";
+        setErrors({ 
+          general: `Account created but failed to save profile information: ${errorMessage}. Please update your profile after signing in.` 
+        });
+        setIsSubmitting(false);
+        return;
       }
 
-      // Success - AuthProvider will handle the redirect
+      // Success - redirect after sync completes
       router.push("/dashboard");
     } catch (error) {
       console.error("Sign up error:", error);
