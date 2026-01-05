@@ -5,14 +5,9 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Play,
   Square,
-  Clock,
-  CheckCircle2,
-  XCircle,
   Loader2,
   AlertCircle,
-  Activity,
   Cpu,
   MemoryStick,
   Network,
@@ -22,6 +17,7 @@ import {
 import { SimulationRun } from "@/types/simulation";
 import { getSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
 import { MetricsChart } from "@/components/simulation/MetricsChart";
+import { MultiAxisChart } from "@/components/simulation/MultiAxisChart";
 import { NodeMetricsCard } from "@/components/simulation/NodeMetricsCard";
 import { SummaryStats } from "@/components/simulation/SummaryStats";
 import { ResourceGraph } from "@/components/simulation/ResourceGraph";
@@ -227,6 +223,38 @@ export default function SimulationDetailPage() {
             />
           </div>
 
+          {/* Combined Performance Chart (Multi-Axis) */}
+          <div className="bg-card rounded-lg p-4 border border-border">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5" />
+              Performance Overview (Multi-Axis)
+            </h3>
+            <MultiAxisChart
+              data={run.results!.time_series}
+              metrics={[
+                {
+                  key: "rps",
+                  label: "RPS",
+                  color: "#8b5cf6",
+                  yAxisId: "left",
+                  unit: " req/s",
+                },
+                {
+                  key: "latency_ms",
+                  label: "Latency",
+                  color: "#f59e0b",
+                  yAxisId: "right",
+                  unit: " ms",
+                },
+              ]}
+              height={350}
+              showZoom={true}
+              showExport={true}
+              leftAxisLabel="RPS"
+              rightAxisLabel="Latency (ms)"
+            />
+          </div>
+
           {/* Time Series Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-card rounded-lg p-4 border border-border">
@@ -240,6 +268,9 @@ export default function SimulationDetailPage() {
                 labels={["RPS", "Latency (ms)"]}
                 colors={["#8b5cf6", "#f59e0b"]}
                 yAxisLabel="Value"
+                height={300}
+                showZoom={true}
+                showExport={true}
               />
             </div>
             <div className="bg-card rounded-lg p-4 border border-border">
@@ -253,6 +284,9 @@ export default function SimulationDetailPage() {
                 labels={["Concurrent Users", "Error Rate"]}
                 colors={["#06b6d4", "#ef4444"]}
                 yAxisLabel="Value"
+                height={300}
+                showZoom={true}
+                showExport={true}
               />
             </div>
           </div>

@@ -11,23 +11,29 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ReferenceLine,
   Brush,
 } from "recharts";
 import { Download, Maximize2, Minimize2 } from "lucide-react";
 
-interface MetricsChartProps {
+interface MetricConfig {
+  key: keyof TimeSeriesData;
+  label: string;
+  color: string;
+  yAxisId?: "left" | "right";
+  unit?: string;
+}
+
+interface MultiAxisChartProps {
   data: TimeSeriesData[];
-  metrics: (keyof TimeSeriesData)[];
-  labels: string[];
-  colors: string[];
-  yAxisLabel?: string;
+  metrics: MetricConfig[];
   height?: number;
   showZoom?: boolean;
   showExport?: boolean;
+  leftAxisLabel?: string;
+  rightAxisLabel?: string;
 }
 
-// Custom tooltip component for better styling
+// Custom tooltip component
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -37,7 +43,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         </p>
         {payload.map((entry: any, index: number) => (
           <p key={index} className="text-sm" style={{ color: entry.color }}>
-            {`${entry.name}: ${typeof entry.value === "number" ? entry.value.toFixed(2) : entry.value}`}
+            {`${entry.name}: ${typeof entry.value === "number" ? entry.value.toFixed(2) : entry.value}${entry.payload.unit || ""}`}
           </p>
         ))}
       </div>
@@ -63,16 +69,15 @@ const CustomLegend = ({ payload }: any) => {
   );
 };
 
-export function MetricsChart({
+export function MultiAxisChart({
   data,
   metrics,
-  labels,
-  colors,
-  yAxisLabel,
   height = 300,
   showZoom = true,
   showExport = true,
-}: MetricsChartProps) {
+  leftAxisLabel,
+  rightAxisLabel,
+}: MultiAxisChartProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [chartKey, setChartKey] = useState(0);
 
@@ -86,41 +91,50 @@ export function MetricsChart({
         timeLabel: new Date(d.timestamp).toLocaleTimeString(),
       };
 
-      metrics.forEach((metric, index) => {
-        item[labels[index] || metric] = Number(d[metric]) || 0;
+      metrics.forEach((metric) => {
+        item[metric.label] = Number(d[metric.key]) || 0;
+        item[`${metric.label}_unit`] = metric.unit || "";
       });
 
       return item;
     });
-  }, [data, metrics, labels]);
+  }, [data, metrics]);
 
-  // Calculate domain for Y-axis
-  const yAxisDomain = useMemo(() => {
-    if (chartData.length === 0) return [0, 100];
+  // Calculate domains for Y-axes
+  const { leftDomain, rightDomain } = useMemo(() => {
+    if (chartData.length === 0) {
+      return { leftDomain: [0, 100], rightDomain: [0, 100] };
+    }
 
-    const allValues = chartData.flatMap((d) =>
-      metrics.map((metric, index) => {
-        const label = labels[index] || metric;
-        return Number(d[label]) || 0;
-      })
+    const leftMetrics = metrics.filter((m) => !m.yAxisId || m.yAxisId === "left");
+    const rightMetrics = metrics.filter((m) => m.yAxisId === "right");
+
+    const leftValues = chartData.flatMap((d) =>
+      leftMetrics.map((m) => Number(d[m.label]) || 0)
+    );
+    const rightValues = chartData.flatMap((d) =>
+      rightMetrics.map((m) => Number(d[m.label]) || 0)
     );
 
-    const min = Math.min(...allValues);
-    const max = Math.max(...allValues);
-    const padding = (max - min) * 0.1 || 1;
+    const calculateDomain = (values: number[]) => {
+      if (values.length === 0) return [0, 100];
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const padding = (max - min) * 0.1 || 1;
+      return [Math.max(0, min - padding), max + padding];
+    };
 
-    return [Math.max(0, min - padding), max + padding];
-  }, [chartData, metrics, labels]);
+    return {
+      leftDomain: calculateDomain(leftValues),
+      rightDomain: rightValues.length > 0 ? calculateDomain(rightValues) : undefined,
+    };
+  }, [chartData, metrics]);
 
   const handleExport = () => {
-    // Create CSV content
-    const headers = ["Timestamp", ...labels];
+    const headers = ["Timestamp", ...metrics.map((m) => m.label)];
     const rows = chartData.map((d) => [
       new Date(d.timestamp).toISOString(),
-      ...metrics.map((metric, index) => {
-        const label = labels[index] || metric;
-        return d[label] || 0;
-      }),
+      ...metrics.map((m) => d[m.label] || 0),
     ]);
 
     const csvContent = [
@@ -128,7 +142,6 @@ export function MetricsChart({
       ...rows.map((row) => row.join(",")),
     ].join("\n");
 
-    // Create blob and download
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -142,7 +155,7 @@ export function MetricsChart({
 
   const toggleFullscreen = () => {
     setIsFullscreen(!isFullscreen);
-    setChartKey((prev) => prev + 1); // Force re-render
+    setChartKey((prev) => prev + 1);
   };
 
   if (chartData.length === 0) {
@@ -154,6 +167,7 @@ export function MetricsChart({
   }
 
   const chartHeight = isFullscreen ? 600 : height;
+  const hasRightAxis = metrics.some((m) => m.yAxisId === "right");
 
   return (
     <div className="space-y-4">
@@ -194,7 +208,7 @@ export function MetricsChart({
           <LineChart
             key={chartKey}
             data={chartData}
-            margin={{ top: 5, right: 20, left: 10, bottom: 60 }}
+            margin={{ top: 5, right: 30, left: 20, bottom: 60 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
             <XAxis
@@ -207,12 +221,13 @@ export function MetricsChart({
               domain={["dataMin", "dataMax"]}
             />
             <YAxis
+              yAxisId="left"
               stroke="#ffffff60"
               tick={{ fill: "#ffffff60", fontSize: 12 }}
               label={
-                yAxisLabel
+                leftAxisLabel
                   ? {
-                      value: yAxisLabel,
+                      value: leftAxisLabel,
                       angle: -90,
                       position: "insideLeft",
                       fill: "#ffffff80",
@@ -220,8 +235,28 @@ export function MetricsChart({
                     }
                   : undefined
               }
-              domain={yAxisDomain}
+              domain={leftDomain}
             />
+            {hasRightAxis && (
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                stroke="#ffffff60"
+                tick={{ fill: "#ffffff60", fontSize: 12 }}
+                label={
+                  rightAxisLabel
+                    ? {
+                        value: rightAxisLabel,
+                        angle: 90,
+                        position: "insideRight",
+                        fill: "#ffffff80",
+                        style: { textAnchor: "middle" },
+                      }
+                    : undefined
+                }
+                domain={rightDomain}
+              />
+            )}
             <Tooltip content={<CustomTooltip />} />
             {showZoom && (
               <Brush
@@ -232,21 +267,19 @@ export function MetricsChart({
               />
             )}
 
-            {metrics.map((metric, index) => {
-              const label = labels[index] || metric;
-              return (
-                <Line
-                  key={metric}
-                  type="monotone"
-                  dataKey={label}
-                  stroke={colors[index] || `#${Math.floor(Math.random() * 16777215).toString(16)}`}
-                  strokeWidth={2}
-                  dot={{ r: 2, fill: colors[index] }}
-                  activeDot={{ r: 5 }}
-                  name={label}
-                />
-              );
-            })}
+            {metrics.map((metric) => (
+              <Line
+                key={metric.key}
+                yAxisId={metric.yAxisId || "left"}
+                type="monotone"
+                dataKey={metric.label}
+                stroke={metric.color}
+                strokeWidth={2}
+                dot={{ r: 2, fill: metric.color }}
+                activeDot={{ r: 5 }}
+                name={metric.label}
+              />
+            ))}
             <Legend content={<CustomLegend />} />
           </LineChart>
         </ResponsiveContainer>
