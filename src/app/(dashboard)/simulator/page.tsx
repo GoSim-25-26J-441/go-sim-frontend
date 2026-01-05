@@ -288,6 +288,16 @@ export default function SimulatorPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-2 ml-4">
+                    {run.status === "completed" && run.results && (
+                      <Link
+                        href={`/simulator/${run.id}/analysis`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                        title="View analysis dashboard"
+                      >
+                        <BarChart3 className="w-4 h-4 text-blue-400" />
+                      </Link>
+                    )}
                     {run.status === "running" && (
                       <button
                         onClick={async (e) => {
