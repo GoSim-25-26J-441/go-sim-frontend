@@ -2,11 +2,17 @@
 
 import { InputField } from "@/components/common/inputFeild/page";
 import { TextAreaField } from "@/components/common/inputFeild/page";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { signUpWithEmail, signOut as firebaseSignOut } from "@/lib/firebase/auth";
+import { updateProfile } from "firebase/auth";
+import { syncUser } from "@/lib/api-client/auth";
+import { useAuth } from "@/providers/auth-context";
+import { getFirebaseErrorMessage } from "@/utils/firebase-errors";
 
 export default function SignUpForm() {
   const router = useRouter();
+  const { isLoggedIn, isLoading: authLoading } = useAuth();
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -21,6 +27,14 @@ export default function SignUpForm() {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [sendUpdates, setSendUpdates] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!authLoading && isLoggedIn) {
+      router.push("/dashboard");
+    }
+  }, [isLoggedIn, authLoading, router]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -98,7 +112,7 @@ export default function SignUpForm() {
 
     // Check terms agreement
     if (!agreeTerms) {
-      alert("Please agree to the Terms and Privacy Policy to continue.");
+      setErrors({ general: "Please agree to the Terms and Privacy Policy to continue." });
       return;
     }
 
@@ -106,26 +120,95 @@ export default function SignUpForm() {
       return;
     }
 
+    setIsSubmitting(true);
+    setErrors({});
+
     try {
-      // TODO: Replace with your actual API call
-      console.log("Creating account:", {
-        ...formData,
-        agreeTerms,
-        sendUpdates,
-      });
+      // Create Firebase account
+      const { user, error: signUpError } = await signUpWithEmail(
+        formData.email,
+        formData.password
+      );
 
-      // Example API call:
-      // const response = await fetch('/api/auth/signup', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ ...formData, agreeTerms, sendUpdates }),
-      // });
+      if (signUpError) {
+        setErrors({ general: getFirebaseErrorMessage(signUpError) });
+        setIsSubmitting(false);
+        return;
+      }
 
-      alert("Account created successfully!");
+      if (!user) {
+        setErrors({ general: "Failed to create account. Please try again." });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Update Firebase profile with display name
+      try {
+        await updateProfile(user, {
+          displayName: formData.fullName,
+        });
+      } catch (profileError) {
+        console.warn("Failed to update display name:", profileError);
+        // Continue even if profile update fails
+      }
+
+      // Sync user with backend including additional profile data
+      // This must complete before redirect, otherwise AuthProvider's onAuthStateChange
+      // will sync again with only display_name/photo_url and might overwrite our data
+      try {
+        const syncPayload = {
+          display_name: formData.fullName.trim(),
+          organization: formData.organization.trim(),
+          role: formData.role.trim(),
+          preferences: {
+            ...(formData.purpose.trim() && { purpose: formData.purpose.trim() }),
+            sendUpdates: sendUpdates,
+          },
+        };
+        
+        console.log("Syncing user data with backend:", syncPayload);
+        
+        const syncedProfile = await syncUser(syncPayload);
+        console.log("User synced successfully with backend:", syncedProfile);
+        
+        // Verify that the data was saved correctly
+        if (syncedProfile) {
+          if (syncedProfile.organization !== formData.organization.trim() || 
+              syncedProfile.role !== formData.role.trim()) {
+            console.error("Synced profile data doesn't match submitted data:", {
+              submitted: { organization: formData.organization, role: formData.role },
+              received: { organization: syncedProfile.organization, role: syncedProfile.role },
+            });
+            // Treat this as a sync failure so the user is notified and can retry
+            throw new Error("Profile data mismatch after syncing with the server.");
+          }
+        }
+      } catch (syncError) {
+        console.error("Failed to sync user with backend:", syncError);
+        
+        // Roll back the Firebase account creation since backend sync failed
+        try {
+          await firebaseSignOut();
+          console.log("Firebase account sign-out completed after sync failure");
+        } catch (signOutError) {
+          console.error("Failed to sign out after sync error:", signOutError);
+        }
+        
+        // Show sanitized error message to user
+        setErrors({ 
+          general: "Account created but we couldn't save your profile information. Please try signing in and updating your profile, or contact support if the issue persists."
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Success - redirect after sync completes
       router.push("/dashboard");
     } catch (error) {
       console.error("Sign up error:", error);
-      setErrors({ general: "Failed to create account. Please try again." });
+      setErrors({ general: "An unexpected error occurred. Please try again." });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -140,7 +223,8 @@ export default function SignUpForm() {
     formData.confirmPassword.trim() &&
     formData.role.trim() &&
     formData.organization.trim() &&
-    agreeTerms;
+    agreeTerms &&
+    !isSubmitting;
 
   return (
     <section className="px-4 sm:px-6 lg:px-8">
@@ -343,10 +427,10 @@ export default function SignUpForm() {
           <div className="flex flex-col pt-6">
             <button
               onClick={handleSubmit}
-              disabled={!isFormValid}
-              className="w-full px-4 py-3 bg-white text-black text-sm font-semibold rounded-lg hover:bg-white/80 transition-all disabled:bg-gray-600 disabled:cursor-not-allowed"
+              disabled={!isFormValid || isSubmitting}
+              className="w-full px-4 py-3 bg-white text-black text-sm font-semibold rounded-lg hover:bg-white/80 transition-all disabled:bg-gray-600 disabled:text-white disabled:cursor-not-allowed"
             >
-              Create account
+              {isSubmitting ? "Creating account..." : "Create account"}
             </button>
           </div>
         </div>

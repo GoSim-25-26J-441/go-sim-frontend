@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useChats } from "@/modules/chat/useChats";
 import { useSession } from "@/modules/session/context";
+import { useAuth } from "@/providers/auth-context";
 import { useEffect, useMemo, useState } from "react";
 
 type RemoteChat = { jobId: string; title: string; lastAt: number | null; lastBy: string | null; };
@@ -16,9 +17,13 @@ export default function Sidebar() {
   const sp = useSearchParams();
 
   const { userId } = useSession();
+  const { userProfile, user } = useAuth();
   const { chats, ensureByJob } = useChats(userId || "");
   const [remote, setRemote] = useState<RemoteChat[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Get display name from user profile, fallback to email, then user ID
+  const displayName = userProfile?.display_name || user?.displayName || user?.email || userId || "User";
 
   // currently selected job in the dashboard
   const selectedJob = sp.get("job");
@@ -75,7 +80,9 @@ export default function Sidebar() {
   return (
     <aside className="p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-xs opacity-60">UID: {userId}</div>
+        <div className="text-xs opacity-60 truncate max-w-[200px]" title={displayName}>
+          {displayName}
+        </div>
         <button onClick={onNew} className="px-2 py-1 rounded bg-brand text-white text-xs">New</button>
       </div>
 
