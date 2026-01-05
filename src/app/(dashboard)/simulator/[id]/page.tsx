@@ -24,6 +24,9 @@ import { getSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation
 import { MetricsChart } from "@/components/simulation/MetricsChart";
 import { NodeMetricsCard } from "@/components/simulation/NodeMetricsCard";
 import { SummaryStats } from "@/components/simulation/SummaryStats";
+import { ResourceGraph } from "@/components/simulation/ResourceGraph";
+import { ResourceGraphViewer } from "@/components/simulation/ResourceGraphViewer";
+import { DynamicConfigControl } from "@/components/simulation/DynamicConfigControl";
 
 export default function SimulationDetailPage() {
   const params = useParams();
@@ -199,27 +202,33 @@ export default function SimulationDetailPage() {
         </div>
       )}
 
+      {/* Dynamic Configuration Control (only for running simulations) */}
+      {isRunning && (
+        <DynamicConfigControl
+          run={run}
+          onUpdate={() => {
+            // Optionally refresh the run data after update
+            getSimulationRun(id).then(setRun).catch(console.error);
+          }}
+        />
+      )}
+
       {/* Results */}
       {hasResults && (
         <>
           {/* Summary Stats */}
           <SummaryStats results={run.results!} />
 
+          {/* Resource Graph */}
+          <div className="relative">
+            <ResourceGraph
+              timeSeriesData={run.results!.time_series}
+              nodeMetrics={run.results!.node_metrics}
+            />
+          </div>
+
           {/* Time Series Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="bg-card rounded-lg p-4 border border-border">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <Activity className="w-5 h-5" />
-                Resource Utilization
-              </h3>
-              <MetricsChart
-                data={run.results!.time_series}
-                metrics={["cpu_util_pct", "mem_util_pct"]}
-                labels={["CPU %", "Memory %"]}
-                colors={["#3b82f6", "#10b981"]}
-                yAxisLabel="Utilization %"
-              />
-            </div>
             <div className="bg-card rounded-lg p-4 border border-border">
               <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                 <TrendingUp className="w-5 h-5" />
@@ -233,6 +242,27 @@ export default function SimulationDetailPage() {
                 yAxisLabel="Value"
               />
             </div>
+            <div className="bg-card rounded-lg p-4 border border-border">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Load Metrics
+              </h3>
+              <MetricsChart
+                data={run.results!.time_series}
+                metrics={["concurrent_users", "error_rate"]}
+                labels={["Concurrent Users", "Error Rate"]}
+                colors={["#06b6d4", "#ef4444"]}
+                yAxisLabel="Value"
+              />
+            </div>
+          </div>
+
+          {/* Resource Topology Graph */}
+          <div>
+            <ResourceGraphViewer
+              nodeMetrics={run.results!.node_metrics}
+              config={run.config}
+            />
           </div>
 
           {/* Node Metrics */}

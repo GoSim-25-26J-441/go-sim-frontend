@@ -1,6 +1,13 @@
 // Dummy data generator that emulates simulation-core responses
 
-import { SimulationRun, SimulationStatus, TimeSeriesData } from "@/types/simulation";
+import { 
+  SimulationRun, 
+  SimulationStatus, 
+  TimeSeriesData, 
+  OptimizationResult,
+  OptimizationStep,
+  SimulationConfig 
+} from "@/types/simulation";
 
 // Generate time series data for a simulation run
 function generateTimeSeriesData(
@@ -35,10 +42,115 @@ function generateTimeSeriesData(
   return data;
 }
 
+// Generate optimization step data
+function generateOptimizationSteps(
+  initialConfig: SimulationConfig,
+  objectiveFunction: string = "p95_latency_ms"
+): OptimizationStep[] {
+  const steps: OptimizationStep[] = [];
+  const maxIterations = 8 + Math.floor(Math.random() * 7); // 8-15 iterations
+  
+  let currentNodes = initialConfig.nodes;
+  let currentVcpu = initialConfig.resources.vcpu_per_node;
+  let currentMemory = initialConfig.resources.memory_gb_per_node;
+  let bestScore = 200; // Starting score (higher is worse for latency)
+  
+  for (let i = 0; i < maxIterations; i++) {
+    // Simulate hill-climbing: gradually improve (lower score for latency)
+    const improvement = i < 5 ? 15 - i * 2 : Math.random() * 3 - 1; // Larger improvements early
+    const score = Math.max(50, bestScore - improvement);
+    bestScore = score;
+    
+    // Occasionally adjust configuration (replicas, resources)
+    if (i > 0 && Math.random() > 0.6) {
+      if (Math.random() > 0.5 && currentNodes < 10) {
+        currentNodes += 1;
+      } else if (currentNodes > 3) {
+        currentNodes -= 1;
+      }
+    }
+    
+    if (i > 2 && Math.random() > 0.7) {
+      currentVcpu = Math.max(4, Math.min(16, currentVcpu + (Math.random() > 0.5 ? 2 : -2)));
+    }
+    
+    const config: SimulationConfig = {
+      ...initialConfig,
+      nodes: currentNodes,
+      resources: {
+        vcpu_per_node: currentVcpu,
+        memory_gb_per_node: currentMemory,
+      },
+    };
+    
+    steps.push({
+      iteration: i,
+      score: score,
+      config: config,
+      run_id: `opt-run-${i + 1}`,
+      status: "completed",
+      metrics: {
+        p95_latency_ms: score,
+        p99_latency_ms: score * 1.5,
+        avg_latency_ms: score * 0.6,
+        throughput_rps: 1200 + Math.random() * 400,
+        error_rate: Math.max(0, Math.min(2, score / 100)),
+        cpu_utilization: 60 + Math.random() * 20,
+        memory_utilization: 55 + Math.random() * 15,
+      },
+    });
+  }
+  
+  return steps;
+}
+
+// Generate optimization result data
+function generateOptimizationResult(
+  initialConfig: SimulationConfig,
+  objectiveFunction: string = "p95_latency_ms"
+): OptimizationResult {
+  const history = generateOptimizationSteps(initialConfig, objectiveFunction);
+  const bestStep = history.reduce((best, step) => 
+    step.score < best.score ? step : best
+  );
+  
+  return {
+    best_config: bestStep.config,
+    best_score: bestStep.score,
+    best_run_id: bestStep.run_id,
+    iterations: history.length,
+    history: history,
+    converged: true,
+    convergence_reason: "no_improvement",
+    total_runs: history.length,
+    completed_runs: history.length,
+    failed_runs: 0,
+    duration_seconds: history.length * 45, // ~45 seconds per iteration
+    objective_function: objectiveFunction,
+  };
+}
+
 // Generate dummy simulation runs
 export function generateDummySimulationRuns(): SimulationRun[] {
   const now = new Date();
   const runs: SimulationRun[] = [];
+
+  // Completed run config (defined separately to avoid initialization error)
+  const completedRunConfig: SimulationConfig = {
+    nodes: 5,
+    workload: {
+      concurrent_users: 2000,
+      rps_target: 1500,
+      duration_seconds: 1800,
+      ramp_up_seconds: 300,
+    },
+    resources: {
+      vcpu_per_node: 8,
+      memory_gb_per_node: 16,
+    },
+    scenario: "high_load",
+    description: "Testing system under high concurrent user load",
+  };
 
   // Completed run
   const completedRun: SimulationRun = {
@@ -49,21 +161,7 @@ export function generateDummySimulationRuns(): SimulationRun[] {
     started_at: new Date(now.getTime() - 2 * 60 * 60 * 1000 + 5 * 1000).toISOString(),
     completed_at: new Date(now.getTime() - 30 * 60 * 1000).toISOString(),
     duration_seconds: 1800,
-    config: {
-      nodes: 5,
-      workload: {
-        concurrent_users: 2000,
-        rps_target: 1500,
-        duration_seconds: 1800,
-        ramp_up_seconds: 300,
-      },
-      resources: {
-        vcpu_per_node: 8,
-        memory_gb_per_node: 16,
-      },
-      scenario: "high_load",
-      description: "Testing system under high concurrent user load",
-    },
+    config: completedRunConfig,
     results: {
       summary: {
         total_requests: 2700000,
@@ -143,6 +241,7 @@ export function generateDummySimulationRuns(): SimulationRun[] {
           p99_ms: 198.7,
         },
       },
+      optimization: generateOptimizationResult(completedRunConfig, "p95_latency_ms"),
     },
   };
 

@@ -45,6 +45,40 @@ export interface SimulationResults {
   node_metrics: NodeMetrics[];
   time_series: TimeSeriesData[];
   workload_metrics: WorkloadMetrics;
+  optimization?: OptimizationResult;
+}
+
+// Optimization loop data structures (matching simulation-core/internal/improvement)
+export interface OptimizationResult {
+  best_config?: SimulationConfig;
+  best_score: number;
+  best_run_id?: string;
+  iterations: number;
+  history: OptimizationStep[];
+  converged: boolean;
+  convergence_reason?: string;
+  total_runs: number;
+  completed_runs: number;
+  failed_runs: number;
+  duration_seconds?: number;
+  objective_function?: string; // e.g., "p95_latency_ms", "throughput", "cost"
+}
+
+export interface OptimizationStep {
+  iteration: number;
+  score: number;
+  config: SimulationConfig;
+  run_id?: string;
+  status?: "pending" | "running" | "completed" | "failed";
+  metrics?: {
+    p95_latency_ms?: number;
+    p99_latency_ms?: number;
+    avg_latency_ms?: number;
+    throughput_rps?: number;
+    error_rate?: number;
+    cpu_utilization?: number;
+    memory_utilization?: number;
+  };
 }
 
 export interface NodeMetrics {

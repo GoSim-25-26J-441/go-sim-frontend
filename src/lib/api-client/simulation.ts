@@ -158,6 +158,47 @@ export async function stopSimulationRun(id: string): Promise<SimulationRun> {
 }
 
 /**
+ * Update workload rate for a running simulation
+ * Updates the request rate (RPS) for a specific workload pattern
+ */
+export async function updateWorkloadRate(
+  runId: string,
+  patternKey: string,
+  rateRps: number
+): Promise<{ message: string; run_id: string; pattern_key: string }> {
+  try {
+    // When backend is ready, uncomment this:
+    // const response = await authenticatedFetch(`${BASE_URL}/runs/${runId}/workload`, {
+    //   method: "PATCH",
+    //   headers: {
+    //     "Content-Type": "application/json",
+    //   },
+    //   body: JSON.stringify({
+    //     pattern_key: patternKey,
+    //     rate_rps: rateRps,
+    //   }),
+    // });
+    // if (!response.ok) {
+    //   const error = await response.json().catch(() => ({ error: "Failed to update workload rate" }));
+    //   throw new Error(error.error || "Failed to update workload rate");
+    // }
+    // const data = await response.json();
+    // return data;
+
+    // For now, simulate API call (log for debugging)
+    console.log(`[Simulated] Updating workload rate for ${runId}: ${patternKey} = ${rateRps} RPS`);
+    return {
+      message: "workload updated successfully",
+      run_id: runId,
+      pattern_key: patternKey,
+    };
+  } catch (error) {
+    console.error("Error updating workload rate:", error);
+    throw error;
+  }
+}
+
+/**
  * Get real-time metrics for a running simulation
  * TODO: Replace with WebSocket or SSE when backend is ready
  */
