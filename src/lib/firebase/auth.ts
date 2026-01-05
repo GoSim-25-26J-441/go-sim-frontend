@@ -36,7 +36,7 @@ export async function signInWithEmail(email: string, password: string) {
   } catch (error) {
     // Log the error for debugging
     console.error("Firebase signInWithEmail error:", error);
-    return { user: null, error: error as AuthError | Error };
+    return { user: null, error: error as AuthError };
   }
 }
 
@@ -99,7 +99,7 @@ export async function getFirebaseIdToken(forceRefresh = false): Promise<string |
 /**
  * Listen to auth state changes
  */
-export function onAuthStateChange(callback: (user: User | null) => void) {
+export function onAuthStateChange(callback: (user: User | null) => void): () => void {
   if (!auth) {
     // If auth is not initialized, immediately call callback with null
     callback(null);

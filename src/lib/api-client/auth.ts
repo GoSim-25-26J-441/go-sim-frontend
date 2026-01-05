@@ -26,6 +26,10 @@ export interface SyncUserRequest {
 
 /**
  * Sync Firebase user with backend
+ * 
+ * Backend error format: The backend is expected to return errors in the format:
+ * { error: "error message" }
+ * If a different format is returned, this will fall back to generic messages.
  */
 export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {
   const token = await getFirebaseIdToken();
@@ -53,6 +57,10 @@ export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {
 
 /**
  * Get user profile from backend
+ * 
+ * Backend error format: The backend is expected to return errors in the format:
+ * { error: "error message" }
+ * If a different format is returned, this will fall back to generic messages.
  */
 export async function getUserProfile(): Promise<UserProfile> {
   const token = await getFirebaseIdToken();
@@ -78,6 +86,10 @@ export async function getUserProfile(): Promise<UserProfile> {
 
 /**
  * Update user profile
+ * 
+ * Backend error format: The backend is expected to return errors in the format:
+ * { error: "error message" }
+ * If a different format is returned, this will fall back to generic messages.
  */
 export async function updateUserProfile(
   data: Partial<SyncUserRequest>

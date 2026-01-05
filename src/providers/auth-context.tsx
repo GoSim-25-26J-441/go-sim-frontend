@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useMemo, useState, useEffect } from "react";
-import { onAuthStateChange, signOut as firebaseSignOut, User, getFirebaseIdToken } from "@/lib/firebase/auth";
+import { onAuthStateChange, signOut as firebaseSignOut, User } from "@/lib/firebase/auth";
 import { syncUser, getUserProfile, type UserProfile } from "@/lib/api-client/auth";
 
 type Subscription = "free" | "pro";

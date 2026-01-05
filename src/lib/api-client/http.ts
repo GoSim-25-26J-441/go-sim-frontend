@@ -18,6 +18,11 @@ export async function authenticatedFetch(
   // Add Authorization header if token is available
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
+  } else {
+    console.warn(
+      "authenticatedFetch: No Firebase ID token available; sending request without Authorization header.",
+      { endpoint }
+    );
   }
 
   const url = endpoint.startsWith("http") 
