@@ -23,9 +23,17 @@ export function middleware(req: NextRequest) {
   const isProtected = protectedRoots.some(r => p.startsWith(r));
   
   if (isProtected) {
-    // For now, allow access - actual auth check happens client-side via AuthProvider
-    // This allows the page to load and check auth state client-side
-    // In the future, you could add server-side token validation here
+    // Check for session cookie as a basic server-side auth check
+    // Note: For full server-side token validation, Firebase Admin SDK would be needed
+    // For now, this provides a basic check while client-side AuthGuard provides the main protection
+    const session = req.cookies.get("session")?.value;
+    
+    // If no session cookie is present, redirect to signup page
+    // This prevents unauthorized access but doesn't validate the token server-side
+    if (!session) {
+      return NextResponse.redirect(new URL("/signup", req.url));
+    }
+    
     return NextResponse.next();
   }
 
