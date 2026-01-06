@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,9 +14,12 @@ import {
   Users,
   TrendingUp,
   BarChart3,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
-import { SimulationRun } from "@/types/simulation";
+import { SimulationRun, TimeSeriesData, NodeMetrics } from "@/types/simulation";
 import { getSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
+import { SimulationStream, createSimulationStream } from "@/lib/api-client/simulation-stream";
 import { MetricsChart } from "@/components/simulation/MetricsChart";
 import { MultiAxisChart } from "@/components/simulation/MultiAxisChart";
 import { NodeMetricsCard } from "@/components/simulation/NodeMetricsCard";
@@ -31,12 +34,16 @@ export default function SimulationDetailPage() {
   const id = params.id as string;
   const [run, setRun] = useState<SimulationRun | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamRef = useRef<SimulationStream | null>(null);
 
+  // Fetch initial simulation run data
   useEffect(() => {
-    // Fetch simulation run from API (currently uses dummy data)
     getSimulationRun(id)
       .then((data) => {
-        setRun(data);
+        if (data) {
+          setRun(data);
+        }
         setLoading(false);
       })
       .catch((error) => {
@@ -44,6 +51,230 @@ export default function SimulationDetailPage() {
         setLoading(false);
       });
   }, [id]);
+
+  // Set up real-time streaming for running simulations
+  useEffect(() => {
+    if (!run || run.status !== "running") {
+      // Clean up stream if simulation is not running
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+      }
+      return;
+    }
+
+    // Only start streaming if we don't already have a stream
+    if (streamRef.current) {
+      return;
+    }
+
+    // Create and start the stream
+    const stream = createSimulationStream({
+      runId: id,
+      onMetricsUpdate: (event) => {
+        console.log("[SimulationDetail] Received metrics update:", event);
+        setRun((currentRun) => {
+          if (!currentRun) {
+            // If no current run, we can't update - this shouldn't happen
+            return currentRun;
+          }
+
+          if (!currentRun.results) {
+            // Initialize results if they don't exist
+            const eventSummary = event.data.summary || {};
+            return {
+              ...currentRun,
+              results: {
+                summary: {
+                  total_requests: eventSummary.total_requests ?? 0,
+                  successful_requests: eventSummary.successful_requests ?? 0,
+                  failed_requests: eventSummary.failed_requests ?? 0,
+                  avg_latency_ms: eventSummary.avg_latency_ms ?? 0,
+                  p95_latency_ms: eventSummary.p95_latency_ms ?? 0,
+                  p99_latency_ms: eventSummary.p99_latency_ms ?? 0,
+                  avg_rps: eventSummary.avg_rps ?? 0,
+                  peak_rps: eventSummary.peak_rps ?? 0,
+                },
+                node_metrics: event.data.node_metrics || [],
+                time_series: event.data.time_series
+                  ? [event.data.time_series]
+                  : [],
+                workload_metrics: {
+                  concurrent_users: { min: 0, max: 0, avg: 0 },
+                  rps: { min: 0, max: 0, avg: 0 },
+                  latency: { min_ms: 0, max_ms: 0, avg_ms: 0, p50_ms: 0, p95_ms: 0, p99_ms: 0 },
+                },
+              },
+            };
+          }
+
+          // Update existing results
+          const updatedTimeSeries = event.data.time_series
+            ? [...currentRun.results.time_series, event.data.time_series]
+            : currentRun.results.time_series;
+
+          const eventSummary = event.data.summary;
+          return {
+            ...currentRun,
+            results: {
+              ...currentRun.results,
+              summary: eventSummary
+                ? {
+                    total_requests: eventSummary.total_requests ?? currentRun.results.summary.total_requests,
+                    successful_requests: eventSummary.successful_requests ?? currentRun.results.summary.successful_requests,
+                    failed_requests: eventSummary.failed_requests ?? currentRun.results.summary.failed_requests,
+                    avg_latency_ms: eventSummary.avg_latency_ms ?? currentRun.results.summary.avg_latency_ms,
+                    p95_latency_ms: eventSummary.p95_latency_ms ?? currentRun.results.summary.p95_latency_ms,
+                    p99_latency_ms: eventSummary.p99_latency_ms ?? currentRun.results.summary.p99_latency_ms,
+                    avg_rps: eventSummary.avg_rps ?? currentRun.results.summary.avg_rps,
+                    peak_rps: eventSummary.peak_rps ?? currentRun.results.summary.peak_rps,
+                  }
+                : currentRun.results.summary,
+              node_metrics: event.data.node_metrics || currentRun.results.node_metrics,
+              time_series: updatedTimeSeries,
+            },
+          };
+        });
+      },
+      onStatusChange: async (event) => {
+        // Fetch updated run from backend when status changes
+        // This ensures we get the fully transformed run object
+        try {
+          const updatedRun = await getSimulationRun(id);
+          if (updatedRun) {
+            setRun(updatedRun);
+          } else {
+            // If run not found, just update status
+            setRun((currentRun) => {
+              if (!currentRun) return currentRun;
+              return {
+                ...currentRun,
+                status: event.data.status,
+              };
+            });
+          }
+        } catch (error) {
+          console.error("Failed to fetch updated run:", error);
+          // Fallback: just update status
+          setRun((currentRun) => {
+            if (!currentRun) return currentRun;
+            return {
+              ...currentRun,
+              status: event.data.status,
+            };
+          });
+        }
+
+        // Stop streaming if simulation is no longer running
+        if (event.data.status !== "running") {
+          stream.close();
+          streamRef.current = null;
+          setIsStreaming(false);
+        }
+      },
+      onError: (event) => {
+        console.error("[SimulationStream] Error:", event.data);
+        setRun((currentRun) => {
+          if (!currentRun) return currentRun;
+          return {
+            ...currentRun,
+            error: event.data.error,
+          };
+        });
+      },
+      onComplete: async (event) => {
+        // Fetch final run state from backend
+        try {
+          const finalRun = await getSimulationRun(id);
+          if (finalRun) {
+            setRun(finalRun);
+          }
+        } catch (error) {
+          console.error("Failed to fetch final run state:", error);
+          // Use final results from event if available
+          if (event.data.final_results) {
+            setRun((currentRun) => {
+              if (!currentRun) return currentRun;
+              return {
+                ...currentRun,
+                results: event.data.final_results,
+                status: "completed",
+              };
+            });
+          }
+        }
+
+        // Close stream
+        stream.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+      },
+      onConnectionOpen: () => {
+        setIsStreaming(true);
+      },
+      onConnectionClose: () => {
+        setIsStreaming(false);
+      },
+      onConnectionError: (error) => {
+        // Stream endpoint may not be available - silently fall back to polling
+        setIsStreaming(false);
+      },
+      reconnect: true,
+      reconnectInterval: 5000,
+      maxReconnectAttempts: 10,
+    });
+
+    streamRef.current = stream;
+    stream.connect();
+
+    // Cleanup on unmount
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+      }
+    };
+  }, [id, run?.status]);
+
+  // Poll for status updates as a backup (even when streaming, in case SSE misses updates)
+  useEffect(() => {
+    if (!run || run.status !== "running") {
+      return;
+    }
+
+    // Poll every 5 seconds to check for status changes
+    // This works as a backup even when SSE is connected, in case SSE misses status updates
+    const interval = setInterval(async () => {
+      try {
+        const updatedRun = await getSimulationRun(id);
+        if (updatedRun) {
+          // Only update if status has changed or if we got new results
+          setRun((currentRun) => {
+            if (!currentRun) return updatedRun;
+            
+            // Update if status changed
+            if (updatedRun.status !== currentRun.status) {
+              return updatedRun;
+            }
+            
+            // Update if we got new results
+            if (updatedRun.results && (!currentRun.results || 
+                JSON.stringify(updatedRun.results) !== JSON.stringify(currentRun.results))) {
+              return updatedRun;
+            }
+            
+            return currentRun;
+          });
+        }
+      } catch (error) {
+        console.error("Failed to poll simulation status:", error);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [id, run?.status]);
 
   if (loading) {
     return (
@@ -84,7 +315,24 @@ export default function SimulationDetailPage() {
             <ArrowLeft className="w-5 h-5 text-white" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-white">{run.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-white">{run.name}</h1>
+              {isRunning && (
+                <div className="flex items-center gap-2">
+                  {isStreaming ? (
+                    <div className="flex items-center gap-1 text-green-400 text-xs">
+                      <Wifi className="w-4 h-4" />
+                      <span>Live</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-yellow-400 text-xs">
+                      <WifiOff className="w-4 h-4" />
+                      <span>Polling</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <p className="text-sm text-white/60 mt-1">
               {run.config.description || "Simulation run details"}
             </p>
@@ -328,6 +576,55 @@ export default function SimulationDetailPage() {
               ? "Simulation is running. Results will appear here when available."
               : "No results available yet."}
           </p>
+        </div>
+      )}
+
+      {/* Debug Information (Development Only) */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="bg-card rounded-lg p-4 border border-border">
+          <details className="text-sm">
+            <summary className="text-white/80 cursor-pointer hover:text-white mb-2">
+              🔍 Debug Information (Click to expand)
+            </summary>
+            <div className="mt-2 space-y-2 text-xs font-mono">
+              <div>
+                <span className="text-white/60">Status:</span>
+                <span className="text-white ml-2">{run.status}</span>
+              </div>
+              <div>
+                <span className="text-white/60">Has Results:</span>
+                <span className="text-white ml-2">{hasResults ? "Yes" : "No"}</span>
+              </div>
+              <div>
+                <span className="text-white/60">Is Streaming:</span>
+                <span className="text-white ml-2">{isStreaming ? "Yes" : "No"}</span>
+              </div>
+              {run.results && (
+                <div className="mt-4">
+                  <div className="text-white/60 mb-1">Results Summary:</div>
+                  <pre className="text-white/80 bg-black/20 p-2 rounded overflow-auto max-h-40">
+                    {JSON.stringify(
+                      {
+                        has_summary: !!run.results.summary,
+                        has_node_metrics: !!run.results.node_metrics,
+                        node_metrics_count: run.results.node_metrics?.length || 0,
+                        has_time_series: !!run.results.time_series,
+                        time_series_count: run.results.time_series?.length || 0,
+                        summary: run.results.summary,
+                      },
+                      null,
+                      2
+                    )}
+                  </pre>
+                </div>
+              )}
+              {!run.results && (
+                <div className="text-yellow-400 mt-2">
+                  ⚠️ No results object found in run data
+                </div>
+              )}
+            </div>
+          </details>
         </div>
       )}
     </div>

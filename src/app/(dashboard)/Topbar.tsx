@@ -2,13 +2,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { useRouter, usePathname } from "next/navigation";
+import { LogOut, Activity } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import { useState } from "react";
 
 export default function Topbar() {
   const router = useRouter();
+  const pathname = usePathname();
   const { signOut, userProfile, user } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [imageLoadError, setImageLoadError] = useState(false);
@@ -42,6 +43,16 @@ export default function Topbar() {
         </Link>
         
         <div className="flex items-center gap-4">
+          <Link
+            href="/simulator"
+            className={`flex items-center gap-2 border border-border my-1 px-3 py-2 hover:bg-surface rounded transition-colors ${
+              pathname?.startsWith("/simulator") ? "bg-surface border-brand/50" : ""
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            <div className="text-xs font-bold">Simulator</div>
+          </Link>
+
           <Link
             href="/dashboard/patterns/upload"
             className="border border-border my-1 p-2 hover:bg-surface rounded"
