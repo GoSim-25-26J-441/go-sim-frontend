@@ -15,8 +15,14 @@ const USE_BACKEND = process.env.NEXT_PUBLIC_USE_SIMULATION_BACKEND !== "false";
  * 
  * Backend endpoint: GET /api/v1/simulation/runs
  * Note: Backend returns only run IDs, so we fetch each run individually
+ * 
+ * Demo runs are always included alongside real runs for demonstration purposes
  */
 export async function getSimulationRuns(): Promise<SimulationRun[]> {
+  // Always include demo runs for demonstration
+  const { getDemoSimulationRuns } = await import("@/lib/simulation/dummy-data");
+  const demoRuns = getDemoSimulationRuns();
+  
   try {
     if (USE_BACKEND) {
       const response = await authenticatedFetch(`${BASE_URL}/runs`, {
@@ -25,49 +31,44 @@ export async function getSimulationRuns(): Promise<SimulationRun[]> {
       
       // Handle authentication errors gracefully
       if (response.status === 401) {
-        console.warn("User not authenticated. Falling back to dummy data.");
-        if (process.env.NODE_ENV === "development") {
-          const { generateDummySimulationRuns } = await import("@/lib/simulation/dummy-data");
-          return generateDummySimulationRuns();
-        }
-        // In production, return empty array if not authenticated
-        return [];
+        console.warn("User not authenticated. Returning demo runs only.");
+        return demoRuns;
       }
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: "Failed to fetch simulation runs" }));
-        throw new Error(errorData.error || errorData.message || `Failed to fetch simulation runs: ${response.status}`);
+        console.error("Failed to fetch simulation runs:", errorData);
+        // Return demo runs even if backend fails
+        return demoRuns;
       }
       
       const data = await response.json();
       const runIDs: string[] = data.runs || [];
       
       // Backend returns only IDs, so fetch each run
-      const runs = await Promise.all(
+      const realRuns = await Promise.all(
         runIDs.map(id => getSimulationRun(id).catch(err => {
           console.error(`Failed to fetch run ${id}:`, err);
           return null;
         }))
       );
       
-      // Filter out nulls (failed fetches)
-      return runs.filter((run): run is SimulationRun => run !== null);
+      // Filter out nulls (failed fetches) and demo runs (to avoid duplicates)
+      const validRealRuns = realRuns.filter((run): run is SimulationRun => 
+        run !== null && !run.id.startsWith("demo-")
+      );
+      
+      // Combine demo runs with real runs, demo runs first
+      return [...demoRuns, ...validRealRuns];
     }
 
-    // Fallback to dummy data
-    const { generateDummySimulationRuns } = await import("@/lib/simulation/dummy-data");
-    return generateDummySimulationRuns();
+    // If not using backend, return demo runs only
+    return demoRuns;
   } catch (error) {
     console.error("Error fetching simulation runs:", error);
     
-    // If backend fails and we're using backend, fall back to dummy data in development
-    if (USE_BACKEND && process.env.NODE_ENV === "development") {
-      console.warn("Backend request failed, falling back to dummy data");
-      const { generateDummySimulationRuns } = await import("@/lib/simulation/dummy-data");
-      return generateDummySimulationRuns();
-    }
-    
-    throw error;
+    // Always return demo runs even if there's an error
+    return demoRuns;
   }
 }
 
@@ -77,6 +78,13 @@ export async function getSimulationRuns(): Promise<SimulationRun[]> {
  * Backend endpoint: GET /api/v1/simulation/runs/{id}
  */
 export async function getSimulationRun(id: string): Promise<SimulationRun | null> {
+  // Check if it's a demo run first
+  if (id.startsWith("demo-")) {
+    const { getDemoSimulationRuns } = await import("@/lib/simulation/dummy-data");
+    const demoRuns = getDemoSimulationRuns();
+    return demoRuns.find(r => r.id === id) || null;
+  }
+  
   try {
     if (USE_BACKEND) {
       const response = await authenticatedFetch(`${BASE_URL}/runs/${id}`, {
@@ -85,16 +93,17 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
       
       // Handle authentication errors gracefully
       if (response.status === 401) {
-        console.warn("User not authenticated. Falling back to dummy data.");
-        if (process.env.NODE_ENV === "development") {
-          const { getDummySimulationRun } = await import("@/lib/simulation/dummy-data");
-          return getDummySimulationRun(id);
-        }
-        return null;
+        console.warn("User not authenticated. Checking demo runs.");
+        const { getDemoSimulationRuns } = await import("@/lib/simulation/dummy-data");
+        const demoRuns = getDemoSimulationRuns();
+        return demoRuns.find(r => r.id === id) || null;
       }
       
       if (response.status === 404) {
-        return null;
+        // Check demo runs as fallback
+        const { getDemoSimulationRuns } = await import("@/lib/simulation/dummy-data");
+        const demoRuns = getDemoSimulationRuns();
+        return demoRuns.find(r => r.id === id) || null;
       }
       
       if (!response.ok) {
@@ -110,17 +119,22 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
     }
 
     // Fallback to dummy data
-    const { getDummySimulationRun } = await import("@/lib/simulation/dummy-data");
+    const { getDummySimulationRun, getDemoSimulationRuns } = await import("@/lib/simulation/dummy-data");
+    // Try demo runs first
+    const demoRuns = getDemoSimulationRuns();
+    const demoRun = demoRuns.find(r => r.id === id);
+    if (demoRun) return demoRun;
+    
+    // Then try regular dummy runs
     return getDummySimulationRun(id);
   } catch (error) {
     console.error("Error fetching simulation run:", error);
     
-    // If backend fails and we're using backend, fall back to dummy data in development
-    if (USE_BACKEND && process.env.NODE_ENV === "development") {
-      console.warn("Backend request failed, falling back to dummy data");
-      const { getDummySimulationRun } = await import("@/lib/simulation/dummy-data");
-      return getDummySimulationRun(id);
-    }
+    // Always check demo runs as fallback
+    const { getDemoSimulationRuns } = await import("@/lib/simulation/dummy-data");
+    const demoRuns = getDemoSimulationRuns();
+    const demoRun = demoRuns.find(r => r.id === id);
+    if (demoRun) return demoRun;
     
     throw error;
   }
@@ -130,26 +144,38 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
  * Create a new simulation run
  * 
  * Backend endpoint: POST /api/v1/simulation/runs
- * Backend only accepts metadata, not the full config
+ * Backend requires scenario_yaml and duration_ms to create the run in the simulation engine
  */
 export async function createSimulationRun(
-  config: Omit<SimulationRun, "id" | "status" | "created_at" | "started_at" | "completed_at" | "duration_seconds" | "results" | "error">
+  config: Omit<SimulationRun, "id" | "status" | "created_at" | "started_at" | "completed_at" | "duration_seconds" | "results" | "error">,
+  scenarioYaml?: string
 ): Promise<SimulationRun> {
   try {
     if (USE_BACKEND) {
-      // Backend only accepts metadata in the request body
-      // Store the full config in metadata for now
+      // Backend requires scenario_yaml and duration_ms to create run in simulation engine
+      // If scenario_yaml is not provided, we can't create the run in the engine
+      // The run will be created in backend but won't have engine_run_id
+      const durationMs = config.config.workload.duration_seconds * 1000;
+      
+      const requestBody: any = {
+        metadata: {
+          name: config.name,
+          config: config.config,
+        },
+      };
+      
+      // Only include scenario_yaml if provided (required for engine run creation)
+      if (scenarioYaml) {
+        requestBody.scenario_yaml = scenarioYaml;
+        requestBody.duration_ms = durationMs;
+      }
+      
       const response = await authenticatedFetch(`${BASE_URL}/runs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          metadata: {
-            name: config.name,
-            config: config.config,
-          },
-        }),
+        body: JSON.stringify(requestBody),
       });
       
       if (!response.ok) {
@@ -186,9 +212,9 @@ export async function createSimulationRun(
 /**
  * Start a simulation run
  * 
- * Note: Backend doesn't have a start endpoint - actual simulation execution
- * should be handled by calling simulation-core directly.
- * This function updates the run status in the backend.
+ * Backend endpoint: PUT /api/v1/simulation/runs/{id}
+ * The backend UpdateRun handler will start the run in the simulation engine
+ * if the run has an engine_run_id and status is set to "running".
  */
 export async function startSimulationRun(id: string): Promise<SimulationRun> {
   try {
@@ -231,9 +257,9 @@ export async function startSimulationRun(id: string): Promise<SimulationRun> {
 /**
  * Stop a running simulation
  * 
- * Note: Backend doesn't have a stop endpoint - actual simulation cancellation
- * should be handled by calling simulation-core directly.
- * This function updates the run status in the backend.
+ * Backend endpoint: PUT /api/v1/simulation/runs/{id}
+ * The backend UpdateRun handler will stop the run in the simulation engine
+ * if the run has an engine_run_id and status is set to "cancelled".
  */
 export async function stopSimulationRun(id: string): Promise<SimulationRun> {
   try {
@@ -359,7 +385,7 @@ export async function getSimulationMetrics(id: string): Promise<SimulationRun["r
 /**
  * Transform backend run format to frontend SimulationRun format
  */
-function transformBackendRunToSimulationRun(backendRun: any): SimulationRun {
+export function transformBackendRunToSimulationRun(backendRun: any): SimulationRun {
   // Extract metadata
   const metadata = backendRun.metadata || {};
   const config = metadata.config || {

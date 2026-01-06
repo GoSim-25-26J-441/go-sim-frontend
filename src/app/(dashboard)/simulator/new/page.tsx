@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Play } from "lucide-react";
+import { ArrowLeft, Play, FileText } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
+import { createSimulationRun } from "@/lib/api-client/simulation";
+import { SIMULATION_TEMPLATES, getTemplate } from "@/lib/simulation/templates";
 
 interface SimulationFormData {
   name: string;
@@ -35,16 +37,50 @@ export default function NewSimulationPage() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+
+  // Handle template selection
+  const handleTemplateSelect = (templateId: string) => {
+    const template = getTemplate(templateId);
+    if (!template) return;
+
+    setSelectedTemplate(templateId);
+    setFormData({
+      name: template.name,
+      description: template.description,
+      nodes: template.config.nodes,
+      vcpu_per_node: template.config.resources.vcpu_per_node,
+      memory_gb_per_node: template.config.resources.memory_gb_per_node,
+      concurrent_users: template.config.workload.concurrent_users,
+      rps_target: template.config.workload.rps_target || 0,
+      duration_seconds: template.config.workload.duration_seconds,
+      ramp_up_seconds: template.config.workload.ramp_up_seconds || 0,
+      scenario: template.config.scenario || "baseline",
+    });
+  };
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
+    
+    // Define numeric fields - these should be converted to numbers
+    const numericFields = [
+      "nodes",
+      "vcpu_per_node",
+      "memory_gb_per_node",
+      "concurrent_users",
+      "rps_target",
+      "duration_seconds",
+      "ramp_up_seconds",
+    ];
+    
+    // Text fields: "name", "description", "scenario" should remain strings
     setFormData((prev) => ({
       ...prev,
-      [name]: name.includes("_") || name === "nodes" || name === "scenario"
-        ? value
-        : Number(value) || 0,
+      [name]: numericFields.includes(name)
+        ? Number(value) || 0
+        : value,
     }));
 
     if (errors[name]) {
@@ -91,6 +127,10 @@ export default function NewSimulationPage() {
     setIsSubmitting(true);
 
     try {
+      // Get scenario YAML from template if one was selected
+      const template = selectedTemplate ? getTemplate(selectedTemplate) : null;
+      const scenarioYaml = template?.scenarioYaml;
+      
       // Create simulation run (uses API client which will call backend when available)
       const simulationRun = await createSimulationRun({
         name: formData.name,
@@ -109,7 +149,7 @@ export default function NewSimulationPage() {
           scenario: formData.scenario,
           description: formData.description || undefined,
         },
-      });
+      }, scenarioYaml);
 
       // Optionally start the simulation immediately
       // await startSimulationRun(simulationRun.id);
@@ -145,6 +185,60 @@ export default function NewSimulationPage() {
             Configure and start a new simulation run
           </p>
         </div>
+      </div>
+
+      {/* Template Selector */}
+      <div className="bg-card rounded-lg p-6 border border-border">
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <FileText className="w-5 h-5" />
+          Quick Start Templates
+        </h2>
+        <p className="text-sm text-white/60 mb-4">
+          Select a pre-configured template to get started quickly, or configure manually below.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {SIMULATION_TEMPLATES.map((template) => (
+            <button
+              key={template.id}
+              type="button"
+              onClick={() => handleTemplateSelect(template.id)}
+              className={`p-4 rounded-lg border text-left transition-colors ${
+                selectedTemplate === template.id
+                  ? "border-white/40 bg-white/10"
+                  : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"
+              }`}
+            >
+              <h3 className="font-semibold text-white mb-1">{template.name}</h3>
+              <p className="text-xs text-white/60">{template.description}</p>
+              {selectedTemplate === template.id && (
+                <div className="mt-2 text-xs text-green-400">✓ Selected</div>
+              )}
+            </button>
+          ))}
+        </div>
+        {selectedTemplate && (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedTemplate("");
+              setFormData({
+                name: "",
+                description: "",
+                nodes: 3,
+                vcpu_per_node: 4,
+                memory_gb_per_node: 8,
+                concurrent_users: 1000,
+                rps_target: 800,
+                duration_seconds: 600,
+                ramp_up_seconds: 60,
+                scenario: "baseline",
+              });
+            }}
+            className="mt-4 text-sm text-white/60 hover:text-white underline"
+          >
+            Clear template and start from scratch
+          </button>
+        )}
       </div>
 
       {/* Form */}

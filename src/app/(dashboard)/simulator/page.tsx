@@ -83,16 +83,24 @@ export default function SimulatorPage() {
   const [selectedStatus, setSelectedStatus] = useState<SimulationStatus | "all">("all");
 
   useEffect(() => {
-    // Fetch simulation runs from API (currently uses dummy data)
-    getSimulationRuns()
-      .then((data) => {
+    // Fetch simulation runs from API
+    const fetchRuns = async () => {
+      try {
+        const data = await getSimulationRuns();
         setRuns(data);
         setLoading(false);
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error("Failed to load simulation runs:", error);
         setLoading(false);
-      });
+      }
+    };
+
+    fetchRuns();
+
+    // Poll for updates every 10 seconds to catch status changes
+    const interval = setInterval(fetchRuns, 10000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const filteredRuns =

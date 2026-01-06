@@ -139,116 +139,146 @@ export class SimulationStream {
       // Build the SSE endpoint URL
       // EventSource doesn't support custom headers, so we route through a Next.js API route
       // that proxies the connection and adds the Authorization header server-side
-      // 
-      // TODO: This should use engine_run_id from the backend run to call simulation-core directly
-      // For now, we'll use the backend run ID and the proxy route should handle the mapping
-      const streamUrl = `/api/simulation/${this.options.runId}/stream?token=${encodeURIComponent(token)}`;
+      // Backend endpoint: GET /api/v1/simulation/runs/{id}/events
+      const streamUrl = `/api/simulation/${this.options.runId}/events?token=${encodeURIComponent(token)}`;
 
       // Create EventSource connection
       this.eventSource = new EventSource(streamUrl);
 
       // Handle connection open
       this.eventSource.onopen = () => {
-        console.log(`[SimulationStream] Connected to stream for run ${this.options.runId}`);
+        if (process.env.NODE_ENV === "development") {
+          console.log(`[SimulationStream] Connected to stream for run ${this.options.runId}`);
+        }
         this.reconnectAttempts = 0;
         this.options.onConnectionOpen();
       };
 
       // Handle connection errors
       this.eventSource.onerror = (error) => {
-        console.error("[SimulationStream] Connection error:", error);
-        
-        // Check if connection is closed
+        // Only log errors in development, and only if connection is actually closed
+        // EventSource fires onerror even during normal connection attempts
         if (this.eventSource?.readyState === EventSource.CLOSED) {
-          this.options.onConnectionError(new Error("Stream connection closed"));
+          // Connection failed - endpoint might not exist (404) or connection lost
+          // Log only in development mode
+          if (process.env.NODE_ENV === "development") {
+            console.warn("[SimulationStream] Stream connection failed. Falling back to polling.");
+          }
           
-          // Attempt reconnect if enabled and not manually closed
-          if (this.options.reconnect && !this.isManuallyClosed) {
+          this.options.onConnectionError(new Error("Stream connection unavailable"));
+          
+          // Don't attempt reconnect if endpoint doesn't exist (would just keep failing)
+          // Only reconnect if we were previously connected
+          if (this.reconnectAttempts === 0 && this.options.reconnect && !this.isManuallyClosed) {
+            // Give up after first attempt - endpoint likely doesn't exist
+            this.options.onConnectionClose();
+          } else if (this.options.reconnect && !this.isManuallyClosed) {
             this.scheduleReconnect();
           } else {
             this.options.onConnectionClose();
           }
         }
+        // If readyState is CONNECTING, just wait - don't log errors yet
       };
 
-      // Listen for different event types
-      this.eventSource.addEventListener("metrics_update", (e: MessageEvent) => {
+      // Listen for backend event types: initial, update, deleted
+      // Backend sends events with types: "initial", "update", "deleted"
+      // Each event contains: { run: SimulationRun } or { event: "deleted", run_id: string }
+      
+      this.eventSource.addEventListener("initial", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
-          this.options.onMetricsUpdate({
-            type: "metrics_update",
-            timestamp: new Date().toISOString(),
-            data,
-          });
+          if (data.run) {
+            const run = data.run;
+            // Handle initial run state - if it has results, trigger metrics update
+            if (run.metadata?.results) {
+              this.options.onMetricsUpdate({
+                type: "metrics_update",
+                timestamp: new Date().toISOString(),
+                data: {
+                  summary: run.metadata.results.summary,
+                  node_metrics: run.metadata.results.node_metrics,
+                  time_series: run.metadata.results.time_series?.[run.metadata.results.time_series.length - 1],
+                },
+              });
+            }
+          }
         } catch (err) {
-          console.error("[SimulationStream] Error parsing metrics_update:", err);
+          console.error("[SimulationStream] Error parsing initial event:", err);
         }
       });
 
-      this.eventSource.addEventListener("status_change", (e: MessageEvent) => {
+      this.eventSource.addEventListener("update", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
-          this.options.onStatusChange({
-            type: "status_change",
-            timestamp: new Date().toISOString(),
-            data,
-          });
+          
+          if (data.run) {
+            const run = data.run;
+            
+            // Backend sends full run object - check for results in metadata
+            // For running simulations, results may be partially populated
+            if (run.metadata?.results) {
+              this.options.onMetricsUpdate({
+                type: "metrics_update",
+                timestamp: new Date().toISOString(),
+                data: {
+                  summary: run.metadata.results.summary,
+                  node_metrics: run.metadata.results.node_metrics,
+                  time_series: run.metadata.results.time_series?.[run.metadata.results.time_series.length - 1],
+                },
+              });
+            }
+            
+            // Check for status changes
+            if (run.status) {
+              this.options.onStatusChange({
+                type: "status_change",
+                timestamp: new Date().toISOString(),
+                data: {
+                  status: run.status,
+                },
+              });
+              
+              // Stop streaming if simulation is no longer running
+              if (run.status !== "running") {
+                this.options.onComplete({
+                  type: "complete",
+                  timestamp: new Date().toISOString(),
+                  data: {
+                    run_id: run.run_id || run.id,
+                    final_results: run.metadata?.results,
+                  },
+                });
+                this.close();
+              }
+            }
+          }
         } catch (err) {
-          console.error("[SimulationStream] Error parsing status_change:", err);
+          console.error("[SimulationStream] Error parsing update event:", err);
         }
       });
 
-      this.eventSource.addEventListener("error", (e: MessageEvent) => {
+      this.eventSource.addEventListener("deleted", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
           this.options.onError({
             type: "error",
             timestamp: new Date().toISOString(),
-            data,
+            data: {
+              error: "Simulation run was deleted",
+            },
           });
-        } catch (err) {
-          console.error("[SimulationStream] Error parsing error event:", err);
-        }
-      });
-
-      this.eventSource.addEventListener("complete", (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          this.options.onComplete({
-            type: "complete",
-            timestamp: new Date().toISOString(),
-            data,
-          });
-          // Close connection when simulation completes
           this.close();
         } catch (err) {
-          console.error("[SimulationStream] Error parsing complete event:", err);
+          console.error("[SimulationStream] Error parsing deleted event:", err);
         }
       });
 
-      // Generic message handler for backward compatibility
+      // Generic message handler for events without explicit event type
       this.eventSource.onmessage = (e: MessageEvent) => {
-        try {
-          const event: StreamEvent = JSON.parse(e.data);
-          
-          switch (event.type) {
-            case "metrics_update":
-              this.options.onMetricsUpdate(event as MetricsUpdateEvent);
-              break;
-            case "status_change":
-              this.options.onStatusChange(event as StatusChangeEvent);
-              break;
-            case "error":
-              this.options.onError(event as ErrorEvent);
-              break;
-            case "complete":
-              this.options.onComplete(event as CompleteEvent);
-              this.close();
-              break;
-          }
-        } catch (err) {
-          console.error("[SimulationStream] Error parsing message:", err);
-        }
+        // Backend uses named events (initial, update, deleted)
+        // so this handler is mainly for compatibility
+        // Named event handlers above will handle most events
       };
 
     } catch (error) {

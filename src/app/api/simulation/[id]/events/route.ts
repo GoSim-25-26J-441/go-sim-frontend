@@ -3,7 +3,6 @@
 // and add the Authorization header server-side
 
 import { NextRequest } from "next/server";
-import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { env } from "@/lib/env";
 
 export async function GET(
@@ -13,8 +12,7 @@ export async function GET(
   try {
     const runId = params.id;
     
-    // Get Firebase ID token from the request (passed via query param or cookie)
-    // For server-side requests, we need to get the token from the client
+    // Get Firebase ID token from the request (passed via query param)
     const token = req.nextUrl.searchParams.get("token");
     
     if (!token) {
@@ -22,7 +20,8 @@ export async function GET(
     }
 
     // Build the backend SSE endpoint URL
-    const backendUrl = `${env.NEXT_PUBLIC_BACKEND_BASE}/api/v1/simulation/runs/${runId}/stream`;
+    // Backend endpoint: GET /api/v1/simulation/runs/{id}/events
+    const backendUrl = `${env.NEXT_PUBLIC_BACKEND_BASE}/api/v1/simulation/runs/${runId}/events`;
     
     // Forward the request to the backend with Authorization header
     const backendResponse = await fetch(backendUrl, {
@@ -98,4 +97,5 @@ export async function GET(
 // Use Node.js runtime for SSE streaming support
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
 

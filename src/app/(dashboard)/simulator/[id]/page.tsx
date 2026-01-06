@@ -41,7 +41,9 @@ export default function SimulationDetailPage() {
   useEffect(() => {
     getSimulationRun(id)
       .then((data) => {
-        setRun(data);
+        if (data) {
+          setRun(data);
+        }
         setLoading(false);
       })
       .catch((error) => {
@@ -71,6 +73,7 @@ export default function SimulationDetailPage() {
     const stream = createSimulationStream({
       runId: id,
       onMetricsUpdate: (event) => {
+        console.log("[SimulationDetail] Received metrics update:", event);
         setRun((currentRun) => {
           if (!currentRun) {
             // If no current run, we can't update - this shouldn't happen
@@ -134,14 +137,34 @@ export default function SimulationDetailPage() {
           };
         });
       },
-      onStatusChange: (event) => {
-        setRun((currentRun) => {
-          if (!currentRun) return currentRun;
-          return {
-            ...currentRun,
-            status: event.data.status,
-          };
-        });
+      onStatusChange: async (event) => {
+        // Fetch updated run from backend when status changes
+        // This ensures we get the fully transformed run object
+        try {
+          const updatedRun = await getSimulationRun(id);
+          if (updatedRun) {
+            setRun(updatedRun);
+          } else {
+            // If run not found, just update status
+            setRun((currentRun) => {
+              if (!currentRun) return currentRun;
+              return {
+                ...currentRun,
+                status: event.data.status,
+              };
+            });
+          }
+        } catch (error) {
+          console.error("Failed to fetch updated run:", error);
+          // Fallback: just update status
+          setRun((currentRun) => {
+            if (!currentRun) return currentRun;
+            return {
+              ...currentRun,
+              status: event.data.status,
+            };
+          });
+        }
 
         // Stop streaming if simulation is no longer running
         if (event.data.status !== "running") {
@@ -161,8 +184,6 @@ export default function SimulationDetailPage() {
         });
       },
       onComplete: async (event) => {
-        console.log("[SimulationStream] Simulation completed:", event.data);
-        
         // Fetch final run state from backend
         try {
           const finalRun = await getSimulationRun(id);
@@ -171,6 +192,17 @@ export default function SimulationDetailPage() {
           }
         } catch (error) {
           console.error("Failed to fetch final run state:", error);
+          // Use final results from event if available
+          if (event.data.final_results) {
+            setRun((currentRun) => {
+              if (!currentRun) return currentRun;
+              return {
+                ...currentRun,
+                results: event.data.final_results,
+                status: "completed",
+              };
+            });
+          }
         }
 
         // Close stream
@@ -179,15 +211,13 @@ export default function SimulationDetailPage() {
         setIsStreaming(false);
       },
       onConnectionOpen: () => {
-        console.log("[SimulationStream] Connection opened");
         setIsStreaming(true);
       },
       onConnectionClose: () => {
-        console.log("[SimulationStream] Connection closed");
         setIsStreaming(false);
       },
       onConnectionError: (error) => {
-        console.error("[SimulationStream] Connection error:", error);
+        // Stream endpoint may not be available - silently fall back to polling
         setIsStreaming(false);
       },
       reconnect: true,
@@ -208,18 +238,35 @@ export default function SimulationDetailPage() {
     };
   }, [id, run?.status]);
 
-  // Poll for status updates when not streaming (fallback)
+  // Poll for status updates as a backup (even when streaming, in case SSE misses updates)
   useEffect(() => {
-    if (!run || run.status !== "running" || isStreaming) {
+    if (!run || run.status !== "running") {
       return;
     }
 
-    // Poll every 5 seconds if streaming is not available
+    // Poll every 5 seconds to check for status changes
+    // This works as a backup even when SSE is connected, in case SSE misses status updates
     const interval = setInterval(async () => {
       try {
         const updatedRun = await getSimulationRun(id);
         if (updatedRun) {
-          setRun(updatedRun);
+          // Only update if status has changed or if we got new results
+          setRun((currentRun) => {
+            if (!currentRun) return updatedRun;
+            
+            // Update if status changed
+            if (updatedRun.status !== currentRun.status) {
+              return updatedRun;
+            }
+            
+            // Update if we got new results
+            if (updatedRun.results && (!currentRun.results || 
+                JSON.stringify(updatedRun.results) !== JSON.stringify(currentRun.results))) {
+              return updatedRun;
+            }
+            
+            return currentRun;
+          });
         }
       } catch (error) {
         console.error("Failed to poll simulation status:", error);
@@ -227,7 +274,7 @@ export default function SimulationDetailPage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [id, run?.status, isStreaming]);
+  }, [id, run?.status]);
 
   if (loading) {
     return (
@@ -529,6 +576,55 @@ export default function SimulationDetailPage() {
               ? "Simulation is running. Results will appear here when available."
               : "No results available yet."}
           </p>
+        </div>
+      )}
+
+      {/* Debug Information (Development Only) */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="bg-card rounded-lg p-4 border border-border">
+          <details className="text-sm">
+            <summary className="text-white/80 cursor-pointer hover:text-white mb-2">
+              🔍 Debug Information (Click to expand)
+            </summary>
+            <div className="mt-2 space-y-2 text-xs font-mono">
+              <div>
+                <span className="text-white/60">Status:</span>
+                <span className="text-white ml-2">{run.status}</span>
+              </div>
+              <div>
+                <span className="text-white/60">Has Results:</span>
+                <span className="text-white ml-2">{hasResults ? "Yes" : "No"}</span>
+              </div>
+              <div>
+                <span className="text-white/60">Is Streaming:</span>
+                <span className="text-white ml-2">{isStreaming ? "Yes" : "No"}</span>
+              </div>
+              {run.results && (
+                <div className="mt-4">
+                  <div className="text-white/60 mb-1">Results Summary:</div>
+                  <pre className="text-white/80 bg-black/20 p-2 rounded overflow-auto max-h-40">
+                    {JSON.stringify(
+                      {
+                        has_summary: !!run.results.summary,
+                        has_node_metrics: !!run.results.node_metrics,
+                        node_metrics_count: run.results.node_metrics?.length || 0,
+                        has_time_series: !!run.results.time_series,
+                        time_series_count: run.results.time_series?.length || 0,
+                        summary: run.results.summary,
+                      },
+                      null,
+                      2
+                    )}
+                  </pre>
+                </div>
+              )}
+              {!run.results && (
+                <div className="text-yellow-400 mt-2">
+                  ⚠️ No results object found in run data
+                </div>
+              )}
+            </div>
+          </details>
         </div>
       )}
     </div>
