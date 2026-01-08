@@ -145,10 +145,12 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
  * 
  * Backend endpoint: POST /api/v1/simulation/runs
  * Backend requires scenario_yaml and duration_ms to create the run in the simulation engine
+ * @param realTimeMode - Optional boolean to enable real-time mode for faster simulation
  */
 export async function createSimulationRun(
   config: Omit<SimulationRun, "id" | "status" | "created_at" | "started_at" | "completed_at" | "duration_seconds" | "results" | "error">,
-  scenarioYaml?: string
+  scenarioYaml?: string,
+  realTimeMode?: boolean
 ): Promise<SimulationRun> {
   try {
     if (USE_BACKEND) {
@@ -168,6 +170,11 @@ export async function createSimulationRun(
       if (scenarioYaml) {
         requestBody.scenario_yaml = scenarioYaml;
         requestBody.duration_ms = durationMs;
+        
+        // Include real_time_mode if provided
+        if (realTimeMode !== undefined) {
+          requestBody.real_time_mode = realTimeMode;
+        }
       }
       
       const response = await authenticatedFetch(`${BASE_URL}/runs`, {

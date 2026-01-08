@@ -20,8 +20,8 @@ export const SIMULATION_TEMPLATES: SimulationTemplate[] = [
       workload: {
         concurrent_users: 500,
         rps_target: 500,
-        duration_seconds: 60,
-        ramp_up_seconds: 5,
+        duration_seconds: 120,
+        ramp_up_seconds: 10,
       },
       resources: {
         vcpu_per_node: 4,
@@ -129,8 +129,8 @@ workload:
       workload: {
         concurrent_users: 200,
         rps_target: 20,
-        duration_seconds: 60,
-        ramp_up_seconds: 5,
+        duration_seconds: 120,
+        ramp_up_seconds: 10,
       },
       resources: {
         vcpu_per_node: 2,
@@ -251,8 +251,8 @@ workload:
       workload: {
         concurrent_users: 100,
         rps_target: 100,
-        duration_seconds: 120,
-        ramp_up_seconds: 10,
+        duration_seconds: 180,
+        ramp_up_seconds: 15,
       },
       resources: {
         vcpu_per_node: 8,

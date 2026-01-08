@@ -19,6 +19,7 @@ interface SimulationFormData {
   duration_seconds: number;
   ramp_up_seconds: number;
   scenario: string;
+  real_time_mode: boolean;
 }
 
 export default function NewSimulationPage() {
@@ -34,6 +35,7 @@ export default function NewSimulationPage() {
     duration_seconds: 600,
     ramp_up_seconds: 60,
     scenario: "baseline",
+    real_time_mode: false,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -56,6 +58,7 @@ export default function NewSimulationPage() {
       duration_seconds: template.config.workload.duration_seconds,
       ramp_up_seconds: template.config.workload.ramp_up_seconds || 0,
       scenario: template.config.scenario || "baseline",
+      real_time_mode: false,
     });
   };
 
@@ -149,7 +152,7 @@ export default function NewSimulationPage() {
           scenario: formData.scenario,
           description: formData.description || undefined,
         },
-      }, scenarioYaml);
+      }, scenarioYaml, formData.real_time_mode);
 
       // Optionally start the simulation immediately
       // await startSimulationRun(simulationRun.id);
@@ -217,7 +220,7 @@ export default function NewSimulationPage() {
           ))}
         </div>
         {selectedTemplate && (
-          <button
+            <button
             type="button"
             onClick={() => {
               setSelectedTemplate("");
@@ -232,6 +235,7 @@ export default function NewSimulationPage() {
                 duration_seconds: 600,
                 ramp_up_seconds: 60,
                 scenario: "baseline",
+                real_time_mode: false,
               });
             }}
             className="mt-4 text-sm text-white/60 hover:text-white underline"
@@ -373,6 +377,23 @@ export default function NewSimulationPage() {
                   <option value="endurance">Endurance</option>
                 </select>
               </div>
+            </div>
+            <div className="mt-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  name="real_time_mode"
+                  checked={formData.real_time_mode}
+                  onChange={(e) => setFormData(prev => ({ ...prev, real_time_mode: e.target.checked }))}
+                  className="w-5 h-5 rounded border-white/20 bg-white/5 text-white focus:ring-2 focus:ring-white/20 cursor-pointer"
+                />
+                <div>
+                  <span className="text-sm font-medium text-white">Real-time Mode</span>
+                  <p className="text-xs text-white/60 mt-1">
+                    Enable faster simulation execution (simulates in real-time instead of accelerated time)
+                  </p>
+                </div>
+              </label>
             </div>
           </div>
 
