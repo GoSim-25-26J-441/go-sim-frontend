@@ -15,7 +15,6 @@ import {
   TrendingUp,
   BarChart3,
   Wifi,
-  WifiOff,
 } from "lucide-react";
 import { SimulationRun, TimeSeriesData, NodeMetrics } from "@/types/simulation";
 import { getSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
@@ -28,6 +27,40 @@ import { ResourceGraph } from "@/components/simulation/ResourceGraph";
 import { ResourceGraphViewer } from "@/components/simulation/ResourceGraphViewer";
 import { DynamicConfigControl } from "@/components/simulation/DynamicConfigControl";
 
+// Helper function to validate and sanitize time series data
+function validateTimeSeriesData(ts: any): TimeSeriesData {
+  return {
+    timestamp: ts.timestamp || new Date().toISOString(),
+    cpu_util_pct: (typeof ts.cpu_util_pct === 'number' && isFinite(ts.cpu_util_pct)) 
+      ? Math.max(0, Math.min(100, ts.cpu_util_pct)) 
+      : 0,
+    mem_util_pct: (typeof ts.mem_util_pct === 'number' && isFinite(ts.mem_util_pct))
+      ? Math.max(0, Math.min(100, ts.mem_util_pct))
+      : 0,
+    rps: (typeof ts.rps === 'number' && isFinite(ts.rps))
+      ? Math.max(0, ts.rps)
+      : 0,
+    latency_ms: (typeof ts.latency_ms === 'number' && isFinite(ts.latency_ms))
+      ? Math.max(0, ts.latency_ms)
+      : 0,
+    concurrent_users: (typeof ts.concurrent_users === 'number' && isFinite(ts.concurrent_users))
+      ? Math.max(0, ts.concurrent_users)
+      : 0,
+    error_rate: (typeof ts.error_rate === 'number' && isFinite(ts.error_rate))
+      ? Math.max(0, Math.min(100, ts.error_rate))
+      : 0,
+  };
+}
+
+interface DebugEvent {
+  id: string;
+  timestamp: string;
+  type: string;
+  rawData: any;
+  parsedData?: any;
+  eventType?: string;
+}
+
 export default function SimulationDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -35,7 +68,10 @@ export default function SimulationDetailPage() {
   const [run, setRun] = useState<SimulationRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const streamRef = useRef<SimulationStream | null>(null);
+  const debugPanelRef = useRef<HTMLDivElement>(null);
 
   // Fetch initial simulation run data
   useEffect(() => {
@@ -69,11 +105,35 @@ export default function SimulationDetailPage() {
       return;
     }
 
+    // Add debug event helper
+    const addDebugEvent = (type: string, rawData: any, parsedData?: any, eventType?: string) => {
+      const debugEvent: DebugEvent = {
+        id: `${Date.now()}-${Math.random()}`,
+        timestamp: new Date().toISOString(),
+        type,
+        rawData,
+        parsedData,
+        eventType,
+      };
+      setDebugEvents((prev) => [...prev.slice(-49), debugEvent]); // Keep last 50 events
+      
+      // Auto-scroll to bottom
+      setTimeout(() => {
+        if (debugPanelRef.current) {
+          debugPanelRef.current.scrollTop = debugPanelRef.current.scrollHeight;
+        }
+      }, 100);
+    };
+
     // Create and start the stream
     const stream = createSimulationStream({
       runId: id,
+      onRawEvent: (eventType: string, rawData: string, parsedData?: any) => {
+        addDebugEvent(`sse_${eventType}`, rawData, parsedData, `SSE Event: ${eventType}`);
+      },
       onMetricsUpdate: (event) => {
         console.log("[SimulationDetail] Received metrics update:", event);
+        addDebugEvent("metrics_update", event, event.data, "onMetricsUpdate");
         setRun((currentRun) => {
           if (!currentRun) {
             // If no current run, we can't update - this shouldn't happen
@@ -96,9 +156,23 @@ export default function SimulationDetailPage() {
                   avg_rps: eventSummary.avg_rps ?? 0,
                   peak_rps: eventSummary.peak_rps ?? 0,
                 },
-                node_metrics: event.data.node_metrics || [],
+                node_metrics: (event.data.node_metrics || []).map((nm: any) => ({
+                  ...nm,
+                  avg_cpu_util_pct: (typeof nm.avg_cpu_util_pct === 'number' && isFinite(nm.avg_cpu_util_pct))
+                    ? Math.max(0, Math.min(100, nm.avg_cpu_util_pct))
+                    : 0,
+                  avg_mem_util_pct: (typeof nm.avg_mem_util_pct === 'number' && isFinite(nm.avg_mem_util_pct))
+                    ? Math.max(0, Math.min(100, nm.avg_mem_util_pct))
+                    : 0,
+                  peak_cpu_util_pct: (typeof nm.peak_cpu_util_pct === 'number' && isFinite(nm.peak_cpu_util_pct))
+                    ? Math.max(0, Math.min(100, nm.peak_cpu_util_pct))
+                    : 0,
+                  peak_mem_util_pct: (typeof nm.peak_mem_util_pct === 'number' && isFinite(nm.peak_mem_util_pct))
+                    ? Math.max(0, Math.min(100, nm.peak_mem_util_pct))
+                    : 0,
+                })),
                 time_series: event.data.time_series
-                  ? [event.data.time_series]
+                  ? [validateTimeSeriesData(event.data.time_series)]
                   : [],
                 workload_metrics: {
                   concurrent_users: { min: 0, max: 0, avg: 0 },
@@ -110,8 +184,12 @@ export default function SimulationDetailPage() {
           }
 
           // Update existing results
-          const updatedTimeSeries = event.data.time_series
-            ? [...currentRun.results.time_series, event.data.time_series]
+          // If all_time_series is provided (from completed run with full array), replace the entire array
+          // Otherwise, append the new time_series entry for real-time updates
+          const updatedTimeSeries = (event.data as any).all_time_series
+            ? (event.data as any).all_time_series.map((ts: any) => validateTimeSeriesData(ts)) // Replace with full array from completed run
+            : event.data.time_series
+            ? [...currentRun.results.time_series, validateTimeSeriesData(event.data.time_series)]
             : currentRun.results.time_series;
 
           const eventSummary = event.data.summary;
@@ -131,13 +209,28 @@ export default function SimulationDetailPage() {
                     peak_rps: eventSummary.peak_rps ?? currentRun.results.summary.peak_rps,
                   }
                 : currentRun.results.summary,
-              node_metrics: event.data.node_metrics || currentRun.results.node_metrics,
+              node_metrics: (event.data.node_metrics || currentRun.results.node_metrics).map((nm: any) => ({
+                ...nm,
+                avg_cpu_util_pct: (typeof nm.avg_cpu_util_pct === 'number' && isFinite(nm.avg_cpu_util_pct))
+                  ? Math.max(0, Math.min(100, nm.avg_cpu_util_pct))
+                  : 0,
+                avg_mem_util_pct: (typeof nm.avg_mem_util_pct === 'number' && isFinite(nm.avg_mem_util_pct))
+                  ? Math.max(0, Math.min(100, nm.avg_mem_util_pct))
+                  : 0,
+                peak_cpu_util_pct: (typeof nm.peak_cpu_util_pct === 'number' && isFinite(nm.peak_cpu_util_pct))
+                  ? Math.max(0, Math.min(100, nm.peak_cpu_util_pct))
+                  : 0,
+                peak_mem_util_pct: (typeof nm.peak_mem_util_pct === 'number' && isFinite(nm.peak_mem_util_pct))
+                  ? Math.max(0, Math.min(100, nm.peak_mem_util_pct))
+                  : 0,
+              })),
               time_series: updatedTimeSeries,
             },
           };
         });
       },
       onStatusChange: async (event) => {
+        addDebugEvent("status_change", event, event.data, "onStatusChange");
         // Fetch updated run from backend when status changes
         // This ensures we get the fully transformed run object
         try {
@@ -175,6 +268,7 @@ export default function SimulationDetailPage() {
       },
       onError: (event) => {
         console.error("[SimulationStream] Error:", event.data);
+        addDebugEvent("error", event, event.data, "onError");
         setRun((currentRun) => {
           if (!currentRun) return currentRun;
           return {
@@ -184,6 +278,7 @@ export default function SimulationDetailPage() {
         });
       },
       onComplete: async (event) => {
+        addDebugEvent("complete", event, event.data, "onComplete");
         // Fetch final run state from backend
         try {
           const finalRun = await getSimulationRun(id);
@@ -212,13 +307,16 @@ export default function SimulationDetailPage() {
       },
       onConnectionOpen: () => {
         setIsStreaming(true);
+        addDebugEvent("connection", { state: "open" }, null, "onConnectionOpen");
       },
       onConnectionClose: () => {
         setIsStreaming(false);
+        addDebugEvent("connection", { state: "closed" }, null, "onConnectionClose");
       },
       onConnectionError: (error) => {
-        // Stream endpoint may not be available - silently fall back to polling
+        // Stream endpoint may not be available
         setIsStreaming(false);
+        addDebugEvent("connection", { state: "error", error: error.message }, error, "onConnectionError");
       },
       reconnect: true,
       reconnectInterval: 5000,
@@ -236,44 +334,6 @@ export default function SimulationDetailPage() {
         setIsStreaming(false);
       }
     };
-  }, [id, run?.status]);
-
-  // Poll for status updates as a backup (even when streaming, in case SSE misses updates)
-  useEffect(() => {
-    if (!run || run.status !== "running") {
-      return;
-    }
-
-    // Poll every 5 seconds to check for status changes
-    // This works as a backup even when SSE is connected, in case SSE misses status updates
-    const interval = setInterval(async () => {
-      try {
-        const updatedRun = await getSimulationRun(id);
-        if (updatedRun) {
-          // Only update if status has changed or if we got new results
-          setRun((currentRun) => {
-            if (!currentRun) return updatedRun;
-            
-            // Update if status changed
-            if (updatedRun.status !== currentRun.status) {
-              return updatedRun;
-            }
-            
-            // Update if we got new results
-            if (updatedRun.results && (!currentRun.results || 
-                JSON.stringify(updatedRun.results) !== JSON.stringify(currentRun.results))) {
-              return updatedRun;
-            }
-            
-            return currentRun;
-          });
-        }
-      } catch (error) {
-        console.error("Failed to poll simulation status:", error);
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
   }, [id, run?.status]);
 
   if (loading) {
@@ -317,19 +377,10 @@ export default function SimulationDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-white">{run.name}</h1>
-              {isRunning && (
-                <div className="flex items-center gap-2">
-                  {isStreaming ? (
-                    <div className="flex items-center gap-1 text-green-400 text-xs">
-                      <Wifi className="w-4 h-4" />
-                      <span>Live</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 text-yellow-400 text-xs">
-                      <WifiOff className="w-4 h-4" />
-                      <span>Polling</span>
-                    </div>
-                  )}
+              {isRunning && isStreaming && (
+                <div className="flex items-center gap-1 text-green-400 text-xs">
+                  <Wifi className="w-4 h-4" />
+                  <span>Live</span>
                 </div>
               )}
             </div>
@@ -367,6 +418,74 @@ export default function SimulationDetailPage() {
           )}
         </div>
       </div>
+      
+      {/* Debug Panel Toggle */}
+      {isRunning && (
+        <div className="flex items-center justify-end">
+          <button
+            onClick={() => setShowDebugPanel(!showDebugPanel)}
+            className="px-4 py-2 bg-yellow-500/20 text-yellow-400 rounded-lg hover:bg-yellow-500/30 transition-colors text-sm"
+          >
+            {showDebugPanel ? "Hide" : "Show"} SSE Debug Panel
+          </button>
+        </div>
+      )}
+      
+      {/* Debug Panel */}
+      {showDebugPanel && isRunning && (
+        <div className="bg-card rounded-lg border border-border p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">SSE Debug Stream</h3>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${isStreaming ? 'bg-green-400' : 'bg-red-400'}`} />
+                <span className="text-sm text-white/60">
+                  {isStreaming ? "Connected" : "Disconnected"}
+                </span>
+              </div>
+              <button
+                onClick={() => setDebugEvents([])}
+                className="px-3 py-1 bg-white/10 text-white rounded hover:bg-white/20 text-sm"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div
+            ref={debugPanelRef}
+            className="bg-black/50 rounded border border-white/10 p-4 max-h-96 overflow-y-auto font-mono text-xs"
+          >
+            {debugEvents.length === 0 ? (
+              <div className="text-white/40">No events received yet...</div>
+            ) : (
+              <div className="space-y-3">
+                {debugEvents.map((event) => (
+                  <div key={event.id} className="border-l-2 border-white/20 pl-3 py-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-blue-400 font-semibold">{event.eventType || event.type}</span>
+                      <span className="text-white/40 text-xs">{new Date(event.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    {event.parsedData && (
+                      <div className="mb-2">
+                        <div className="text-yellow-400 text-xs mb-1">Parsed Data:</div>
+                        <pre className="text-green-400 whitespace-pre-wrap break-all">
+                          {JSON.stringify(event.parsedData, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-yellow-400 text-xs mb-1">Raw Data:</div>
+                      <pre className="text-white/70 whitespace-pre-wrap break-all">
+                        {typeof event.rawData === 'string' ? event.rawData : JSON.stringify(event.rawData, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Status and Info */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -476,8 +595,8 @@ export default function SimulationDetailPage() {
           {/* Resource Graph */}
           <div className="relative">
             <ResourceGraph
-              timeSeriesData={run.results!.time_series}
-              nodeMetrics={run.results!.node_metrics}
+              timeSeriesData={run.results!.time_series || []}
+              nodeMetrics={run.results!.node_metrics || []}
             />
           </div>
 
@@ -488,7 +607,7 @@ export default function SimulationDetailPage() {
               Performance Overview (Multi-Axis)
             </h3>
             <MultiAxisChart
-              data={run.results!.time_series}
+              data={run.results!.time_series || []}
               metrics={[
                 {
                   key: "rps",
@@ -520,8 +639,8 @@ export default function SimulationDetailPage() {
                 <TrendingUp className="w-5 h-5" />
                 Performance Metrics
               </h3>
-              <MetricsChart
-                data={run.results!.time_series}
+                <MetricsChart
+                data={run.results!.time_series || []}
                 metrics={["rps", "latency_ms"]}
                 labels={["RPS", "Latency (ms)"]}
                 colors={["#8b5cf6", "#f59e0b"]}
@@ -536,8 +655,8 @@ export default function SimulationDetailPage() {
                 <Users className="w-5 h-5" />
                 Load Metrics
               </h3>
-              <MetricsChart
-                data={run.results!.time_series}
+                <MetricsChart
+                data={run.results!.time_series || []}
                 metrics={["concurrent_users", "error_rate"]}
                 labels={["Concurrent Users", "Error Rate"]}
                 colors={["#06b6d4", "#ef4444"]}

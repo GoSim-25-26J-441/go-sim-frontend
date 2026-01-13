@@ -18,51 +18,82 @@ export function ResourceGraph({
   const chartData = useMemo(() => {
     if (timeSeriesData.length === 0) return null;
 
-    const cpuData = timeSeriesData.map((d) => d.cpu_util_pct);
-    const memData = timeSeriesData.map((d) => d.mem_util_pct);
+    // Extract and validate CPU and memory data
+    const cpuData = timeSeriesData.map((d) => {
+      const value = d.cpu_util_pct;
+      return (typeof value === 'number' && isFinite(value)) ? Math.max(0, Math.min(100, value)) : 0;
+    });
+    const memData = timeSeriesData.map((d) => {
+      const value = d.mem_util_pct;
+      return (typeof value === 'number' && isFinite(value)) ? Math.max(0, Math.min(100, value)) : 0;
+    });
     
     // Calculate average network I/O if node metrics are available
     const networkData = nodeMetrics.length > 0
       ? timeSeriesData.map((_, index) => {
           // For dummy data, we'll approximate network I/O based on CPU/RPS correlation
-          const cpu = cpuData[index];
-          const rps = timeSeriesData[index].rps;
+          const cpu = cpuData[index] || 0;
+          const rps = (typeof timeSeriesData[index]?.rps === 'number' && isFinite(timeSeriesData[index].rps)) 
+            ? timeSeriesData[index].rps 
+            : 0;
           // Estimate network I/O as a function of RPS and CPU usage
-          return Math.min(100, (rps * 0.05 + cpu * 0.3));
+          return Math.min(100, Math.max(0, (rps * 0.05 + cpu * 0.3)));
         })
-      : timeSeriesData.map((d) => 0);
+      : timeSeriesData.map(() => 0);
 
     const maxValue = Math.max(
-      ...cpuData,
-      ...memData,
-      ...networkData,
+      ...cpuData.filter(v => isFinite(v) && v > 0),
+      ...memData.filter(v => isFinite(v) && v > 0),
+      ...networkData.filter(v => isFinite(v) && v > 0),
       100
-    );
+    ) || 100;
 
     const height = 300;
-    const width = timeSeriesData.length > 1 ? timeSeriesData.length * 2 : 800;
+    // Ensure minimum width to prevent negative calculations
+    const minWidth = 800;
+    const calculatedWidth = timeSeriesData.length > 1 ? Math.max(minWidth, timeSeriesData.length * 20) : minWidth;
+    const width = calculatedWidth;
     const padding = { top: 20, right: 20, bottom: 40, left: 60 };
 
-    // Calculate averages
-    const avgCpu = cpuData.reduce((a, b) => a + b, 0) / cpuData.length;
-    const avgMem = memData.reduce((a, b) => a + b, 0) / memData.length;
-    const avgNetwork = networkData.reduce((a, b) => a + b, 0) / networkData.length;
+    // Calculate averages - filter out invalid values
+    const validCpuData = cpuData.filter(v => isFinite(v) && v >= 0);
+    const validMemData = memData.filter(v => isFinite(v) && v >= 0);
+    const validNetworkData = networkData.filter(v => isFinite(v) && v >= 0);
+    
+    const avgCpu = validCpuData.length > 0
+      ? validCpuData.reduce((a, b) => a + b, 0) / validCpuData.length
+      : 0;
+    const avgMem = validMemData.length > 0
+      ? validMemData.reduce((a, b) => a + b, 0) / validMemData.length
+      : 0;
+    const avgNetwork = validNetworkData.length > 0
+      ? validNetworkData.reduce((a, b) => a + b, 0) / validNetworkData.length
+      : 0;
 
+    // Ensure values are valid numbers
+    const safeMaxValue = maxValue > 0 ? maxValue : 100;
+    const dataLength = timeSeriesData.length;
+    const divisor = Math.max(1, dataLength - 1); // Prevent division by zero
+    const availableWidth = Math.max(1, width - padding.left - padding.right); // Prevent negative width
+    
     const points = {
       cpu: cpuData.map((value, i) => {
-        const x = padding.left + (i / (timeSeriesData.length - 1 || 1)) * (width - padding.left - padding.right);
-        const y = padding.top + (height - padding.top - padding.bottom) * (1 - value / maxValue);
-        return { x, y, value };
+        const safeValue = isNaN(value) || !isFinite(value) ? 0 : Math.max(0, value);
+        const x = padding.left + (i / divisor) * availableWidth;
+        const y = padding.top + (height - padding.top - padding.bottom) * (1 - safeValue / safeMaxValue);
+        return { x: isNaN(x) || !isFinite(x) ? padding.left : x, y: isNaN(y) || !isFinite(y) ? padding.top : y, value: safeValue };
       }),
       memory: memData.map((value, i) => {
-        const x = padding.left + (i / (timeSeriesData.length - 1 || 1)) * (width - padding.left - padding.right);
-        const y = padding.top + (height - padding.top - padding.bottom) * (1 - value / maxValue);
-        return { x, y, value };
+        const safeValue = isNaN(value) || !isFinite(value) ? 0 : Math.max(0, value);
+        const x = padding.left + (i / divisor) * availableWidth;
+        const y = padding.top + (height - padding.top - padding.bottom) * (1 - safeValue / safeMaxValue);
+        return { x: isNaN(x) || !isFinite(x) ? padding.left : x, y: isNaN(y) || !isFinite(y) ? padding.top : y, value: safeValue };
       }),
       network: networkData.map((value, i) => {
-        const x = padding.left + (i / (timeSeriesData.length - 1 || 1)) * (width - padding.left - padding.right);
-        const y = padding.top + (height - padding.top - padding.bottom) * (1 - value / maxValue);
-        return { x, y, value };
+        const safeValue = isNaN(value) || !isFinite(value) ? 0 : Math.max(0, value);
+        const x = padding.left + (i / divisor) * availableWidth;
+        const y = padding.top + (height - padding.top - padding.bottom) * (1 - safeValue / safeMaxValue);
+        return { x: isNaN(x) || !isFinite(x) ? padding.left : x, y: isNaN(y) || !isFinite(y) ? padding.top : y, value: safeValue };
       }),
     };
 
@@ -84,7 +115,9 @@ export function ResourceGraph({
     );
   }
 
-  const hoveredData = hoveredIndex !== null ? timeSeriesData[hoveredIndex] : null;
+  const hoveredData = hoveredIndex !== null && hoveredIndex < timeSeriesData.length 
+    ? timeSeriesData[hoveredIndex] 
+    : null;
 
   return (
     <div className="bg-card rounded-lg p-6 border border-border">
@@ -100,18 +133,24 @@ export function ResourceGraph({
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-blue-500" />
             <span className="text-white/60">CPU:</span>
-            <span className="text-white font-medium">{chartData.averages.cpu.toFixed(1)}%</span>
+            <span className="text-white font-medium">
+              {isFinite(chartData.averages.cpu) ? chartData.averages.cpu.toFixed(1) : "0.0"}%
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-green-500" />
             <span className="text-white/60">Memory:</span>
-            <span className="text-white font-medium">{chartData.averages.memory.toFixed(1)}%</span>
+            <span className="text-white font-medium">
+              {isFinite(chartData.averages.memory) ? chartData.averages.memory.toFixed(1) : "0.0"}%
+            </span>
           </div>
           {nodeMetrics.length > 0 && (
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-purple-500" />
               <span className="text-white/60">Network:</span>
-              <span className="text-white font-medium">{chartData.averages.network.toFixed(1)}%</span>
+              <span className="text-white font-medium">
+                {isFinite(chartData.averages.network) ? chartData.averages.network.toFixed(1) : "0.0"}%
+              </span>
             </div>
           )}
         </div>
@@ -158,7 +197,10 @@ export function ResourceGraph({
           {/* X-axis time labels */}
           {timeSeriesData.length > 0 && timeSeriesData.length <= 20 && timeSeriesData.map((d, i) => {
             if (i % Math.ceil(timeSeriesData.length / 6) !== 0 && i !== timeSeriesData.length - 1) return null;
-            const x = chartData.padding.left + (i / (timeSeriesData.length - 1 || 1)) * (chartData.width - chartData.padding.left - chartData.padding.right);
+            const divisor = Math.max(1, timeSeriesData.length - 1);
+            const availableWidth = Math.max(1, chartData.width - chartData.padding.left - chartData.padding.right);
+            const x = chartData.padding.left + (i / divisor) * availableWidth;
+            if (!isFinite(x)) return null;
             const timestamp = new Date(d.timestamp);
             return (
               <g key={i}>
@@ -186,69 +228,100 @@ export function ResourceGraph({
           })}
 
           {/* Area fills for better visibility */}
-          <defs>
-            <linearGradient id="cpuGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
-              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-            </linearGradient>
-            <linearGradient id="memGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
-              <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
-            </linearGradient>
-            {nodeMetrics.length > 0 && (
-              <linearGradient id="networkGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
-                <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
-              </linearGradient>
-            )}
-          </defs>
+          {chartData.points.cpu.length > 0 && (
+            <>
+              <defs>
+                <linearGradient id="cpuGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
+                  <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+                </linearGradient>
+                <linearGradient id="memGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+                </linearGradient>
+                {nodeMetrics.length > 0 && (
+                  <linearGradient id="networkGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
+                    <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
+                  </linearGradient>
+                )}
+              </defs>
 
-          {/* CPU Area */}
-          <path
-            d={`M ${chartData.points.cpu[0].x} ${chartData.height - chartData.padding.bottom} 
-                ${chartData.points.cpu.map((p) => `L ${p.x} ${p.y}`).join(' ')} 
-                L ${chartData.points.cpu[chartData.points.cpu.length - 1].x} ${chartData.height - chartData.padding.bottom} Z`}
-            fill="url(#cpuGradient)"
-          />
+              {/* CPU Area */}
+              {chartData.points.cpu[0] && 
+               isFinite(chartData.points.cpu[0].x) &&
+               chartData.points.cpu[chartData.points.cpu.length - 1] &&
+               isFinite(chartData.points.cpu[chartData.points.cpu.length - 1].x) && (
+                <path
+                  d={`M ${chartData.points.cpu[0].x} ${chartData.height - chartData.padding.bottom} 
+                      ${chartData.points.cpu.filter(p => isFinite(p.x) && isFinite(p.y)).map((p) => `L ${p.x} ${p.y}`).join(' ')} 
+                      L ${chartData.points.cpu[chartData.points.cpu.length - 1].x} ${chartData.height - chartData.padding.bottom} Z`}
+                  fill="url(#cpuGradient)"
+                />
+              )}
 
-          {/* Memory Area */}
-          <path
-            d={`M ${chartData.points.memory[0].x} ${chartData.height - chartData.padding.bottom} 
-                ${chartData.points.memory.map((p) => `L ${p.x} ${p.y}`).join(' ')} 
-                L ${chartData.points.memory[chartData.points.memory.length - 1].x} ${chartData.height - chartData.padding.bottom} Z`}
-            fill="url(#memGradient)"
-          />
+              {/* Memory Area */}
+              {chartData.points.memory[0] && 
+               isFinite(chartData.points.memory[0].x) &&
+               chartData.points.memory[chartData.points.memory.length - 1] &&
+               isFinite(chartData.points.memory[chartData.points.memory.length - 1].x) && (
+                <path
+                  d={`M ${chartData.points.memory[0].x} ${chartData.height - chartData.padding.bottom} 
+                      ${chartData.points.memory.filter(p => isFinite(p.x) && isFinite(p.y)).map((p) => `L ${p.x} ${p.y}`).join(' ')} 
+                      L ${chartData.points.memory[chartData.points.memory.length - 1].x} ${chartData.height - chartData.padding.bottom} Z`}
+                  fill="url(#memGradient)"
+                />
+              )}
 
-          {/* Network Area */}
-          {nodeMetrics.length > 0 && (
-            <path
-              d={`M ${chartData.points.network[0].x} ${chartData.height - chartData.padding.bottom} 
-                  ${chartData.points.network.map((p) => `L ${p.x} ${p.y}`).join(' ')} 
-                  L ${chartData.points.network[chartData.points.network.length - 1].x} ${chartData.height - chartData.padding.bottom} Z`}
-              fill="url(#networkGradient)"
-            />
+              {/* Network Area */}
+              {nodeMetrics.length > 0 && 
+               chartData.points.network[0] &&
+               isFinite(chartData.points.network[0].x) &&
+               chartData.points.network[chartData.points.network.length - 1] &&
+               isFinite(chartData.points.network[chartData.points.network.length - 1].x) && (
+                <path
+                  d={`M ${chartData.points.network[0].x} ${chartData.height - chartData.padding.bottom} 
+                      ${chartData.points.network.filter(p => isFinite(p.x) && isFinite(p.y)).map((p) => `L ${p.x} ${p.y}`).join(' ')} 
+                      L ${chartData.points.network[chartData.points.network.length - 1].x} ${chartData.height - chartData.padding.bottom} Z`}
+                  fill="url(#networkGradient)"
+                />
+              )}
+            </>
           )}
 
           {/* Data lines */}
-          <path
-            d={chartData.points.cpu.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")}
-            fill="none"
-            stroke="#3b82f6"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path
-            d={chartData.points.memory.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")}
-            fill="none"
-            stroke="#10b981"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          {nodeMetrics.length > 0 && (
+          {chartData.points.cpu.length > 0 && (
             <path
-              d={chartData.points.network.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")}
+              d={chartData.points.cpu
+                .filter(p => isFinite(p.x) && isFinite(p.y))
+                .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+                .join(" ")}
+              fill="none"
+              stroke="#3b82f6"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+          {chartData.points.memory.length > 0 && (
+            <path
+              d={chartData.points.memory
+                .filter(p => isFinite(p.x) && isFinite(p.y))
+                .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+                .join(" ")}
+              fill="none"
+              stroke="#10b981"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+          {nodeMetrics.length > 0 && chartData.points.network.length > 0 && (
+            <path
+              d={chartData.points.network
+                .filter(p => isFinite(p.x) && isFinite(p.y))
+                .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+                .join(" ")}
               fill="none"
               stroke="#8b5cf6"
               strokeWidth="2.5"
@@ -258,7 +331,11 @@ export function ResourceGraph({
           )}
 
           {/* Hover indicator line */}
-          {hoveredIndex !== null && (
+          {hoveredIndex !== null && 
+           hoveredIndex >= 0 && 
+           hoveredIndex < chartData.points.cpu.length &&
+           chartData.points.cpu[hoveredIndex] &&
+           isFinite(chartData.points.cpu[hoveredIndex].x) && (
             <g>
               <line
                 x1={chartData.points.cpu[hoveredIndex].x}
@@ -271,23 +348,32 @@ export function ResourceGraph({
                 className="text-white/30"
               />
               {/* Hover points */}
-              <circle
-                cx={chartData.points.cpu[hoveredIndex].x}
-                cy={chartData.points.cpu[hoveredIndex].y}
-                r="5"
-                fill="#3b82f6"
-                stroke="white"
-                strokeWidth="2"
-              />
-              <circle
-                cx={chartData.points.memory[hoveredIndex].x}
-                cy={chartData.points.memory[hoveredIndex].y}
-                r="5"
-                fill="#10b981"
-                stroke="white"
-                strokeWidth="2"
-              />
-              {nodeMetrics.length > 0 && (
+              {isFinite(chartData.points.cpu[hoveredIndex].y) && (
+                <circle
+                  cx={chartData.points.cpu[hoveredIndex].x}
+                  cy={chartData.points.cpu[hoveredIndex].y}
+                  r="5"
+                  fill="#3b82f6"
+                  stroke="white"
+                  strokeWidth="2"
+                />
+              )}
+              {chartData.points.memory[hoveredIndex] && 
+               isFinite(chartData.points.memory[hoveredIndex].x) &&
+               isFinite(chartData.points.memory[hoveredIndex].y) && (
+                <circle
+                  cx={chartData.points.memory[hoveredIndex].x}
+                  cy={chartData.points.memory[hoveredIndex].y}
+                  r="5"
+                  fill="#10b981"
+                  stroke="white"
+                  strokeWidth="2"
+                />
+              )}
+              {nodeMetrics.length > 0 && 
+               chartData.points.network[hoveredIndex] &&
+               isFinite(chartData.points.network[hoveredIndex].x) &&
+               isFinite(chartData.points.network[hoveredIndex].y) && (
                 <circle
                   cx={chartData.points.network[hoveredIndex].x}
                   cy={chartData.points.network[hoveredIndex].y}
@@ -303,15 +389,23 @@ export function ResourceGraph({
           {/* Invisible hover zones */}
           {chartData.points.cpu.map((_, i) => {
             if (i === chartData.points.cpu.length - 1) return null;
-            const x1 = chartData.points.cpu[i].x;
-            const x2 = chartData.points.cpu[i + 1].x;
+            const point1 = chartData.points.cpu[i];
+            const point2 = chartData.points.cpu[i + 1];
+            if (!point1 || !point2 || !isFinite(point1.x) || !isFinite(point2.x)) return null;
+            
+            const x1 = point1.x;
+            const x2 = point2.x;
+            const width = Math.abs(x2 - x1);
             const midX = (x1 + x2) / 2;
+            
+            if (width <= 0 || !isFinite(width) || !isFinite(midX)) return null;
+            
             return (
               <rect
                 key={i}
-                x={midX - (x2 - x1) / 2}
+                x={Math.min(x1, x2)}
                 y={chartData.padding.top}
-                width={x2 - x1}
+                width={width}
                 height={chartData.height - chartData.padding.top - chartData.padding.bottom}
                 fill="transparent"
                 onMouseEnter={() => setHoveredIndex(i)}
@@ -350,7 +444,12 @@ export function ResourceGraph({
       </div>
 
       {/* Hover Tooltip */}
-      {hoveredData && hoveredIndex !== null && chartData.points.cpu[hoveredIndex] && (
+      {hoveredData && 
+       hoveredIndex !== null && 
+       hoveredIndex < chartData.points.cpu.length &&
+       chartData.points.cpu[hoveredIndex] &&
+       typeof hoveredData.cpu_util_pct === 'number' &&
+       typeof hoveredData.mem_util_pct === 'number' && (
         <div
           className="absolute bg-gray-900 border border-white/20 rounded-lg p-3 shadow-xl pointer-events-none z-10"
           style={{
@@ -360,18 +459,24 @@ export function ResourceGraph({
           }}
         >
           <div className="text-xs text-white/60 mb-2">
-            {new Date(hoveredData.timestamp).toLocaleString()}
+            {hoveredData.timestamp ? new Date(hoveredData.timestamp).toLocaleString() : 'N/A'}
           </div>
           <div className="space-y-1 text-sm">
             <div className="flex items-center justify-between gap-4">
               <span className="text-white/80">CPU:</span>
-              <span className="text-blue-400 font-medium">{hoveredData.cpu_util_pct.toFixed(1)}%</span>
+              <span className="text-blue-400 font-medium">
+                {(hoveredData.cpu_util_pct || 0).toFixed(1)}%
+              </span>
             </div>
             <div className="flex items-center justify-between gap-4">
               <span className="text-white/80">Memory:</span>
-              <span className="text-green-400 font-medium">{hoveredData.mem_util_pct.toFixed(1)}%</span>
+              <span className="text-green-400 font-medium">
+                {(hoveredData.mem_util_pct || 0).toFixed(1)}%
+              </span>
             </div>
-            {nodeMetrics.length > 0 && (
+            {nodeMetrics.length > 0 && 
+             hoveredIndex < chartData.points.network.length &&
+             chartData.points.network[hoveredIndex] && (
               <div className="flex items-center justify-between gap-4">
                 <span className="text-white/80">Network:</span>
                 <span className="text-purple-400 font-medium">

@@ -96,11 +96,6 @@ export default function SimulatorPage() {
     };
 
     fetchRuns();
-
-    // Poll for updates every 10 seconds to catch status changes
-    const interval = setInterval(fetchRuns, 10000);
-
-    return () => clearInterval(interval);
   }, []);
 
   const filteredRuns =
