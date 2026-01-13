@@ -33,6 +33,12 @@ export function getFirebaseErrorMessage(
       case "auth/weak-password":
         return "Password is too weak. Please use a stronger password.";
 
+      // Password reset specific errors
+      case "auth/invalid-action-code":
+        return "The password reset link is invalid or has already been used. Please request a new password reset.";
+      case "auth/expired-action-code":
+        return "The password reset link has expired. Please request a new password reset.";
+
       // Rate limiting
       case "auth/too-many-requests":
         return authMethod === "email"
@@ -57,7 +63,7 @@ export function getFirebaseErrorMessage(
 
       // Google sign-in specific errors
       case "auth/account-exists-with-different-credential":
-        return "An account already exists with the same email address but different sign-in method. Please sign in using your original method.";
+        return "An account already exists with this email using a different sign-in method. Please sign in with your original method first, then you can link additional sign-in methods in your account settings.";
       case "auth/credential-already-in-use":
         return "This account is already associated with a different user. Please contact support.";
       case "auth/popup-blocked":
