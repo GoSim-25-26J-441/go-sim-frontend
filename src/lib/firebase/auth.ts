@@ -9,6 +9,8 @@ import {
   getIdToken,
   AuthError,
   Auth,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
+  confirmPasswordReset as firebaseConfirmPasswordReset,
 } from "firebase/auth";
 import { auth } from "./config";
 
@@ -115,3 +117,30 @@ export function getCurrentUser(): User | null {
   return auth?.currentUser || null;
 }
 
+/**
+ * Send password reset email
+ */
+export async function sendPasswordResetEmail(email: string) {
+  try {
+    const authInstance = requireAuth();
+    await firebaseSendPasswordResetEmail(authInstance, email);
+    return { error: null };
+  } catch (error) {
+    console.error("Firebase sendPasswordResetEmail error:", error);
+    return { error: error as AuthError };
+  }
+}
+
+/**
+ * Confirm password reset with code from email
+ */
+export async function confirmPasswordReset(oobCode: string, newPassword: string) {
+  try {
+    const authInstance = requireAuth();
+    await firebaseConfirmPasswordReset(authInstance, oobCode, newPassword);
+    return { error: null };
+  } catch (error) {
+    console.error("Firebase confirmPasswordReset error:", error);
+    return { error: error as AuthError };
+  }
+}
