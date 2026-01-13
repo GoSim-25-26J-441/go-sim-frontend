@@ -63,7 +63,7 @@ export function getFirebaseErrorMessage(
 
       // Google sign-in specific errors
       case "auth/account-exists-with-different-credential":
-        return "An account already exists with the same email address but different sign-in method. Please sign in using your original method.";
+        return "An account already exists with this email using a different sign-in method. Please sign in with your original method first, then you can link additional sign-in methods in your account settings.";
       case "auth/credential-already-in-use":
         return "This account is already associated with a different user. Please contact support.";
       case "auth/popup-blocked":
