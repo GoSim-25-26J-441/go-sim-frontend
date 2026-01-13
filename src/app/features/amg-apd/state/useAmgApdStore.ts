@@ -8,7 +8,6 @@ type State = {
   last?: AnalysisResult;
   setLast: (r?: AnalysisResult) => void;
 
-  // We'll treat this as the "current YAML" at all times
   editedYaml?: string;
   setEditedYaml: (yaml?: string) => void;
   clearEditedYaml: () => void;
@@ -21,7 +20,6 @@ export const useAmgApdStore = create<State>()(
       setLast: (r?: AnalysisResult) =>
         set({
           last: r,
-          // ✅ DO NOT clear editedYaml here — it is needed for suggestions/apply
         }),
 
       editedYaml: undefined,

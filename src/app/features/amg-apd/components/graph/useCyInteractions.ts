@@ -1,4 +1,3 @@
-// features/amg-apd/components/graph/useCyInteractions.ts
 import { useEffect } from "react";
 import type cytoscape from "cytoscape";
 import type {
@@ -39,7 +38,6 @@ export function useCyInteractions({
       if (!node || !node.isNode?.()) return;
       if (node.hasClass("halo")) return;
 
-      // connect tools
       if (
         editMode &&
         (tool === "connect-calls" ||
@@ -77,38 +75,21 @@ export function useCyInteractions({
           .toString(36)
           .slice(2, 8)}`;
 
-        let label =
+        const label =
           edgeKind === "READS"
             ? "reads"
             : edgeKind === "WRITES"
             ? "writes"
             : "calls";
-        let attrs: any | undefined;
 
-        if (edgeKind === "CALLS") {
-          const endpointsInput = window.prompt(
-            "Endpoints for this call (comma-separated).\nExample: GET /users/:id, POST /users",
-            ""
-          );
-          const endpoints =
-            endpointsInput
-              ?.split(",")
-              .map((s) => s.trim())
-              .filter(Boolean) ?? [];
+        const dep_kind =
+          edgeKind === "CALLS"
+            ? "rest"
+            : edgeKind === "READS"
+            ? "db_read"
+            : "db_write";
 
-          const rpmInput = window.prompt(
-            "Approximate calls per minute (rpm) for this edge?",
-            "0"
-          );
-          let rpm = parseInt(rpmInput ?? "0", 10);
-          if (Number.isNaN(rpm) || rpm < 0) rpm = 0;
-
-          attrs = { endpoints, rate_per_min: rpm };
-          label =
-            endpoints.length || rpm > 0
-              ? `calls (${endpoints.length} ep), ${rpm}rpm`
-              : "calls";
-        }
+        const attrs = { kind: dep_kind, sync: true };
 
         const edgeData: any = {
           id: edgeId,
@@ -116,8 +97,8 @@ export function useCyInteractions({
           target: targetId,
           kind: edgeKind,
           label,
+          attrs,
         };
-        if (attrs) edgeData.attrs = attrs;
 
         cy.add({ group: "edges", data: edgeData });
 
@@ -127,7 +108,6 @@ export function useCyInteractions({
         return;
       }
 
-      // normal selection
       safeUnselectAll();
       node.select();
       setSelected({ type: "node", data: node.data() });
@@ -147,7 +127,6 @@ export function useCyInteractions({
     const onBgTap = (evt: any) => {
       if (evt.target !== cy) return;
 
-      // add node tools
       if (editMode && (tool === "add-service" || tool === "add-database")) {
         const pos = evt.position;
         const idBase = tool === "add-service" ? "service" : "db";
@@ -172,7 +151,6 @@ export function useCyInteractions({
         return;
       }
 
-      // clear selection
       safeUnselectAll();
       setSelected(null);
       setPendingSource(null);

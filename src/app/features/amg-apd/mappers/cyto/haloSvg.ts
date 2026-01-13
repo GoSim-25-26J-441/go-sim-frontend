@@ -65,7 +65,7 @@ export function buildHaloSvgDataUrl(
     const w = 100 - sw;
     const h = 100 - sw;
     const rx = 18;
-    const perim = 2 * (w + h - 2 * rx) + 2 * Math.PI * rx; // good enough
+    const perim = 2 * (w + h - 2 * rx) + 2 * Math.PI * rx;
     const seg = perim / n;
 
     for (let i = 0; i < used.length; i++) {

@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import {
   NODE_KIND_COLOR,
   DETECTION_KIND_COLOR,
+  colorForDetectionKind,
 } from "@/app/features/amg-apd/utils/colors";
-import type { DetectionKind } from "@/app/features/amg-apd/types";
+import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
 
 function prettyLabel(key: string) {
   return key
@@ -14,23 +16,42 @@ function prettyLabel(key: string) {
     .replace(/^\w/, (c) => c.toUpperCase());
 }
 
-const ANTI_PATTERN_HELP: Record<DetectionKind, string> = {
+const HELP: Record<string, string> = {
   cycles:
-    "Services that call each other on a loop (A → B → C → A). If a service is slow or broken, the whole loop could get stuck.",
+    "Services that call each other in a loop (A → B → C → A). Failures can cascade.",
   god_service:
-    "Single service does too many jobs and talks to many others. It becomes big, hard to change, and hard to scale.",
+    "A single service becomes too large/central and hard to scale or change.",
   tight_coupling:
-    "Two services depending on each other a lot. If one changes, it could easily break the other.",
-  shared_db_writes:
-    "Many services write to the same database. Could overwrite each other and cause data bugs.",
-  cross_db_read:
-    "A service reads from a database that belongs to another service, instead of its own data store.",
-  chatty_calls:
-    "One service calls another service many times for one user request. Asking 100 tiny questions instead of one clear one.",
+    "Two services depend heavily on each other; changes ripple easily.",
+
+  reverse_dependency:
+    "A lower-level/core service depends on a higher-level service, creating fragile layering.",
+  shared_database:
+    "Multiple services depend on the same database, reducing service autonomy.",
+  sync_call_chain:
+    "Long synchronous request chains amplify latency and failure propagation.",
+  ui_orchestrator:
+    "UI/frontend orchestrates many service calls directly instead of a backend composition layer.",
+  ping_pong_dependency:
+    "Two services keep calling each other back-and-forth repeatedly, increasing latency and coupling.",
 };
 
 export default function Legend() {
   const [showHelp, setShowHelp] = useState(false);
+  const last = useAmgApdStore((s) => s.last);
+
+  const kinds = useMemo(() => {
+    const set = new Set<string>();
+
+    Object.keys(DETECTION_KIND_COLOR).forEach((k) => set.add(k));
+
+    for (const d of last?.detections ?? []) {
+      const k = normalizeDetectionKind((d as any).kind) ?? null;
+      if (k) set.add(k);
+    }
+
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [last]);
 
   return (
     <>
@@ -61,10 +82,10 @@ export default function Legend() {
             </button>
           </div>
 
-          {Object.entries(DETECTION_KIND_COLOR).map(([k, c]) => (
+          {kinds.map((k) => (
             <span key={k} className="inline-flex items-center gap-2">
               <span
-                style={{ background: c }}
+                style={{ background: colorForDetectionKind(k) }}
                 className="inline-block h-3 w-3 rounded-full"
               />
               <span>{prettyLabel(k)}</span>
@@ -83,8 +104,7 @@ export default function Legend() {
                 </h2>
                 <p className="mt-1 text-[11px] text-slate-500">
                   Anti-Patterns are issues identified in your microservice
-                  architectures. <br /> Below are a List of Anti-patterns that
-                  are model detects and what they represent.
+                  architectures.
                 </p>
               </div>
               <button
@@ -98,22 +118,22 @@ export default function Legend() {
             </div>
 
             <ul className="mt-2 space-y-2 text-black">
-              {(Object.entries(ANTI_PATTERN_HELP) as [DetectionKind, string][])
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([k, text]) => (
-                  <li key={k} className="flex items-start gap-2">
-                    <span
-                      style={{ background: DETECTION_KIND_COLOR[k] }}
-                      className="mt-[4px] inline-block h-3 w-3 flex-shrink-0 rounded-full"
-                    />
-                    <div>
-                      <div className="text-[11px] font-semibold">
-                        {prettyLabel(k)}
-                      </div>
-                      <div className="text-[11px] text-slate-600">{text}</div>
+              {kinds.map((k) => (
+                <li key={k} className="flex items-start gap-2">
+                  <span
+                    style={{ background: colorForDetectionKind(k) }}
+                    className="mt-[4px] inline-block h-3 w-3 flex-shrink-0 rounded-full"
+                  />
+                  <div>
+                    <div className="text-[11px] font-semibold">
+                      {prettyLabel(k)}
                     </div>
-                  </li>
-                ))}
+                    <div className="text-[11px] text-slate-600">
+                      {HELP[k] ?? "Detected issue in the architecture."}
+                    </div>
+                  </div>
+                </li>
+              ))}
             </ul>
           </div>
         </div>

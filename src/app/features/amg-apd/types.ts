@@ -24,9 +24,12 @@ export type DetectionKind =
   | "cycles"
   | "god_service"
   | "tight_coupling"
-  | "shared_db_writes"
-  | "cross_db_read"
-  | "chatty_calls";
+  | "shared_database"
+  | "sync_call_chain"
+  | "ping_pong_dependency"
+  | "reverse_dependency"
+  | "ui_orchestrator"
+  | (string & {});
 
 export type Severity = "LOW" | "MEDIUM" | "HIGH";
 

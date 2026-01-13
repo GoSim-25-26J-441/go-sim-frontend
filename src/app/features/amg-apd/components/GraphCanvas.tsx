@@ -33,7 +33,6 @@ import {
   exportGraphToYaml,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 
-// IMPORTANT: your file is getCyLayouts.ts (plural)
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
 
 import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCyInteractions";
@@ -71,7 +70,6 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // ✅ Keep the *current* cy instance
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [cy, setCy] = useState<cytoscape.Core | null>(null);
 
@@ -91,7 +89,6 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   const layout = useMemo(() => getCyLayout(layoutName), [layoutName]);
   const stylesheet = useMemo(() => styles as any, []);
 
-  // Used for the alternating border animation + refresh triggers
   const phaseKey = useMemo(() => {
     const n = Object.keys(analysis.graph?.nodes ?? {}).length;
     const e = Array.isArray(analysis.graph?.edges)
@@ -123,7 +120,6 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
     setStats(computeStatsFromData(analysis));
   }, [analysis]);
 
-  // ✅ Alternating border color for multi anti-pattern nodes
   useEffect(() => {
     if (!cyAlive(cy)) return;
 
@@ -194,7 +190,6 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
     recomputeStats(cy, analysis, setStats);
   }
 
-  // ✅ NEW: Generate Graph now navigates to UploadPage loader (regen=1)
   function handleSaveChanges() {
     if (!cyAlive(cy)) return;
 
@@ -204,13 +199,11 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
     const yaml = exportGraphToYaml(cy!);
     setEditedYaml(yaml);
 
-    // reset edit UI now (optional)
     setEditMode(false);
     setTool("select");
     setPendingSource(null);
     setSelected(null);
 
-    // go to full-page loader & auto-run analysis
     const title = encodeURIComponent("Edited architecture");
     router.push(`/dashboard/patterns/upload?regen=1&title=${title}`);
   }

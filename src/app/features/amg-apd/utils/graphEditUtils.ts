@@ -30,11 +30,8 @@ export function validateGraphForSave(cy: Core): string | null {
   return null;
 }
 
-// Quote only when needed (keeps YAML readable)
 function yamlQuote(s: string): string {
-  // allow simple identifiers unquoted
   if (/^[A-Za-z0-9_\-]+$/.test(s)) return s;
-  // use JSON quoting for safe escaping
   return JSON.stringify(s);
 }
 
@@ -42,128 +39,86 @@ export function exportGraphToYaml(cy: Core): string {
   const nodes = cy.nodes();
   const edges = cy.edges();
 
-  type ServiceInfo = {
-    calls: {
-      to: string;
-      endpoints: string[];
-      rate_per_min: number;
-      per_item?: boolean;
-    }[];
-    reads: Set<string>;
-    writes: Set<string>;
-  };
-
-  const services: string[] = [];
-  const dbSet = new Set<string>();
-
-  nodes.forEach((n) => {
-    const kind = n.data("kind") as NodeKind;
-    const name = (n.data("label") as string) || n.id();
-    if (kind === "SERVICE") services.push(name);
-    if (kind === "DATABASE") dbSet.add(name);
-  });
-
-  const serviceMap: Record<string, ServiceInfo> = {};
-  services.forEach((name) => {
-    serviceMap[name] = {
-      calls: [],
-      reads: new Set<string>(),
-      writes: new Set<string>(),
-    };
-  });
-
   function nodeLabelById(id: string): string {
     const node = cy.getElementById(id);
     if (node.empty()) return id;
     return (node.data("label") as string) || id;
   }
 
+  const servicesOut: { name: string; type: string }[] = [];
+  nodes.forEach((n) => {
+    const kind = (n.data("kind") as NodeKind) || "SERVICE";
+    const name = (n.data("label") as string) || n.id();
+    servicesOut.push({
+      name,
+      type: kind === "DATABASE" ? "database" : "service",
+    });
+  });
+
+  const depsOut: { from: string; to: string; kind: string; sync: boolean }[] =
+    [];
+
   edges.forEach((e) => {
-    const kind = e.data("kind") as EdgeKind;
     const sourceId = e.data("source") as string;
     const targetId = e.data("target") as string;
 
     const fromName = nodeLabelById(sourceId);
     const toName = nodeLabelById(targetId);
 
-    if (!serviceMap[fromName]) {
-      serviceMap[fromName] = {
-        calls: [],
-        reads: new Set<string>(),
-        writes: new Set<string>(),
-      };
-    }
+    const attrs = (e.data("attrs") as any) || {};
 
-    if (kind === "CALLS") {
-      const attrs = (e.data("attrs") as any) || {};
-      const endpoints = Array.isArray(attrs?.endpoints)
-        ? (attrs.endpoints as string[])
-        : [];
-      const rpm =
-        typeof attrs?.rate_per_min === "number" ? attrs.rate_per_min : 0;
+    const depKind =
+      typeof attrs.kind === "string" && attrs.kind.trim()
+        ? attrs.kind.trim()
+        : "rest";
 
-      const perItem = attrs?.per_item === true;
+    const sync = typeof attrs.sync === "boolean" ? attrs.sync : true;
 
-      const call: ServiceInfo["calls"][number] = {
-        to: toName,
-        endpoints,
-        rate_per_min: rpm,
-      };
-
-      // ✅ only include when true (keeps YAML clean)
-      if (perItem) call.per_item = true;
-
-      serviceMap[fromName].calls.push(call);
-    } else if (kind === "READS") {
-      serviceMap[fromName].reads.add(toName);
-    } else if (kind === "WRITES") {
-      serviceMap[fromName].writes.add(toName);
-    }
+    depsOut.push({
+      from: fromName,
+      to: toName,
+      kind: depKind,
+      sync,
+    });
   });
 
   const lines: string[] = [];
 
-  lines.push("services:");
-  Object.entries(serviceMap).forEach(([serviceName, info]) => {
-    lines.push(`  - name: ${yamlQuote(serviceName)}`);
+  lines.push("apis:");
+  lines.push("  - name: REST");
+  lines.push("    protocol: rest");
 
-    if (info.calls.length) {
-      lines.push("    calls:");
-      info.calls.forEach((c) => {
-        const eps = c.endpoints.length
-          ? `[${c.endpoints.map((ep) => JSON.stringify(ep)).join(", ")}]`
-          : "[]";
+  lines.push("configs:");
+  lines.push("  slo:");
+  lines.push("    target_rps: 200");
 
-        lines.push(`      - to: ${yamlQuote(c.to)}`);
-        lines.push(`        endpoints: ${eps}`);
-        lines.push(`        rate_per_min: ${c.rate_per_min}`);
+  lines.push("conflicts: []");
+  lines.push("constraints: {}");
+  lines.push("datastores: []");
 
-        // ✅ NEW
-        if (c.per_item === true) {
-          lines.push(`        per_item: true`);
-        }
-      });
-    }
-
-    const reads = Array.from(info.reads);
-    const writes = Array.from(info.writes);
-    if (reads.length || writes.length) {
-      lines.push("    databases:");
-      lines.push(`      reads: [${reads.map((x) => yamlQuote(x)).join(", ")}]`);
-      lines.push(
-        `      writes: [${writes.map((x) => yamlQuote(x)).join(", ")}]`
-      );
-    }
+  lines.push("dependencies:");
+  depsOut.forEach((d) => {
+    lines.push(`  - from: ${yamlQuote(d.from)}`);
+    lines.push(`    kind: ${yamlQuote(d.kind)}`);
+    lines.push(`    sync: ${d.sync ? "true" : "false"}`);
+    lines.push(`    to: ${yamlQuote(d.to)}`);
   });
 
-  const dbs = Array.from(dbSet);
-  if (dbs.length) {
-    lines.push("");
-    lines.push("databases:");
-    dbs.forEach((name) => {
-      lines.push(`  - name: ${yamlQuote(name)}`);
-    });
-  }
+  lines.push("deploymentHints: {}");
+  lines.push("gaps: []");
+
+  lines.push("metadata:");
+  lines.push("  generator: ui");
+  lines.push("  schemaVersion: 0.1.0");
+
+  lines.push("services:");
+  servicesOut.forEach((s) => {
+    lines.push(`  - name: ${yamlQuote(s.name)}`);
+    lines.push(`    type: ${yamlQuote(s.type)}`);
+  });
+
+  lines.push("topics: []");
+  lines.push("trace: []");
 
   return lines.join("\n");
 }

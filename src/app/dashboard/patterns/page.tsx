@@ -120,7 +120,6 @@ export default function PatternsPage() {
       setEditedYaml(fixedYaml);
       setLast(fixedAnalysis);
 
-      // show applied fixes inside modal (optional)
       setSugs((data?.applied_fixes ?? []) as Suggestion[]);
 
       setOpen(false);
