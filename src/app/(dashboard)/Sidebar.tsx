@@ -80,9 +80,13 @@ export default function Sidebar() {
   return (
     <aside className="p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-xs opacity-60 truncate max-w-[200px]" title={displayName}>
+        <Link
+          href="/profile"
+          className="text-xs opacity-60 truncate max-w-[200px] hover:opacity-100 transition-opacity"
+          title={displayName}
+        >
           {displayName}
-        </div>
+        </Link>
         <button onClick={onNew} className="px-2 py-1 rounded bg-brand text-white text-xs">New</button>
       </div>
 
