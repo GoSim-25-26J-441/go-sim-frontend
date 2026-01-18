@@ -9,7 +9,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <AuthGuard>
       <SessionProvider>
-        <div className="min-h-dvh grid grid-rows-[56px_1fr]">
+        <div className="min-h-dvh grid grid-rows-[56px_1fr] bg-linear-to-b from-[#1F1F1F] to-black">
           <Topbar />
           <div className="grid md:grid-cols-[280px_1fr]">
             <Sidebar />
