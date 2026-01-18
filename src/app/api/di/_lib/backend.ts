@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { cookies, headers } from "next/headers";
 
 function getBackendBase() {
@@ -19,23 +20,37 @@ export async function getUserId() {
 }
 
 export async function diFetch(path: string, init?: RequestInit) {
-  const KEY = process.env.DESIGN_INPUT_API_KEY;
-  if (!KEY) throw new Error("Missing env: DESIGN_INPUT_API_KEY");
+  const KEY = process.env.DESIGN_INPUT_API_KEY;  
 
-  const userId = await getUserId();
+  if (!KEY) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "Missing env: DESIGN_INPUT_API_KEY" }),
+      { status: 500, headers: { "content-type": "application/json" } }
+    );
+  }
+
   const url = `${getDesignInputBase()}${path.startsWith("/") ? path : `/${path}`}`;
 
-  const r = await fetch(url, {
-    ...init,
-    headers: {
-      ...(init?.headers || {}),
-      "X-API-Key": KEY,
-      "X-User-Id": userId,
-    },
-    cache: init?.cache ?? "no-store",
-  });
+  try {
+    return await fetch(url, {
+      ...init,
+      headers: {
+        ...(init?.headers || {}),
+        "X-API-Key": KEY, 
+        "X-User-Id": await getUserId(),
+      },
+      cache: init?.cache ?? "no-store",
+    });
+  } catch (e: any) {
+    const msg = e?.cause?.code
+      ? `${e.cause.code} ${e.cause.address || ""}:${e.cause.port || ""}`.trim()
+      : String(e?.message || e);
 
-  return r;
+    return new Response(
+      JSON.stringify({ ok: false, error: `Backend offline: ${msg}` }),
+      { status: 502, headers: { "content-type": "application/json" } }
+    );
+  }
 }
 
 export async function readJsonSafe(r: Response) {

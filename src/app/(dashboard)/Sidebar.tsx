@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
@@ -11,13 +10,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, LogOut, Settings, MoreVertical } from "lucide-react";
 import { useToast } from "@/hooks/useToast";
 import { useGetChatsQuery, useNewJobMutation } from "../store/uidp/diApi";
-
-type RemoteChat = {
-  jobId: string;
-  title: string;
-  lastAt: number | null;
-  lastBy: string | null;
-};
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -51,8 +43,8 @@ export default function Sidebar() {
         return;
       }
 
-      const { jobId } = await newJob({ userId }).unwrap();
-
+      const { jobId } = await newJob().unwrap();
+      
       ensureByJob(jobId, "New chat");
       router.push(`/dashboard?job=${jobId}`);
       showToast("New project created successfully", "success");

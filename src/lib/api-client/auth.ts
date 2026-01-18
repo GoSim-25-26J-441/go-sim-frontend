@@ -24,20 +24,13 @@ export interface SyncUserRequest {
   preferences?: Record<string, unknown>;
 }
 
-/**
- * Sync Firebase user with backend
- * 
- * Backend error format: The backend is expected to return errors in the format:
- * { error: "error message" }
- * If a different format is returned, this will fall back to generic messages.
- */
 export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {
   const token = await getFirebaseIdToken();
   if (!token) {
     throw new Error("No authentication token available");
   }
 
-  const response = await fetch(`${BASE_URL}/sync`, {
+  const response = await fetch(`/api/auth/sync`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -47,21 +40,23 @@ export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Failed to sync user" }));
-    throw new Error(error.error || "Failed to sync user");
+    const raw = await response.text();
+
+    let msg = "Failed to sync user";
+    try {
+      const j = JSON.parse(raw);
+      msg = j?.error || j?.message || msg;
+    } catch {
+      if (raw?.trim()) msg = raw.slice(0, 200);
+    }
+
+    throw new Error(`${msg} (HTTP ${response.status})`);
   }
 
   const result = await response.json();
   return result.user;
 }
 
-/**
- * Get user profile from backend
- * 
- * Backend error format: The backend is expected to return errors in the format:
- * { error: "error message" }
- * If a different format is returned, this will fall back to generic messages.
- */
 export async function getUserProfile(): Promise<UserProfile> {
   const token = await getFirebaseIdToken();
   if (!token) {
@@ -76,7 +71,9 @@ export async function getUserProfile(): Promise<UserProfile> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Failed to get profile" }));
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Failed to get profile" }));
     throw new Error(error.error || "Failed to get profile");
   }
 
@@ -84,15 +81,9 @@ export async function getUserProfile(): Promise<UserProfile> {
   return result.user;
 }
 
-/**
- * Update user profile
- * 
- * Backend error format: The backend is expected to return errors in the format:
- * { error: "error message" }
- * If a different format is returned, this will fall back to generic messages.
- */
+
 export async function updateUserProfile(
-  data: Partial<SyncUserRequest>
+  data: Partial<SyncUserRequest>,
 ): Promise<UserProfile> {
   const token = await getFirebaseIdToken();
   if (!token) {
@@ -109,11 +100,12 @@ export async function updateUserProfile(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Failed to update profile" }));
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Failed to update profile" }));
     throw new Error(error.error || "Failed to update profile");
   }
 
   const result = await response.json();
   return result.user;
 }
-
