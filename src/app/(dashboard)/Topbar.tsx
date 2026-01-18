@@ -65,7 +65,7 @@ export default function Topbar() {
     .slice(0, 2);
 
   return (
-    <header className="sticky top-0 z-40 h-16">
+    <header className="sticky top-0 z-40 h-20">
       <div className="flex h-full max-w-[1800px] mx-auto items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />
@@ -86,12 +86,11 @@ export default function Topbar() {
 
           <div className="h-8 w-px bg-gray-700" />
 
-          {/* IMPORTANT: ref wraps BOTH button + dropdown */}
           <div className="relative" ref={dropdownRef}>
             <button
               type="button"
               onClick={() => setIsDropdownOpen((v) => !v)}
-              className="flex items-center gap-2 p-1 rounded-full hover:bg-gray-800 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-900"
+              className="flex items-center gap-2 p-1 rounded-full hover:text-white/50 transition-all duration-200"
               aria-label="User menu"
               aria-expanded={isDropdownOpen}
               aria-haspopup="menu"
@@ -111,12 +110,17 @@ export default function Topbar() {
                   {initials}
                 </div>
               )}
+
+              <div className="text-left">
+                <p className="font-bold text-sm">Welcome</p>
+                <p className="font-normal text-sm">{user?.email}</p>
+              </div>
             </button>
 
             {isDropdownOpen && (
               <div
                 role="menu"
-                className="absolute right-0 top-full mt-3 w-56 bg-[#1F2937] border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                className="absolute right-0 top-full mt-3 w-56 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
               >
                 <div className="px-4 py-3 border-b border-gray-700 bg-gray-800/50">
                   <p className="text-sm font-semibold text-white truncate">

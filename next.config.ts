@@ -9,13 +9,3 @@ const nextConfig: NextConfig = {
   },
 };
 export default nextConfig;
-
-module.exports = {
-  images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "lh3.googleusercontent.com" },
-      { protocol: "https", hostname: "firebasestorage.googleapis.com" },
-      { protocol: "https", hostname: "avatars.githubusercontent.com" },
-    ],
-  },
-};
