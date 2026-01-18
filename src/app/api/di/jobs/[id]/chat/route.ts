@@ -1,55 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { diFetch, readJsonSafe } from "../../../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
   req: NextRequest,
-  ctx: { params: Promise<{ id: string }> } 
+  ctx: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await ctx.params;       
-
-  const BASE = process.env.DESIGN_INPUT_API_BASE;
-  const KEY  = process.env.DESIGN_INPUT_API_KEY;
-  if (!BASE || !KEY) {
-    return NextResponse.json(
-      { ok: false, error: "Missing env: DESIGN_INPUT_API_BASE or DESIGN_INPUT_API_KEY" },
-      { status: 500 }
-    );
-  }
-
-  // cookies() is synchronous; also allow header override
-  const store = cookies();
-  const uid = req.headers.get("x-user-id") || (await store).get("uid")?.value || "demo-user";
-
+  const { id } = await ctx.params;
   const body = await req.text();
 
-  const upstream = `${BASE}/jobs/${encodeURIComponent(id)}/chat`;
-  const r = await fetch(upstream, {
+  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/chat`, {
     method: "POST",
-    headers: {
-      "X-API-Key": KEY,
-      "X-User-Id": uid,
-      "content-type": "application/json",
-    },
+    headers: { "content-type": "application/json" },
     body,
   });
 
-  const text = await r.text();
+  const parsed = await readJsonSafe(r);
 
   if (!r.ok) {
     return NextResponse.json(
-      { ok: false, error: `backend ${r.status}: ${text}` },
+      { ok: false, error: `backend ${r.status}: ${parsed.ok ? JSON.stringify(parsed.json) : parsed.text}` },
       { status: 502 }
     );
   }
 
-  try {
-    return NextResponse.json(JSON.parse(text));
-  } catch {
-    return new NextResponse(text, {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+  if (!parsed.ok) {
+    return NextResponse.json(
+      { ok: false, error: "backend returned non-JSON" },
+      { status: 502 }
+    );
   }
+
+  return NextResponse.json(parsed.json, { status: r.status });
 }

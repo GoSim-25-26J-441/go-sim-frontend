@@ -1,36 +1,30 @@
+import { diFetch, readJsonSafe } from "@/app/api/di/_lib/backend";
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }   // 👈 params is a Promise
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await ctx.params;           // 👈 await it
+  const { id } = await ctx.params;
 
-  const base = process.env.DESIGN_INPUT_API_BASE;
-  const apiKey = process.env.DESIGN_INPUT_API_KEY;
-  if (!base || !apiKey) {
+  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/chat/history`, {
+    method: "GET",
+  });
+
+  const parsed = await readJsonSafe(r);
+
+  if (!r.ok) {
     return NextResponse.json(
-      { ok: false, error: "Missing env: DESIGN_INPUT_API_BASE or DESIGN_INPUT_API_KEY" },
-      { status: 500 }
+      { ok: false, error: `backend ${r.status}: ${parsed.ok ? JSON.stringify(parsed.json) : parsed.text}` },
+      { status: 502 }
     );
   }
 
-  const uid = req.headers.get("x-user-id") || (await cookies()).get("uid")?.value || "demo-user";
-  const upstream = `${base}/jobs/${encodeURIComponent(id)}/chat/history`;
-
-  const r = await fetch(upstream, { headers: { "X-API-Key": apiKey, "X-User-Id": uid } });
-  const body = await r.text();
-
-  if (!r.ok) {
-    return NextResponse.json({ ok: false, error: `backend ${r.status}: ${body}` }, { status: 502 });
+  if (!parsed.ok) {
+    return NextResponse.json({ ok: false, error: "backend returned non-JSON" }, { status: 502 });
   }
 
-  try {
-    return NextResponse.json(JSON.parse(body), { status: 200 });
-  } catch {
-    return new NextResponse(body, { status: 200, headers: { "content-type": "application/json" } });
-  }
+  return NextResponse.json(parsed.json, { status: r.status });
 }

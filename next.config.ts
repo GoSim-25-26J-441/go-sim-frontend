@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_BASE ?? "http://localhost:8080";
+const BACKEND = process.env.BACKEND_BASE ?? "http://localhost:8080";
 
 const nextConfig: NextConfig = {
   async rewrites() {

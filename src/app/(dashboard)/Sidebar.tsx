@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
@@ -9,6 +10,7 @@ import { useAuth } from "@/providers/auth-context";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, LogOut, Settings, MoreVertical } from "lucide-react";
 import { useToast } from "@/hooks/useToast";
+import { useGetChatsQuery, useNewJobMutation } from "../store/uidp/diApi";
 
 type RemoteChat = {
   jobId: string;
@@ -26,9 +28,14 @@ export default function Sidebar() {
   const { userId } = useSession();
   const { signOut } = useAuth();
   const { chats, ensureByJob } = useChats(userId || "");
-  const [remote, setRemote] = useState<RemoteChat[]>([]);
-  const [loading, setLoading] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const {
+    data: remote = [],
+    isLoading: loading,
+    isError,
+    error,
+  } = useGetChatsQuery();
+  const [newJob, { isLoading: isCreatingRemote }] = useNewJobMutation();
 
   const selectedJob = sp.get("job");
 
@@ -44,35 +51,24 @@ export default function Sidebar() {
         return;
       }
 
-      const r = await fetch("/api/di/new-job", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-user-id": userId },
-        body: "{}",
-      });
+      const { jobId } = await newJob({ userId }).unwrap();
 
-      const raw = await r.text();
-      let j: any;
-
-      try {
-        j = JSON.parse(raw);
-      } catch {
-        console.error("new-job not JSON:", raw);
-        showToast("Failed to create new project. Invalid response.", "error");
-        return;
-      }
-
-      if (!r.ok || !j?.jobId) {
-        console.error(j?.error || "new-job failed");
-        showToast(j?.error || "Failed to create new project", "error");
-        return;
-      }
-
-      ensureByJob(j.jobId, "New chat");
-      router.push(`/dashboard?job=${j.jobId}`);
+      ensureByJob(jobId, "New chat");
+      router.push(`/dashboard?job=${jobId}`);
       showToast("New project created successfully", "success");
-    } catch (error) {
-      console.error("Error creating new project:", error);
-      showToast("An error occurred while creating project", "error");
+    } catch (e: any) {
+      const offline =
+        e?.status === "FETCH_ERROR" ||
+        e?.status === 502 ||
+        e?.status === 503 ||
+        e?.status === 504;
+
+      showToast(
+        offline
+          ? "Server is offline. Please try again."
+          : e?.data?.error || e?.error || "Failed to create new project",
+        "error",
+      );
     } finally {
       setIsCreatingNew(false);
     }
@@ -81,6 +77,24 @@ export default function Sidebar() {
   function openServerChat(rc: { jobId: string; title: string }) {
     router.push(`/chat/${rc.jobId}/summary`);
   }
+
+  useEffect(() => {
+    if (!isError) return;
+
+    const e: any = error;
+    const offline =
+      e?.status === "FETCH_ERROR" ||
+      e?.status === 502 ||
+      e?.status === 503 ||
+      e?.status === 504;
+
+    showToast(
+      offline
+        ? "Server is offline. Please check and try again."
+        : e?.error || e?.data?.error || "Failed to load server chats",
+      "error",
+    );
+  }, [isError, error, showToast]);
 
   const handleLogout = async () => {
     try {
@@ -93,64 +107,11 @@ export default function Sidebar() {
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      setLoading(true);
-      try {
-        const r = await fetch("/api/di/chats", { cache: "no-store" });
-
-        if (!r.ok) {
-          showToast(
-            r.status === 502 || r.status === 503 || r.status === 504
-              ? "Server is offline. Please try again."
-              : `Failed to load chats (HTTP ${r.status})`,
-            "error",
-          );
-          if (!cancelled) setRemote([]);
-          return;
-        }
-
-        const text = await r.text();
-        if (!text.trim()) {
-          showToast("Server returned an empty response.", "error");
-          if (!cancelled) setRemote([]);
-          return;
-        }
-
-        let j: any;
-        try {
-          j = JSON.parse(text);
-        } catch {
-          showToast("Server returned invalid data.", "error");
-          if (!cancelled) setRemote([]);
-          return;
-        }
-
-        if (j?.ok) {
-          if (!cancelled) setRemote(j.chats as RemoteChat[]);
-        } else {
-          showToast(j?.error || "Failed to load server chats", "error");
-          if (!cancelled) setRemote([]);
-        }
-      } catch (e: any) {
-        showToast("Server is offline. Please check and try again.", "error");
-        if (!cancelled) setRemote([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [showToast]);
-
   const filteredServer = useMemo(() => {
     const draftIds = new Set(
       chats.filter((c) => c.title === "New chat").map((c) => c.id),
     );
+
     return remote.filter((rc) => !draftIds.has(rc.jobId));
   }, [remote, chats]);
 
@@ -160,7 +121,7 @@ export default function Sidebar() {
         <div className="p-4 border-b border-gray-800 flex justify-end">
           <button
             onClick={onNew}
-            disabled={isCreatingNew}
+            disabled={isCreatingNew || isCreatingRemote}
             className="flex items-center gap-2 text-white transition-colors duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />

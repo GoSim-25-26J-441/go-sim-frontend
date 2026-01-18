@@ -1,41 +1,25 @@
 import type { NextRequest } from "next/server";
+import { diFetch } from "../../../_lib/backend";
 
-const API_BASE =
-  process.env.DESIGN_INPUT_API_BASE ??
-  "http://localhost:8080/api/v1/design-input";
-
-const API_KEY =
-  process.env.DESIGN_INPUT_API_KEY ?? "super-secret-key-123";
-
-const FORCE_UID =
-  process.env.NEXT_PUBLIC_FORCE_UID ?? "demo-user";
+export const dynamic = "force-dynamic";
 
 export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
 ) {
-  const jobId = params.id;
+  const { id } = await ctx.params;
 
-  const backendUrl =
-    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/fuse`;
-
-  const res = await fetch(backendUrl, {
+  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/fuse`, {
     method: "POST",
-    headers: {
-      "X-API-Key": API_KEY,
-      "X-User-Id": req.headers.get("x-user-id") ?? FORCE_UID,
-    },
-    cache: "no-store",
   });
 
-  const body = await res.text();
+  const body = await r.text();
 
   return new Response(body, {
-    status: res.status,
+    status: r.status,
     headers: {
       "content-type":
-        res.headers.get("content-type") ??
-        "application/json; charset=utf-8",
+        r.headers.get("content-type") ?? "application/json; charset=utf-8",
     },
   });
 }

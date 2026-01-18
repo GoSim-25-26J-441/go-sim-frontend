@@ -1,7 +1,7 @@
 import { env } from "@/lib/env";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 
-const BASE_URL = `${env.NEXT_PUBLIC_BACKEND_BASE}/api/v1/auth`;
+const BASE_URL = `${env.BACKEND_BASE}/api/v1/auth`;
 
 export interface UserProfile {
   firebase_uid: string;
