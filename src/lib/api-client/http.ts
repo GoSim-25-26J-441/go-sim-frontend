@@ -11,13 +11,11 @@ export async function authenticatedFetch(
 ): Promise<Response> {
   const token = await getFirebaseIdToken();
   
-  const headers: HeadersInit = {
-    ...options.headers,
-  };
+  const headers = new Headers(options.headers);
 
   // Add Authorization header if token is available
   if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+    headers.set("Authorization", `Bearer ${token}`);
   } else {
     console.warn(
       "authenticatedFetch: No Firebase ID token available; sending request without Authorization header.",
@@ -27,7 +25,7 @@ export async function authenticatedFetch(
 
   const url = endpoint.startsWith("http") 
     ? endpoint 
-    : `${env.NEXT_PUBLIC_BACKEND_BASE}${endpoint}`;
+    : `${env.BACKEND_BASE}${endpoint}`;
 
   return fetch(url, {
     ...options,
@@ -44,7 +42,7 @@ export async function unauthenticatedFetch(
 ): Promise<Response> {
   const url = endpoint.startsWith("http") 
     ? endpoint 
-    : `${env.NEXT_PUBLIC_BACKEND_BASE}${endpoint}`;
+    : `${env.BACKEND_BASE}${endpoint}`;
 
   return fetch(url, options);
 }

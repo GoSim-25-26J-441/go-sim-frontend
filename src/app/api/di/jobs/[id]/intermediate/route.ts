@@ -1,17 +1,21 @@
-import { diFetch, readJsonSafe } from "@/app/api/di/_lib/backend";
 import { NextRequest, NextResponse } from "next/server";
+import { diFetch, readJsonSafe } from "../../../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
 
-  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/chat/history`, {
-    method: "GET",
-  });
+  const url = new URL(req.url);
+  const refresh = url.searchParams.get("refresh") ?? "false";
+
+  const r = await diFetch(
+    `/jobs/${encodeURIComponent(id)}/intermediate?refresh=${encodeURIComponent(refresh)}`,
+    { method: "GET" }
+  );
 
   const parsed = await readJsonSafe(r);
 

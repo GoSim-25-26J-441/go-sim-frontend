@@ -5,7 +5,7 @@ import { env } from "@/lib/env";
 import { authenticatedFetch } from "./http";
 import { SimulationRun } from "@/types/simulation";
 
-const BASE_URL = `${env.NEXT_PUBLIC_BACKEND_BASE}/api/v1/simulation`;
+const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
 
 /**
  * Get all simulation runs

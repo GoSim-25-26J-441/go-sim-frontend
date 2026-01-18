@@ -27,7 +27,7 @@ export default function ClientChat({ id }: Props) {
   const [reply, setReply] = useState<ChatReply | null>(null);
   const [loading, setLoading] = useState(false);   // “thinking…” indicator
   const [err, setErr] = useState<string | null>(null);
-  const [forceLLM, setForceLLM] = useState(false); 
+  const [forceLLM] = useState(false);
 
   // quick sizing signals
   const [sig, setSig] = useState({ ...RESET_SIG });

@@ -2,7 +2,6 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import React, {
   useState,
   useRef,
@@ -15,7 +14,6 @@ import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
 import S3 from "../../../../public/diagram-icons/S3.svg";
 import S4 from "../../../../public/diagram-icons/S4.svg";
-import { useSession } from "@/modules/session";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 
 type NodeKind =
@@ -45,12 +43,6 @@ interface DiagramEdge {
   sync: boolean;
   label?: string;
 }
-
-type OpenOpts = {
-  seed?: string;
-  runIntermediate?: boolean;
-  runFuse?: boolean;
-};
 
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 60;
@@ -114,8 +106,6 @@ function colorForKind(kind: NodeKind): string {
 }
 
 export default function DrawDiagram() {
-  const router = useRouter();
-
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
 
@@ -571,24 +561,33 @@ export default function DrawDiagram() {
     img.src = url;
   };
 
+  const [opening, setOpening] = useState(false);
   const openInChat = useOpenInChat();
 
   const handleOpenInChat = async () => {
+    if (opening) return;
+    setOpening(true);
     try {
-      await navigator.clipboard.writeText(exportJson);
-    } catch {
-      /* ignore clipboard errors */
+      try {
+        await navigator.clipboard.writeText(exportJson);
+      } catch {
+        // ignore clipboard errors
+      }
+
+      const doc =
+        typeof exportJson === "string" ? JSON.parse(exportJson) : exportJson;
+
+      await openInChat(doc, {
+        seed: "~200 RPS; internal gRPC",
+        runIntermediate: true,
+        runFuse: true,
+      });
+    } catch (e) {
+      console.error(e);
+      alert((e as Error).message || "Failed to open chat");
+    } finally {
+      setOpening(false);
     }
-
-    // ensure we pass an object to the hook
-    const doc =
-      typeof exportJson === "string" ? JSON.parse(exportJson) : exportJson;
-
-    await openInChat(doc, {
-      seed: "~200 RPS; internal gRPC", // optional
-      runIntermediate: true, // optional
-      runFuse: true, // optional
-    });
   };
 
   return (
@@ -998,9 +997,15 @@ export default function DrawDiagram() {
             <button
               type="button"
               onClick={handleOpenInChat}
-              className="rounded border border-emerald-500 bg-emerald-600/80 px-2 py-0.5 text-[11px] text-white hover:bg-emerald-500"
+              disabled={opening}
+              className={`rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
+        ${
+          opening
+            ? "bg-emerald-700/60 cursor-not-allowed opacity-70"
+            : "bg-emerald-600/80 hover:bg-emerald-500"
+        }`}
             >
-              Open in Chat (JSON copied)
+              {opening ? "Opening in Chat…" : "Open in Chat (JSON copied)"}
             </button>
           </div>
           <p className="text-[10px] text-slate-500">
