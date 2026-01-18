@@ -44,7 +44,10 @@ export default function DashboardLanding() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Link href="/diagram" className="rounded-xl border border-border p-4 hover:bg-surface">
+        <Link
+          href="/diagram"
+          className="rounded-xl border border-border p-4 hover:bg-surface"
+        >
           <div className="font-medium">Draw a diagram</div>
           <div className="opacity-60 text-sm">Open the canvas</div>
         </Link>

@@ -14,7 +14,10 @@ export default function GlobalError({
         <div className="max-w-lg space-y-3">
           <h1 className="text-2xl font-semibold">Something went wrong</h1>
           <p className="text-muted break-words">{error.message}</p>
-          <button onClick={() => reset()} className="px-4 py-2 rounded-xl bg-brand text-white">
+          <button
+            onClick={() => reset()}
+            className="px-4 py-2 rounded-xl bg-brand text-white"
+          >
             Try again
           </button>
         </div>
