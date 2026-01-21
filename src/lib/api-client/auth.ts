@@ -30,7 +30,7 @@ export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {
     throw new Error("No authentication token available");
   }
 
-  const response = await fetch(`/api/auth/sync`, {
+  const response = await fetch(`${BASE_URL}/sync`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -40,17 +40,10 @@ export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {
   });
 
   if (!response.ok) {
-    const raw = await response.text();
-
-    let msg = "Failed to sync user";
-    try {
-      const j = JSON.parse(raw);
-      msg = j?.error || j?.message || msg;
-    } catch {
-      if (raw?.trim()) msg = raw.slice(0, 200);
-    }
-
-    throw new Error(`${msg} (HTTP ${response.status})`);
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Failed to sync user" }));
+    throw new Error(error.error || "Failed to sync user");
   }
 
   const result = await response.json();

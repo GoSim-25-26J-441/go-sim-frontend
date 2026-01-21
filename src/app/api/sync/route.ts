@@ -6,14 +6,18 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   const BACKEND = process.env.BACKEND_BASE || process.env.NEXT_PUBLIC_BACKEND_BASE;
   if (!BACKEND) {
-    return NextResponse.json({ error: "Missing BACKEND_BASE" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing BACKEND_BASE environment variable" },
+      { status: 500 }
+    );
   }
 
   const auth = req.headers.get("authorization") || "";
   const body = await req.text();
 
   try {
-    const upstream = await fetch(`${BACKEND}/api/v1/auth/sync`, {
+    const upstreamUrl = `${BACKEND}/api/v1/auth/sync`;
+    const upstream = await fetch(upstreamUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -29,6 +33,10 @@ export async function POST(req: NextRequest) {
       headers: { "content-type": upstream.headers.get("content-type") || "application/json" },
     });
   } catch (e: any) {
-    return NextResponse.json({ error: "Backend offline" }, { status: 502 });
+    console.error("Backend sync error:", e);
+    return NextResponse.json(
+      { error: "Backend offline", details: e.message },
+      { status: 502 }
+    );
   }
 }

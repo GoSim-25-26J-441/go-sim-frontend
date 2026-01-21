@@ -66,29 +66,19 @@ export async function createSimulationRun(
   config: Omit<SimulationRun, "id" | "status" | "created_at" | "started_at" | "completed_at" | "duration_seconds" | "results" | "error">
 ): Promise<SimulationRun> {
   try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs`, {
-    //   method: "POST",
-    //   headers: {
-    //     "Content-Type": "application/json",
-    //   },
-    //   body: JSON.stringify(config),
-    // });
-    // if (!response.ok) {
-    //   const error = await response.json().catch(() => ({ error: "Failed to create simulation" }));
-    //   throw new Error(error.error || "Failed to create simulation");
-    // }
-    // const data = await response.json();
-    // return data.run as SimulationRun;
-
-    // For now, simulate API call
-    const newRun: SimulationRun = {
-      id: `sim-run-${Date.now()}`,
-      status: "pending",
-      created_at: new Date().toISOString(),
-      ...config,
-    };
-    return newRun;
+    const response = await authenticatedFetch(`${BASE_URL}/runs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(config),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Failed to create simulation" }));
+      throw new Error(error.error || "Failed to create simulation");
+    }
+    const data = await response.json();
+    return data.run as SimulationRun;
   } catch (error) {
     console.error("Error creating simulation run:", error);
     throw error;
@@ -101,25 +91,15 @@ export async function createSimulationRun(
  */
 export async function startSimulationRun(id: string): Promise<SimulationRun> {
   try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs/${id}/start`, {
-    //   method: "POST",
-    // });
-    // if (!response.ok) {
-    //   throw new Error("Failed to start simulation");
-    // }
-    // const data = await response.json();
-    // return data.run as SimulationRun;
-
-    // For now, simulate API call
-    const run = await getSimulationRun(id);
-    if (!run) throw new Error("Simulation run not found");
-    
-    return {
-      ...run,
-      status: "running",
-      started_at: new Date().toISOString(),
-    };
+    const response = await authenticatedFetch(`${BASE_URL}/runs/${id}/start`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Failed to start simulation" }));
+      throw new Error(error.error || "Failed to start simulation");
+    }
+    const data = await response.json();
+    return data.run as SimulationRun;
   } catch (error) {
     console.error("Error starting simulation run:", error);
     throw error;
@@ -132,25 +112,15 @@ export async function startSimulationRun(id: string): Promise<SimulationRun> {
  */
 export async function stopSimulationRun(id: string): Promise<SimulationRun> {
   try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs/${id}/stop`, {
-    //   method: "POST",
-    // });
-    // if (!response.ok) {
-    //   throw new Error("Failed to stop simulation");
-    // }
-    // const data = await response.json();
-    // return data.run as SimulationRun;
-
-    // For now, simulate API call
-    const run = await getSimulationRun(id);
-    if (!run) throw new Error("Simulation run not found");
-    
-    return {
-      ...run,
-      status: "cancelled",
-      completed_at: new Date().toISOString(),
-    };
+    const response = await authenticatedFetch(`${BASE_URL}/runs/${id}/stop`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Failed to stop simulation" }));
+      throw new Error(error.error || "Failed to stop simulation");
+    }
+    const data = await response.json();
+    return data.run as SimulationRun;
   } catch (error) {
     console.error("Error stopping simulation run:", error);
     throw error;

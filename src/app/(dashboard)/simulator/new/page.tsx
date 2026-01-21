@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
+import { createSimulationRun } from "@/lib/api-client/simulation";
 
 interface SimulationFormData {
   name: string;
@@ -39,12 +40,12 @@ export default function NewSimulationPage() {
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
-    const { name, value } = e.target;
+    const { name, value, type } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: name.includes("_") || name === "nodes" || name === "scenario"
-        ? value
-        : Number(value) || 0,
+      [name]: type === "number"
+        ? (value === "" ? 0 : Number(value))
+        : value,
     }));
 
     if (errors[name]) {

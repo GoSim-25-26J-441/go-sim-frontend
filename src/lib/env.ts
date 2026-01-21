@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const Env = z.object({
   NEXT_PUBLIC_APP_NAME: z.string().default("GO-SIM"),
-  BACKEND_BASE: z.string().url().default("http://localhost:8080"),
+  BACKEND_BASE: z.string().url().default("http://localhost:8000"),
   NEXT_PUBLIC_FIREBASE_API_KEY: z.string().optional(),
   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: z.string().optional(),
   NEXT_PUBLIC_FIREBASE_PROJECT_ID: z.string().optional(),
@@ -13,7 +13,7 @@ const Env = z.object({
 
 export const env = Env.parse({
   NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
-  BACKEND_BASE: process.env.BACKEND_BASE,
+  BACKEND_BASE: process.env.NEXT_PUBLIC_BACKEND_BASE || process.env.BACKEND_BASE,
   NEXT_PUBLIC_FIREBASE_API_KEY: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
