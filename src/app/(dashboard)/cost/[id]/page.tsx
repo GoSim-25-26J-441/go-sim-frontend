@@ -184,10 +184,10 @@ export default function CostPage2() {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-black p-6 text-white flex items-center justify-center">
+            <div className="p-6 flex items-center justify-center min-h-[60vh]">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-400 mx-auto mb-4"></div>
-                    <p className="text-lg text-gray-300">Loading cluster costs...</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-border mx-auto mb-4"></div>
+                    <p className="text-lg opacity-70">Loading cluster costs...</p>
                 </div>
             </div>
         );
@@ -195,16 +195,16 @@ export default function CostPage2() {
 
     if (error) {
         return (
-            <div className="min-h-screen bg-black p-6 text-white">
+            <div className="p-6">
                 <div className="max-w-2xl mx-auto">
-                    <div className="bg-black border border-gray-800 rounded-lg p-6">
+                    <div className="bg-card border border-border rounded-lg p-6">
                         <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
                         <h1 className="text-2xl font-bold text-red-500 mb-2">Error</h1>
-                        <p className="text-gray-400">{error}</p>
-                        <p className="text-sm text-gray-500 mt-4">Request ID: {requestId}</p>
+                        <p className="opacity-80">{error}</p>
+                        <p className="text-sm opacity-60 mt-4">Request ID: {requestId}</p>
                         <button
                             onClick={handleBackClick}
-                            className="mt-4 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium border border-gray-700 flex items-center gap-2"
+                            className="mt-4 px-4 py-2 rounded-lg font-medium border border-border flex items-center gap-2 hover:bg-surface transition-colors"
                         >
                             <ChevronLeft className="w-4 h-4" />
                             Back to Designs
@@ -217,13 +217,13 @@ export default function CostPage2() {
 
     if (!costData) {
         return (
-            <div className="min-h-screen bg-black p-6 text-white flex items-center justify-center">
+            <div className="p-6 flex items-center justify-center min-h-[60vh]">
                 <div className="text-center">
-                    <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-lg mb-4 text-gray-400">No data available for this request</p>
+                    <AlertCircle className="w-12 h-12 opacity-70 mx-auto mb-4" />
+                    <p className="text-lg mb-4 opacity-80">No data available for this request</p>
                     <button
                         onClick={handleBackClick}
-                        className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium border border-gray-700 flex items-center gap-2"
+                        className="px-4 py-2 rounded-lg font-medium border border-border flex items-center gap-2 hover:bg-surface transition-colors"
                     >
                         <ChevronLeft className="w-4 h-4" />
                         Back to Designs
@@ -237,14 +237,14 @@ export default function CostPage2() {
     const { best, minimal } = identifyBestOptions(currentCosts);
 
     return (
-        <div className="min-h-screen bg-black p-6 text-white">
+        <div className="p-6 space-y-4">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
                         <button
                             onClick={handleBackClick}
-                            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+                            className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity"
                         >
                             <ChevronLeft className="w-5 h-5" />
                         </button>
@@ -254,23 +254,23 @@ export default function CostPage2() {
 
                 {/* Summary */}
                 <div className="mb-8">
-                    <p className="text-gray-500 mb-6">Detailed cost breakdown for each pricing option</p>
+                    <p className="opacity-60 mb-6 text-sm">Detailed cost breakdown for each pricing option</p>
                 </div>
 
                 {/* Provider & Region Selection */}
-                <div className="bg-black border border-gray-800 rounded-lg p-6 mb-8">
+                <div className="bg-card border border-border rounded-lg p-6 mb-8">
                     <h2 className="text-xl font-semibold mb-4">Cloud Provider & Region</h2>
 
                     <div className="mb-6">
-                        <p className="text-sm text-gray-500 mb-3">Select Provider:</p>
+                        <p className="text-sm opacity-60 mb-3">Select Provider:</p>
                         <div className="flex flex-wrap gap-3">
                             {(["aws", "azure"] as const).map((p) => (
                                 <button
                                     key={p}
                                     onClick={() => setSelectedProvider(p)}
                                     className={`px-6 py-2 rounded-lg font-medium capitalize transition-all ${selectedProvider === p
-                                        ? "bg-gray-800 text-white border border-gray-700"
-                                        : "bg-black border border-gray-800 hover:bg-gray-900 text-gray-300"
+                                        ? "bg-surface border border-border"
+                                        : "border border-border hover:bg-surface opacity-80"
                                         }`}
                                 >
                                     {p.toUpperCase()}
@@ -280,10 +280,10 @@ export default function CostPage2() {
                     </div>
 
                     <div>
-                        <p className="text-sm text-gray-500 mb-3">Select Region:</p>
+                        <p className="text-sm opacity-60 mb-3">Select Region:</p>
                         <div className="flex gap-3 items-center">
                             <select
-                                className="bg-black text-white p-3 rounded-lg border border-gray-800 focus:border-gray-700 focus:outline-none w-full max-w-md"
+                                className="bg-card p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md"
                                 value={selectedRegion}
                                 onChange={(e) => handleRegionChange(e.target.value)}
                                 disabled={regions.length === 0}
@@ -295,13 +295,13 @@ export default function CostPage2() {
                                 ))}
                             </select>
                             {reloadingProviderCost && (
-                                <span className="text-sm text-gray-400 animate-pulse flex items-center gap-2">
+                                <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
                                     <RefreshCw className="w-3 h-3" />
                                     Updating…
                                 </span>
                             )}
                         </div>
-                        <p className="text-xs text-gray-600 mt-2">
+                        <p className="text-xs opacity-50 mt-2">
                             Default: {getRegionDisplayName(selectedProvider === "aws" ? "argentinabuenosaires" : "attdallas1", selectedProvider)}
                         </p>
                     </div>
@@ -311,7 +311,7 @@ export default function CostPage2() {
                 <div>
                     <div className="flex items-center justify-between mb-6">
                         <h2 className="text-2xl font-bold">Pricing Options Breakdown</h2>
-                        <div className="text-sm text-gray-500">
+                        <div className="text-sm opacity-60">
                             Showing {currentCosts.length} pricing option{currentCosts.length !== 1 ? 's' : ''}
                             {selectedRegion && (
                                 <span className="ml-2">
@@ -322,10 +322,10 @@ export default function CostPage2() {
                     </div>
 
                     {currentCosts.length === 0 ? (
-                        <div className="text-center py-12 bg-black border border-gray-800 rounded-lg">
-                            <Server className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-                            <p className="text-gray-500">No instances found for {selectedProvider.toUpperCase()}</p>
-                            {selectedRegion && <p className="text-sm text-gray-600 mt-2">in region: {getRegionDisplayName(selectedRegion, selectedProvider)}</p>}
+                        <div className="text-center py-12 bg-card border border-border rounded-lg">
+                            <Server className="w-12 h-12 opacity-50 mx-auto mb-4" />
+                            <p className="opacity-60">No instances found for {selectedProvider.toUpperCase()}</p>
+                            {selectedRegion && <p className="text-sm opacity-50 mt-2">in region: {getRegionDisplayName(selectedRegion, selectedProvider)}</p>}
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -344,8 +344,8 @@ export default function CostPage2() {
                                     <div
                                         key={planId}
                                         className={`border rounded-xl p-6 transition-all relative overflow-hidden ${cost.within_budget
-                                            ? "bg-black border-gray-800"
-                                            : "bg-black border-gray-800"
+                                            ? "bg-card border-border"
+                                            : "bg-card border-border"
                                             }`}
                                     >
                                         {/* Left side accent */}
@@ -360,14 +360,14 @@ export default function CostPage2() {
                                                     <h3 className="text-2xl font-bold">
                                                         {cost.purchase_type}
                                                         {cost.lease_contract_length && (
-                                                            <span className="text-lg text-gray-500 ml-2">
+                                                            <span className="text-lg opacity-60 ml-2">
                                                                 ({cost.lease_contract_length})
                                                             </span>
                                                         )}
                                                     </h3>
                                                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${cost.within_budget
-                                                        ? "bg-gray-900 text-green-400 border border-gray-800"
-                                                        : "bg-gray-900 text-red-400 border border-gray-800"
+                                                        ? "bg-card text-green-400 border border-border"
+                                                        : "bg-card text-red-400 border border-border"
                                                         }`}>
                                                         {cost.within_budget ?
                                                             <CheckCircle className="w-3 h-3 inline mr-1" /> :
@@ -385,7 +385,7 @@ export default function CostPage2() {
                                                         </div>
                                                     )}
                                                 </div>
-                                                <div className="flex items-center gap-4 text-sm text-gray-500">
+                                                <div className="flex items-center gap-4 text-sm opacity-60">
                                                     <div className="flex items-center gap-1">
                                                         <Building className="w-4 h-4" />
                                                         <span>{cost.instance_type}</span>
@@ -403,7 +403,7 @@ export default function CostPage2() {
 
                                             <button
                                                 onClick={() => toggleBreakdown(planId)}
-                                                className="flex items-center gap-2 text-gray-400 hover:text-white"
+                                                className="flex items-center gap-2 opacity-80 hover:opacity-100"
                                             >
                                                 <ChevronDown
                                                     className={`w-5 h-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
@@ -415,32 +415,32 @@ export default function CostPage2() {
                                         {/* Cost Summary */}
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                                             {/* Per Node Cost */}
-                                            <div className="bg-black border border-gray-800 rounded-lg p-4">
-                                                <h4 className="font-semibold mb-3 text-gray-400 flex items-center gap-2">
+                                            <div className="bg-card border border-border rounded-lg p-4">
+                                                <h4 className="font-semibold mb-3 opacity-80 flex items-center gap-2">
                                                     <Server className="w-4 h-4" />
                                                     Per Node Cost
                                                 </h4>
                                                 <div className="space-y-2">
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-sm text-gray-500">Hourly Rate</span>
+                                                        <span className="text-sm opacity-60">Hourly Rate</span>
                                                         <span className="font-bold">
                                                             ${cost.price_per_node_hour.toFixed(3)}
                                                         </span>
                                                     </div>
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-sm text-gray-500">Monthly Estimate</span>
+                                                        <span className="text-sm opacity-60">Monthly Estimate</span>
                                                         <span className="font-bold">
                                                             {formatCurrency(cost.price_per_node_month)}
                                                         </span>
                                                     </div>
-                                                    <div className="pt-2 mt-2 border-t border-gray-800">
+                                                    <div className="pt-2 mt-2 border-t border-border">
                                                         <div className="flex justify-between items-center">
-                                                            <span className="text-sm text-gray-400">Total for {cost.nodes} nodes</span>
+                                                            <span className="text-sm opacity-80">Total for {cost.nodes} nodes</span>
                                                             <span className="font-bold">
                                                                 {formatCurrency(totalNodeMonthly)}
                                                             </span>
                                                         </div>
-                                                        <div className="text-xs text-gray-600 mt-1">
+                                                        <div className="text-xs opacity-50 mt-1">
                                                             ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} nodes × 720h
                                                         </div>
                                                     </div>
@@ -448,40 +448,40 @@ export default function CostPage2() {
                                             </div>
 
                                             {/* Control Plane Cost */}
-                                            <div className="bg-black border border-gray-800 rounded-lg p-4">
-                                                <h4 className="font-semibold mb-3 text-gray-400 flex items-center gap-2">
+                                            <div className="bg-card border border-border rounded-lg p-4">
+                                                <h4 className="font-semibold mb-3 opacity-80 flex items-center gap-2">
                                                     <Target className="w-4 h-4" />
                                                     Control Plane
                                                 </h4>
                                                 <div className="space-y-2">
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-sm text-gray-500">Tier</span>
+                                                        <span className="text-sm opacity-60">Tier</span>
                                                         <span className="font-bold">
                                                             {cost.control_plane_tier.charAt(0).toUpperCase() + cost.control_plane_tier.slice(1)}
                                                         </span>
                                                     </div>
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-sm text-gray-500">Hourly Cost</span>
+                                                        <span className="text-sm opacity-60">Hourly Cost</span>
                                                         <span className="font-bold">
                                                             ${cost.control_plane_hour.toFixed(3)}
                                                         </span>
                                                     </div>
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-sm text-gray-500">Monthly Cost</span>
+                                                        <span className="text-sm opacity-60">Monthly Cost</span>
                                                         <span className="font-bold">
                                                             {formatCurrency(cost.control_plane_month)}
                                                         </span>
                                                     </div>
-                                                    <div className="text-xs text-gray-600 mt-2">
+                                                    <div className="text-xs opacity-50 mt-2">
                                                         Fixed cost for cluster management
                                                     </div>
                                                 </div>
                                             </div>
 
                                             {/* Total Cluster Cost */}
-                                            <div className={`bg-black border ${cost.within_budget
-                                                ? "border-gray-800"
-                                                : "border-gray-800"
+                                            <div className={`bg-card border ${cost.within_budget
+                                                ? "border-border"
+                                                : "border-border"
                                                 } rounded-lg p-4`}>
                                                 <h4 className="font-semibold mb-3 flex items-center gap-2">
                                                     <Calculator className="w-4 h-4" />
@@ -490,23 +490,23 @@ export default function CostPage2() {
                                                 <div className="space-y-3">
                                                     <div>
                                                         <div className="flex justify-between items-center mb-1">
-                                                            <span className="text-sm text-gray-400">Hourly Total</span>
+                                                            <span className="text-sm opacity-80">Hourly Total</span>
                                                             <span className="font-bold text-xl">
                                                                 ${cost.total_hour.toFixed(3)}
                                                             </span>
                                                         </div>
-                                                        <div className="text-xs text-gray-600">
+                                                        <div className="text-xs opacity-50">
                                                             ${totalNodeHourly.toFixed(3)} (nodes) + ${cost.control_plane_hour.toFixed(3)} (control)
                                                         </div>
                                                     </div>
                                                     <div>
                                                         <div className="flex justify-between items-center mb-1">
-                                                            <span className="text-sm text-gray-400">Monthly Total</span>
+                                                            <span className="text-sm opacity-80">Monthly Total</span>
                                                             <span className="font-bold text-2xl">
                                                                 {formatCurrency(cost.total_month)}
                                                             </span>
                                                         </div>
-                                                        <div className="text-xs text-gray-600">
+                                                        <div className="text-xs opacity-50">
                                                             ${totalNodeMonthly.toFixed(2)} (nodes) + ${cost.control_plane_month.toFixed(2)} (control)
                                                         </div>
                                                     </div>
@@ -515,17 +515,17 @@ export default function CostPage2() {
                                         </div>
 
                                         {/* Budget Comparison */}
-                                        <div className="bg-black border border-gray-800 rounded-lg p-4 mb-4">
+                                        <div className="bg-card border border-border rounded-lg p-4 mb-4">
                                             <h4 className="font-semibold mb-3 flex items-center gap-2">
                                                 <BarChart3 className="w-4 h-4" />
                                                 Budget Comparison
                                             </h4>
                                             <div className="space-y-3">
                                                 <div className="flex justify-between items-center">
-                                                    <span className="text-gray-400">Monthly Budget</span>
+                                                    <span className="opacity-80">Monthly Budget</span>
                                                     <span className="font-bold">{formatCurrency(cost.budget_month)}</span>
                                                 </div>
-                                                <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
+                                                <div className="h-2 bg-card rounded-full overflow-hidden">
                                                     <div
                                                         className={`h-full ${cost.within_budget ? 'bg-green-600' : 'bg-red-600'} transition-all duration-500`}
                                                         style={{
@@ -534,14 +534,14 @@ export default function CostPage2() {
                                                     ></div>
                                                 </div>
                                                 <div className="flex justify-between text-sm">
-                                                    <span className="text-gray-600">0%</span>
+                                                    <span className="opacity-50">0%</span>
                                                     <span className={cost.within_budget ? 'text-green-500' : 'text-red-500'}>
                                                         {budgetPercentage.toFixed(1)}%
                                                     </span>
-                                                    <span className="text-gray-600">100%+</span>
+                                                    <span className="opacity-50">100%+</span>
                                                 </div>
-                                                <div className="flex justify-between items-center pt-2 border-t border-gray-800">
-                                                    <span className="text-gray-500">Status</span>
+                                                <div className="flex justify-between items-center pt-2 border-t border-border">
+                                                    <span className="opacity-60">Status</span>
                                                     <span className={`font-bold ${cost.within_budget ? 'text-green-500' : 'text-red-500'}`}>
                                                         {cost.within_budget ? 'Within Budget' : `Over Budget by ${formatCurrency(monthlyBudgetExcess)}`}
                                                     </span>
@@ -551,7 +551,7 @@ export default function CostPage2() {
 
                                         {/* Detailed Breakdown */}
                                         {isExpanded && (
-                                            <div className="mt-4 pt-4 border-t border-gray-800">
+                                            <div className="mt-4 pt-4 border-t border-border">
                                                 <h4 className="font-semibold mb-4 text-lg flex items-center gap-2">
                                                     <PieChart className="w-5 h-5" />
                                                     Detailed Calculation Breakdown
@@ -560,27 +560,27 @@ export default function CostPage2() {
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                                     {/*Base Calculations */}
                                                     <div className="space-y-4">
-                                                        <div className="bg-black border border-gray-800 rounded-lg p-4">
+                                                        <div className="bg-card border border-border rounded-lg p-4">
                                                             <h5 className="font-medium mb-3 flex items-center gap-2">
                                                                 <Clock className="w-4 h-4" />
                                                                 Hourly Cost Calculation
                                                             </h5>
                                                             <div className="space-y-2 text-sm">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Node hourly cost:</span>
+                                                                    <span className="opacity-60">Node hourly cost:</span>
                                                                     <span className="font-mono">${cost.price_per_node_hour.toFixed(3)}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Total nodes hourly:</span>
+                                                                    <span className="opacity-60">Total nodes hourly:</span>
                                                                     <span className="font-mono">
                                                                         ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} = ${totalNodeHourly.toFixed(3)}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Control plane hourly:</span>
+                                                                    <span className="opacity-60">Control plane hourly:</span>
                                                                     <span className="font-mono">${cost.control_plane_hour.toFixed(3)}</span>
                                                                 </div>
-                                                                <div className="pt-2 mt-2 border-t border-gray-800">
+                                                                <div className="pt-2 mt-2 border-t border-border">
                                                                     <div className="flex justify-between font-bold">
                                                                         <span>TOTAL HOURLY:</span>
                                                                         <span className="font-mono">
@@ -591,31 +591,31 @@ export default function CostPage2() {
                                                             </div>
                                                         </div>
 
-                                                        <div className="bg-black border border-gray-800 rounded-lg p-4">
+                                                        <div className="bg-card border border-border rounded-lg p-4">
                                                             <h5 className="font-medium mb-3 flex items-center gap-2">
                                                                 <Calendar className="w-4 h-4" />
                                                                 Monthly Cost Calculation
                                                             </h5>
                                                             <div className="space-y-2 text-sm">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Node monthly cost:</span>
+                                                                    <span className="opacity-60">Node monthly cost:</span>
                                                                     <span className="font-mono">
                                                                         ${cost.price_per_node_hour.toFixed(3)} × 720h = ${cost.price_per_node_month.toFixed(2)}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Total nodes monthly:</span>
+                                                                    <span className="opacity-60">Total nodes monthly:</span>
                                                                     <span className="font-mono">
                                                                         ${cost.price_per_node_month.toFixed(2)} × {cost.nodes} = ${totalNodeMonthly.toFixed(2)}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Control plane monthly:</span>
+                                                                    <span className="opacity-60">Control plane monthly:</span>
                                                                     <span className="font-mono">
                                                                         ${cost.control_plane_hour.toFixed(3)} × 720h = ${cost.control_plane_month.toFixed(2)}
                                                                     </span>
                                                                 </div>
-                                                                <div className="pt-2 mt-2 border-t border-gray-800">
+                                                                <div className="pt-2 mt-2 border-t border-border">
                                                                     <div className="flex justify-between font-bold">
                                                                         <span>TOTAL MONTHLY:</span>
                                                                         <span className="font-mono">
@@ -629,21 +629,21 @@ export default function CostPage2() {
 
                                                     {/*Budget & Savings */}
                                                     <div className="space-y-4">
-                                                        <div className="bg-black border border-gray-800 rounded-lg p-4">
+                                                        <div className="bg-card border border-border rounded-lg p-4">
                                                             <h5 className="font-medium mb-3 flex items-center gap-2">
                                                                 <Target className="w-4 h-4" />
                                                                 Budget Analysis
                                                             </h5>
                                                             <div className="space-y-2 text-sm">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Available budget:</span>
+                                                                    <span className="opacity-60">Available budget:</span>
                                                                     <span className="font-mono">${cost.budget_month.toFixed(2)}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Cluster cost:</span>
+                                                                    <span className="opacity-60">Cluster cost:</span>
                                                                     <span className="font-mono">${cost.total_month.toFixed(2)}</span>
                                                                 </div>
-                                                                <div className="pt-2 mt-2 border-t border-gray-800">
+                                                                <div className="pt-2 mt-2 border-t border-border">
                                                                     <div className={`flex justify-between font-bold ${monthlyBudgetExcess > 0 ? 'text-red-500' : 'text-green-500'}`}>
                                                                         <span>{monthlyBudgetExcess > 0 ? 'OVER BUDGET BY:' : 'UNDER BUDGET BY:'}</span>
                                                                         <span className="font-mono">
@@ -651,9 +651,9 @@ export default function CostPage2() {
                                                                         </span>
                                                                     </div>
                                                                 </div>
-                                                                <div className="pt-2 mt-2 border-t border-gray-800">
+                                                                <div className="pt-2 mt-2 border-t border-border">
                                                                     <div className="flex justify-between">
-                                                                        <span className="text-gray-500">Budget utilization:</span>
+                                                                        <span className="opacity-60">Budget utilization:</span>
                                                                         <span className={`font-bold ${budgetPercentage > 100 ? 'text-red-500' : budgetPercentage > 80 ? 'text-yellow-500' : 'text-green-500'}`}>
                                                                             {budgetPercentage.toFixed(1)}%
                                                                         </span>
@@ -662,29 +662,29 @@ export default function CostPage2() {
                                                             </div>
                                                         </div>
 
-                                                        <div className="bg-black border border-gray-800 rounded-lg p-4">
+                                                        <div className="bg-card border border-border rounded-lg p-4">
                                                             <h5 className="font-medium mb-3 flex items-center gap-2">
                                                                 <TrendingUp className="w-4 h-4" />
                                                                 Cost Efficiency
                                                             </h5>
                                                             <div className="space-y-2 text-sm">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Cost per node per hour:</span>
+                                                                    <span className="opacity-60">Cost per node per hour:</span>
                                                                     <span className="font-mono">${cost.price_per_node_hour.toFixed(3)}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Cost per node per month:</span>
+                                                                    <span className="opacity-60">Cost per node per month:</span>
                                                                     <span className="font-mono">{formatCurrency(cost.price_per_node_month)}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-gray-500">Control plane % of total:</span>
+                                                                    <span className="opacity-60">Control plane % of total:</span>
                                                                     <span className="font-mono">
                                                                         {((cost.control_plane_month / cost.total_month) * 100).toFixed(1)}%
                                                                     </span>
                                                                 </div>
-                                                                <div className="pt-2 mt-2 border-t border-gray-800">
+                                                                <div className="pt-2 mt-2 border-t border-border">
                                                                     <div className="flex justify-between">
-                                                                        <span className="text-gray-500">Average hourly cost:</span>
+                                                                        <span className="opacity-60">Average hourly cost:</span>
                                                                         <span className="font-mono">${(cost.total_hour / cost.nodes).toFixed(3)}/node</span>
                                                                     </div>
                                                                 </div>
@@ -694,22 +694,22 @@ export default function CostPage2() {
                                                 </div>
 
                                                 {/* Footer */}
-                                                <div className="mt-6 pt-4 border-t border-gray-800">
-                                                    <h5 className="text-sm font-medium text-gray-500 mb-2 flex items-center gap-2">
+                                                <div className="mt-6 pt-4 border-t border-border">
+                                                    <h5 className="text-sm font-medium opacity-60 mb-2 flex items-center gap-2">
                                                         <Info className="w-4 h-4" />
                                                         Calculation Assumptions
                                                     </h5>
-                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-600">
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs opacity-50">
                                                         <div className="flex items-start gap-2">
-                                                            <div className="w-1 h-1 bg-gray-700 rounded-full mt-1"></div>
+                                                            <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
                                                             <span>1 month = 720 hours (24h × 30 days)</span>
                                                         </div>
                                                         <div className="flex items-start gap-2">
-                                                            <div className="w-1 h-1 bg-gray-700 rounded-full mt-1"></div>
+                                                            <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
                                                             <span>Control plane cost is fixed per cluster</span>
                                                         </div>
                                                         <div className="flex items-start gap-2">
-                                                            <div className="w-1 h-1 bg-gray-700 rounded-full mt-1"></div>
+                                                            <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
                                                             <span>Prices exclude taxes, discounts, and additional services</span>
                                                         </div>
                                                     </div>
@@ -722,8 +722,8 @@ export default function CostPage2() {
                         </div>
                     )}
                 </div>
-                <div className="mt-8 pt-6 border-t border-gray-800">
-                    <div className="text-center text-sm text-gray-600">
+                <div className="mt-8 pt-6 border-t border-border">
+                    <div className="text-center text-sm opacity-50">
                         <p className="mt-1">Prices are estimates based on public pricing and may vary based on actual usage, commitments, and additional services</p>
                     </div>
                 </div>
