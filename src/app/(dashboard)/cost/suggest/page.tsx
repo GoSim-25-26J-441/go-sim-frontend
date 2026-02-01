@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchSuggestions } from '@/app/api/asm/routes';
 import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
@@ -132,7 +132,12 @@ export default function SuggestPage() {
         }
     ];
 
+    const hasFetchedRef = useRef(false);
+
     useEffect(() => {
+        if (hasFetchedRef.current) return;
+        hasFetchedRef.current = true;
+
         const loadSuggestions = async () => {
             setLoading(true);
             setError(null);
