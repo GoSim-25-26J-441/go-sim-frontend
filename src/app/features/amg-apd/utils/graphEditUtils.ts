@@ -45,13 +45,23 @@ export function exportGraphToYaml(cy: Core): string {
     return (node.data("label") as string) || id;
   }
 
+  const kindToYamlType: Record<NodeKind, string> = {
+    SERVICE: "service",
+    API_GATEWAY: "api_gateway",
+    DATABASE: "database",
+    EVENT_TOPIC: "event_topic",
+    EXTERNAL_SYSTEM: "external_system",
+    CLIENT: "client",
+    USER_ACTOR: "user_actor",
+  };
+
   const servicesOut: { name: string; type: string }[] = [];
   nodes.forEach((n) => {
     const kind = (n.data("kind") as NodeKind) || "SERVICE";
     const name = (n.data("label") as string) || n.id();
     servicesOut.push({
       name,
-      type: kind === "DATABASE" ? "database" : "service",
+      type: kindToYamlType[kind] ?? "service",
     });
   });
 

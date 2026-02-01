@@ -1,6 +1,17 @@
 "use client";
 
 import type { TooltipState } from "@/app/features/amg-apd/components/graph/useCyTooltip";
+import type { NodeKind } from "@/app/features/amg-apd/types";
+
+const NODE_KIND_LABEL: Record<NodeKind, string> = {
+  SERVICE: "Service",
+  API_GATEWAY: "API Gateway",
+  DATABASE: "Database",
+  EVENT_TOPIC: "Event Topic",
+  EXTERNAL_SYSTEM: "External System",
+  CLIENT: "Client (web/mobile)",
+  USER_ACTOR: "User / Actor",
+};
 
 export default function GraphTooltip({
   tooltip,
@@ -23,7 +34,7 @@ export default function GraphTooltip({
         <div className="flex items-start justify-between gap-2">
           <div>
             <div className="text-[10px] uppercase text-slate-500">
-              {tooltip.kind === "SERVICE" ? "Service" : "Database"}
+              {NODE_KIND_LABEL[tooltip.kind] ?? tooltip.kind}
             </div>
             <div className="text-[12px] font-semibold text-slate-900">
               {tooltip.label}

@@ -29,6 +29,8 @@ export default function PatternsPage() {
   const [applyLoading, setApplyLoading] = useState(false);
   const [sugs, setSugs] = useState<Suggestion[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [graphRegenerating, setGraphRegenerating] = useState(false);
+  const [graphVersion, setGraphVersion] = useState(0);
 
   function handleDownloadYaml() {
     if (!editedYaml) {
@@ -119,10 +121,15 @@ export default function PatternsPage() {
 
       setEditedYaml(fixedYaml);
       setLast(fixedAnalysis);
-
       setSugs((data?.applied_fixes ?? []) as Suggestion[]);
-
       setOpen(false);
+
+      // Show regenerating state and force graph remount
+      setGraphRegenerating(true);
+      setGraphVersion((v) => v + 1);
+
+      // Brief delay so user sees "Regenerating graph..." before fresh render
+      setTimeout(() => setGraphRegenerating(false), 400);
     } catch (e: any) {
       setErr(e?.message ?? "Failed to apply suggestions");
     } finally {
@@ -193,7 +200,19 @@ export default function PatternsPage() {
         </div>
       </div>
 
-      <GraphCanvas data={last} />
+      {graphRegenerating ? (
+        <div className="relative h-[60vh] overflow-hidden rounded border bg-slate-50 shadow-sm flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-slate-600">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+            <span className="text-sm font-medium">Regenerating graph…</span>
+            <span className="text-xs text-slate-500">
+              Applying fixes and updating visualization
+            </span>
+          </div>
+        </div>
+      ) : (
+        <GraphCanvas key={`amg-apd-graph-v${graphVersion}`} data={last} />
+      )}
     </div>
   );
 }

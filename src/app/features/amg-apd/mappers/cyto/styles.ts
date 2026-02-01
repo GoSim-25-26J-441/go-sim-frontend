@@ -8,7 +8,7 @@ import { gradientStops } from "./svg";
 type StylesheetLike = Array<{ selector: string; style: Record<string, any> }>;
 
 const EDGE_KIND_COLOR: Record<string, string> = {
-  CALLS: "#f59e0b",
+  CALLS: "#1f2937",
   READS: "#06b6d4",
   WRITES: "#94a3b8",
 };
@@ -29,6 +29,33 @@ function borderColorForNode(ele: any) {
   return colorForDetectionKind(pick);
 }
 
+/** Edge colors: for CALLS, use source + target node problem colors (alternating); else edge detection kinds */
+function getEdgeColors(ele: any): string[] {
+  const kind = (ele.data("kind") as string) ?? "";
+  const sourceKinds = (ele.data("sourceNodeKinds") as string[]) ?? [];
+  const targetKinds = (ele.data("targetNodeKinds") as string[]) ?? [];
+  const edgeKinds = (ele.data("detectionKinds") as string[]) ?? [];
+
+  // For CALLS: use source and target node colors (alternating start→end)
+  if (kind === "CALLS" && (sourceKinds.length || targetKinds.length)) {
+    const sourceCols = sourceKinds
+      .map((k) => colorForDetectionKind(k))
+      .filter(Boolean);
+    const targetCols = targetKinds
+      .map((k) => colorForDetectionKind(k))
+      .filter(Boolean);
+    const combined = [...sourceCols, ...targetCols];
+    return [...new Set(combined)];
+  }
+
+  // Fall back to edge's own detection kinds
+  if (edgeKinds.length) {
+    return edgeKinds.map((k) => colorForDetectionKind(k)).filter(Boolean);
+  }
+
+  return [];
+}
+
 export const cyStyles: StylesheetLike = [
   {
     selector: "node",
@@ -47,7 +74,10 @@ export const cyStyles: StylesheetLike = [
       color: "#0f172a",
       width: "label",
       height: "label",
-      padding: "12px",
+      padding: (ele: any) => {
+        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
+        return kinds.length ? "12px 12px 28px 12px" : "12px";
+      },
 
       "border-width": (ele: any) => {
         const sev = (ele.data("severity") as Severity | null) ?? null;
@@ -86,37 +116,35 @@ export const cyStyles: StylesheetLike = [
       "target-arrow-shape": "triangle",
 
       "line-fill": (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length > 1 ? "linear-gradient" : "solid";
+        const cols = getEdgeColors(ele);
+        return cols.length > 1 ? "linear-gradient" : "solid";
       },
 
       "line-gradient-stop-colors": (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        const cols = kinds.map((k) => colorForDetectionKind(k)).filter(Boolean);
+        const cols = getEdgeColors(ele);
         const stops = gradientStops(cols);
-        return stops?.colors ?? "#94a3b8";
+        return stops?.colors ?? "#1f2937";
       },
 
       "line-gradient-stop-positions": (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        const cols = kinds.map((k) => colorForDetectionKind(k)).filter(Boolean);
+        const cols = getEdgeColors(ele);
         const stops = gradientStops(cols);
         return stops?.positions ?? "0 100";
       },
 
       "line-color": (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        if (kinds.length === 1) return colorForDetectionKind(kinds[0]);
-        if (kinds.length > 1) return "#94a3b8";
+        const cols = getEdgeColors(ele);
+        if (cols.length === 1) return cols[0];
+        if (cols.length > 1) return "#94a3b8";
         const kind = (ele.data("kind") as string) ?? "";
-        return EDGE_KIND_COLOR[kind] ?? "#94a3b8";
+        return EDGE_KIND_COLOR[kind] ?? "#1f2937";
       },
 
       "target-arrow-color": (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        if (kinds.length) return colorForDetectionKind(kinds[kinds.length - 1]);
+        const cols = getEdgeColors(ele);
+        if (cols.length) return cols[cols.length - 1];
         const kind = (ele.data("kind") as string) ?? "";
-        return EDGE_KIND_COLOR[kind] ?? "#94a3b8";
+        return EDGE_KIND_COLOR[kind] ?? "#1f2937";
       },
 
       width: (ele: any) => {

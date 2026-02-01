@@ -109,3 +109,14 @@ export function buildMetaMaps(data?: AnalysisResult) {
 
   return { nodeMeta, edgeMeta };
 }
+
+/** Resolve a node ref (from edge from/to) to the canonical node ID used in nodeMeta */
+export function resolveNodeIdFromData(
+  data: AnalysisResult | undefined,
+  ref: unknown
+): string | null {
+  if (!data?.graph?.nodes) return null;
+  const nodesObj = data.graph.nodes;
+  const nameToId = buildNameToId(nodesObj);
+  return resolveNodeId(ref, nodesObj, nameToId);
+}

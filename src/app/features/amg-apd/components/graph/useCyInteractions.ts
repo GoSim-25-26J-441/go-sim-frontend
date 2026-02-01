@@ -7,6 +7,40 @@ import type {
   NodeKind,
 } from "@/app/features/amg-apd/types";
 
+const ADD_NODE_TOOLS: EditTool[] = [
+  "add-service",
+  "add-api-gateway",
+  "add-database",
+  "add-event-topic",
+  "add-external-system",
+  "add-client",
+  "add-user-actor",
+];
+
+const TOOL_TO_KIND: Record<EditTool, NodeKind> = {
+  select: "SERVICE",
+  "add-service": "SERVICE",
+  "add-api-gateway": "API_GATEWAY",
+  "add-database": "DATABASE",
+  "add-event-topic": "EVENT_TOPIC",
+  "add-external-system": "EXTERNAL_SYSTEM",
+  "add-client": "CLIENT",
+  "add-user-actor": "USER_ACTOR",
+  "connect-calls": "SERVICE",
+};
+
+const TOOL_TO_LABEL: Record<EditTool, string> = {
+  select: "node",
+  "add-service": "new-service",
+  "add-api-gateway": "new-api-gateway",
+  "add-database": "new-database",
+  "add-event-topic": "new-event-topic",
+  "add-external-system": "new-external-system",
+  "add-client": "new-client",
+  "add-user-actor": "new-user-actor",
+  "connect-calls": "node",
+};
+
 export function useCyInteractions({
   cy,
   editMode,
@@ -38,19 +72,10 @@ export function useCyInteractions({
       if (!node || !node.isNode?.()) return;
       if (node.hasClass("halo")) return;
 
-      if (
-        editMode &&
-        (tool === "connect-calls" ||
-          tool === "connect-reads" ||
-          tool === "connect-writes")
-      ) {
-        const edgeKind: EdgeKind =
-          tool === "connect-calls"
-            ? "CALLS"
-            : tool === "connect-reads"
-            ? "READS"
-            : "WRITES";
+      const shiftKey = evt.originalEvent?.shiftKey === true;
 
+      if (editMode && tool === "connect-calls") {
+        const edgeKind: EdgeKind = "CALLS";
         const id = node.id();
 
         if (!pendingSource) {
@@ -70,34 +95,17 @@ export function useCyInteractions({
 
         const sourceId = pendingSource;
         const targetId = id;
-
         const edgeId = `e-${Date.now().toString(36)}-${Math.random()
           .toString(36)
           .slice(2, 8)}`;
-
-        const label =
-          edgeKind === "READS"
-            ? "reads"
-            : edgeKind === "WRITES"
-            ? "writes"
-            : "calls";
-
-        const dep_kind =
-          edgeKind === "CALLS"
-            ? "rest"
-            : edgeKind === "READS"
-            ? "db_read"
-            : "db_write";
-
-        const attrs = { kind: dep_kind, sync: true };
 
         const edgeData: any = {
           id: edgeId,
           source: sourceId,
           target: targetId,
           kind: edgeKind,
-          label,
-          attrs,
+          label: "calls",
+          attrs: { kind: "rest", sync: true },
         };
 
         cy.add({ group: "edges", data: edgeData });
@@ -108,35 +116,59 @@ export function useCyInteractions({
         return;
       }
 
-      safeUnselectAll();
-      node.select();
-      setSelected({ type: "node", data: node.data() });
+      if (shiftKey) {
+        node.select();
+        const sel = cy.elements(":selected");
+        setSelected({
+          type: "node",
+          data: { ...node.data(), _multiCount: sel.length },
+        });
+      } else {
+        safeUnselectAll();
+        node.select();
+        setSelected({ type: "node", data: node.data() });
+      }
     };
 
     const onEdgeTap = (evt: any) => {
       const edge = evt.target as cytoscape.EdgeSingular;
       if (!edge || !edge.isEdge?.()) return;
 
-      try {
-        cy.elements().unselect();
-      } catch {}
-      edge.select();
-      setSelected({ type: "edge", data: edge.data() });
+      const shiftKey = evt.originalEvent?.shiftKey === true;
+
+      if (shiftKey) {
+        edge.select();
+        const sel = cy.elements(":selected");
+        setSelected({
+          type: "edge",
+          data: { ...edge.data(), _multiCount: sel.length },
+        });
+      } else {
+        try {
+          cy.elements().unselect();
+        } catch {}
+        edge.select();
+        setSelected({ type: "edge", data: edge.data() });
+      }
     };
 
     const onBgTap = (evt: any) => {
       if (evt.target !== cy) return;
 
-      if (editMode && (tool === "add-service" || tool === "add-database")) {
+      if (editMode && ADD_NODE_TOOLS.includes(tool)) {
         const pos = evt.position;
-        const idBase = tool === "add-service" ? "service" : "db";
+        const kind = TOOL_TO_KIND[tool];
+        const labelBase = TOOL_TO_LABEL[tool];
+        const idBase = labelBase.replace("new-", "").replace(/-/g, "_");
         const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
           .toString(36)
           .slice(2, 6)}`;
-        const label = tool === "add-service" ? "new-service" : "new-database";
-        const kind: NodeKind = tool === "add-service" ? "SERVICE" : "DATABASE";
 
-        cy.add({ group: "nodes", data: { id, label, kind }, position: pos });
+        cy.add({
+          group: "nodes",
+          data: { id, label: labelBase, kind },
+          position: pos,
+        });
 
         const node = cy.getElementById(id);
         if (!node.empty()) {

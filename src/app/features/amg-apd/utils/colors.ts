@@ -2,7 +2,12 @@ import type { NodeKind, Severity } from "@/app/features/amg-apd/types";
 
 export const NODE_KIND_COLOR: Record<NodeKind, string> = {
   SERVICE: "#e5f0ff", // light blue
+  API_GATEWAY: "#e0e7ff", // light indigo
   DATABASE: "#fef9c3", // light yellow
+  EVENT_TOPIC: "#fce7f3", // light pink
+  EXTERNAL_SYSTEM: "#f3e8ff", // light purple
+  CLIENT: "#d1fae5", // light emerald
+  USER_ACTOR: "#fef3c7", // light amber
 };
 
 export const DETECTION_KIND_COLOR: Record<string, string> = {

@@ -69,11 +69,21 @@ export default function SelectedDetails({
     }
   }, [isNode, computedInitialName]);
 
+  const NODE_KIND_LABEL: Record<NodeKind, string> = {
+    SERVICE: "Service",
+    API_GATEWAY: "API Gateway",
+    DATABASE: "Database",
+    EVENT_TOPIC: "Event Topic",
+    EXTERNAL_SYSTEM: "External System",
+    CLIENT: "Client (web/mobile)",
+    USER_ACTOR: "User / Actor",
+  };
+
   if (!selected) {
     return (
       <div className="rounded border bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        Click on a <strong>service</strong>, <strong>database</strong>, or{" "}
-        <strong>edge</strong> in the graph to see more details here.
+        Click on a <strong>node</strong> or <strong>connection</strong> in the
+        graph to see more details here.
       </div>
     );
   }
@@ -86,7 +96,7 @@ export default function SelectedDetails({
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-[11px] uppercase text-slate-500">
-              {nodeKind === "SERVICE" ? "Service" : "Database"}
+              {NODE_KIND_LABEL[nodeKind] ?? nodeKind}
             </div>
             {showRename ? (
               <form

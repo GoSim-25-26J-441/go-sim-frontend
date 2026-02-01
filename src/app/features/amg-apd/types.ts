@@ -1,4 +1,11 @@
-export type NodeKind = "SERVICE" | "DATABASE";
+export type NodeKind =
+  | "SERVICE"
+  | "API_GATEWAY"
+  | "DATABASE"
+  | "EVENT_TOPIC"
+  | "EXTERNAL_SYSTEM"
+  | "CLIENT"
+  | "USER_ACTOR";
 export type EdgeKind = "CALLS" | "READS" | "WRITES";
 
 export interface Node {
@@ -53,10 +60,13 @@ export interface AnalysisResult {
 export type EditTool =
   | "select"
   | "add-service"
+  | "add-api-gateway"
   | "add-database"
-  | "connect-calls"
-  | "connect-reads"
-  | "connect-writes";
+  | "add-event-topic"
+  | "add-external-system"
+  | "add-client"
+  | "add-user-actor"
+  | "connect-calls";
 
 export type SelectedItem =
   | { type: "node"; data: any }
