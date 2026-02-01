@@ -100,3 +100,22 @@ export const fetchSuggestions = async (
     throw new Error(error instanceof Error ? error.message : String(error));
   }
 };
+
+// Fetch stored metrics analysis by id 
+export const fetchMetricsAnalysisById = async (id: string) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/requests/${id}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch metrics analysis: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};

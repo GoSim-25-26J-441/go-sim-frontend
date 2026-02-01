@@ -249,11 +249,19 @@ export default function CostPage() {
                       )}
                     </div>
 
-                    <div className="pt-4 border-t border-border">
+                    <div className="pt-4 border-t border-border space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs opacity-60">Click to view cost analysis</span>
                         <ChevronRight className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity" />
                       </div>
+                      <Link
+                        href={`/cost/suggest/${design.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs font-medium opacity-70 hover:opacity-100 flex items-center gap-1"
+                      >
+                        <BarChart3 className="w-3.5 h-3.5" />
+                        View Metrices Analysis
+                      </Link>
                     </div>
                   </div>
                 </div>
