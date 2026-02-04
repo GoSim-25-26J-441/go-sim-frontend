@@ -27,6 +27,7 @@ import {
     GitCompare
 } from "lucide-react";
 import { getRegionDisplayName } from "@/utils/regionFormatter";
+import { GENERIC_REGIONS, getGenericRegionById } from "@/utils/genericRegions";
 
 interface ClusterCostResult {
     provider: string;
@@ -63,14 +64,20 @@ const DEFAULT_REGIONS: Record<string, string> = {
     gcp: "us-central1",
 };
 
+type ViewMode = "by-provider" | "by-region";
+
+const DEFAULT_GENERIC_REGION_ID = GENERIC_REGIONS[0]?.id ?? "us-east";
+
 export default function CostPage2() {
     const [costData, setCostData] = useState<CostData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [viewMode, setViewMode] = useState<ViewMode>("by-provider");
     const [selectedProvider, setSelectedProvider] = useState<"aws" | "azure" | "gcp">("aws");
     const [regions, setRegions] = useState<string[]>([]);
     const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-    const [compareRegionsEnabled, setCompareRegionsEnabled] = useState(true);
+    const [selectedGenericRegionId, setSelectedGenericRegionId] = useState<string>(DEFAULT_GENERIC_REGION_ID);
+    const [compareRegionsEnabled, setCompareRegionsEnabled] = useState(false);
     const [reloadingProviderCost, setReloadingProviderCost] = useState(false);
     const [expandedBreakdown, setExpandedBreakdown] = useState<string | null>(null);
 
@@ -133,26 +140,62 @@ export default function CostPage2() {
         }
     };
 
+    const handleFetchCostForGenericRegion = async (genericRegionId: string) => {
+        const genericRegion = getGenericRegionById(genericRegionId);
+        if (!requestId || !genericRegion) return;
+        setReloadingProviderCost(true);
+        try {
+            const [awsRes, azureRes] = await Promise.all([
+                fetchCostData(requestId, "aws", genericRegion.aws),
+                fetchCostData(requestId, "azure", genericRegion.azure),
+            ]);
+            const merged: CostData = {
+                ...awsRes,
+                cluster_costs: {
+                    aws: awsRes.cluster_costs?.aws ?? [],
+                    azure: azureRes.cluster_costs?.azure ?? [],
+                },
+            };
+            setCostData(merged);
+        } catch (e: any) {
+            setError(e.message);
+            console.error("Error fetching cost data for generic region:", e);
+        } finally {
+            setReloadingProviderCost(false);
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
-        if (requestId) {
+        if (!requestId) {
+            setError("No request ID provided");
+            setLoading(false);
+            return;
+        }
+        if (viewMode === "by-region") {
+            handleFetchCostForGenericRegion(selectedGenericRegionId);
+        } else {
             const defaultRegion = DEFAULT_REGIONS[selectedProvider] ?? regions[0] ?? "";
             setSelectedRegions([defaultRegion]);
             handleFetchRegions(selectedProvider);
             handleFetchCostData(selectedProvider, defaultRegion);
-        } else {
-            setError("No request ID provided");
-            setLoading(false);
         }
     }, [requestId]);
 
     useEffect(() => {
-        if (requestId) {
+        if (requestId && viewMode === "by-provider") {
             handleFetchRegions(selectedProvider);
             const defaultRegion = DEFAULT_REGIONS[selectedProvider] ?? "";
             setSelectedRegions([defaultRegion]);
             handleFetchCostData(selectedProvider, defaultRegion);
         }
-    }, [selectedProvider, requestId]);
+    }, [selectedProvider, requestId, viewMode]);
+
+    useEffect(() => {
+        if (requestId && viewMode === "by-region") {
+            handleFetchCostForGenericRegion(selectedGenericRegionId);
+        }
+    }, [requestId, viewMode, selectedGenericRegionId]);
 
     const addRegion = async (region: string) => {
         if (selectedRegions.includes(region) || selectedRegions.length >= MAX_REGIONS) return;
@@ -282,6 +325,12 @@ export default function CostPage2() {
     const currentCosts = getCurrentProviderCosts();
     const { best, minimal } = identifyBestOptions(currentCosts);
 
+    const costsByRegionAWS = viewMode === "by-region" ? (costData?.cluster_costs?.aws ?? []) : [];
+    const costsByRegionAzure = viewMode === "by-region" ? (costData?.cluster_costs?.azure ?? []) : [];
+    const genericRegion = viewMode === "by-region" ? getGenericRegionById(selectedGenericRegionId) : null;
+    const { best: bestAWS, minimal: minimalAWS } = identifyBestOptions(costsByRegionAWS);
+    const { best: bestAzure, minimal: minimalAzure } = identifyBestOptions(costsByRegionAzure);
+
     return (
         <div className="p-6 space-y-4">
             <div className="max-w-7xl mx-auto">
@@ -315,105 +364,57 @@ export default function CostPage2() {
                     <h2 className="text-xl font-semibold mb-4">Cloud Provider & Region</h2>
 
                     <div className="mb-6">
-                        <p className="text-sm opacity-60 mb-3">Select Provider:</p>
-                        <div className="flex flex-wrap gap-3">
-                            {(["aws", "azure"] as const).map((p) => (
+                        <div className="border-b border-border">
+                            <nav className="flex gap-6" role="tablist" aria-label="View mode">
                                 <button
-                                    key={p}
-                                    onClick={() => setSelectedProvider(p)}
-                                    className={`px-6 py-2 rounded-lg font-medium capitalize transition-all ${selectedProvider === p
-                                        ? "bg-surface border border-border"
-                                        : "border border-border hover:bg-surface opacity-80"
+                                    type="button"
+                                    role="tab"
+                                    onClick={() => setViewMode("by-provider")}
+                                    aria-selected={viewMode === "by-provider"}
+                                    className={`pb-3 px-1 font-medium text-sm border-b-2 transition-colors -mb-px ${viewMode === "by-provider"
+                                        ? "border-white text-white"
+                                        : "border-transparent opacity-60 hover:opacity-100"
                                         }`}
                                 >
-                                    {p.toUpperCase()}
+                                    By provider
                                 </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="mb-4">
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                                type="checkbox"
-                                checked={compareRegionsEnabled}
-                                onChange={(e) => setCompareRegionsEnabled(e.target.checked)}
-                                className="rounded border-border bg-card text-green-500 focus:ring-green-500"
-                            />
-                            <span className="text-sm font-medium">Compare multiple regions</span>
-                        </label>
-                        <p className="text-xs opacity-50 mt-1 ml-6">Enable to add and compare costs across up to {MAX_REGIONS} regions</p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm opacity-60 mb-3">
-                            {compareRegionsEnabled ? "Regions to compare:" : "Select region:"}
-                        </p>
-                        {compareRegionsEnabled ? (
-                            <div className="flex flex-wrap gap-2 items-center mb-3">
-                                {selectedRegions.map((r) => (
-                                    <span
-                                        key={r}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border text-sm"
-                                    >
-                                        <MapPin className="w-3.5 h-3.5 opacity-70" />
-                                        {getRegionDisplayName(r, selectedProvider)}
-                                        <button
-                                            type="button"
-                                            onClick={() => removeRegion(r)}
-                                            className="p-0.5 rounded hover:bg-surface opacity-70 hover:opacity-100 transition-opacity"
-                                            aria-label={`Remove ${getRegionDisplayName(r, selectedProvider)}`}
-                                        >
-                                            <X className="w-3.5 h-3.5" />
-                                        </button>
-                                    </span>
-                                ))}
-                                <select
-                                    className="region-select bg-card text-white p-2.5 rounded-lg border border-border focus:border-white/30 focus:outline-none text-sm max-w-[220px] [color-scheme:dark]"
-                                    value=""
-                                    onChange={(e) => {
-                                        const v = e.target.value;
-                                        if (v) addRegion(v);
-                                        e.target.value = "";
-                                    }}
-                                    disabled={regions.length === 0 || reloadingProviderCost || selectedRegions.length >= MAX_REGIONS}
-                                    title={selectedRegions.length >= MAX_REGIONS ? `Maximum ${MAX_REGIONS} regions` : undefined}
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    onClick={() => setViewMode("by-region")}
+                                    aria-selected={viewMode === "by-region"}
+                                    className={`pb-3 px-1 font-medium text-sm border-b-2 transition-colors -mb-px ${viewMode === "by-region"
+                                        ? "border-white text-white"
+                                        : "border-transparent opacity-60 hover:opacity-100"
+                                        }`}
                                 >
-                                    <option value="">
-                                        {selectedRegions.length >= MAX_REGIONS ? `Max ${MAX_REGIONS} regions` : "+ Add region"}
-                                    </option>
-                                    {regions
-                                        .filter((r) => !selectedRegions.includes(r))
-                                        .map((r) => (
-                                            <option key={r} value={r} className="bg-[#1a1a1a] text-white">
-                                                {getRegionDisplayName(r, selectedProvider)}
-                                            </option>
-                                        ))}
-                                </select>
-                                {reloadingProviderCost && (
-                                    <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
-                                        <RefreshCw className="w-3 h-3" />
-                                        Updating…
-                                    </span>
-                                )}
-                            </div>
-                        ) : (
-                            <div className="flex gap-3 items-center">
+                                    By region (AWS & Azure)
+                                </button>
+                            </nav>
+                        </div>
+                        <p className="text-xs opacity-50 mt-3">
+                            {viewMode === "by-region"
+                                ? "Select a region to see costs for both AWS and Azure in that area."
+                                : "Select a provider, then region(s) to compare."}
+                        </p>
+                    </div>
+
+                    {viewMode === "by-region" ? (
+                        <div>
+                            <p className="text-sm opacity-60 mb-3">Select region:</p>
+                            <div className="flex gap-3 items-center flex-wrap">
                                 <select
                                     className="region-select bg-card text-white p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md [color-scheme:dark]"
-                                    value={selectedRegions[0] ?? ""}
+                                    value={selectedGenericRegionId}
                                     onChange={(e) => {
                                         const v = e.target.value;
-                                        if (v) {
-                                            setSelectedRegions([v]);
-                                            handleFetchCostData(selectedProvider, v);
-                                        }
+                                        if (v) setSelectedGenericRegionId(v);
                                     }}
-                                    disabled={regions.length === 0 || reloadingProviderCost}
+                                    disabled={reloadingProviderCost}
                                 >
-                                    {regions.map((r) => (
-                                        <option key={r} value={r} className="bg-[#1a1a1a] text-white">
-                                            {getRegionDisplayName(r, selectedProvider)}
+                                    {GENERIC_REGIONS.map((r) => (
+                                        <option key={r.id} value={r.id} className="bg-[#1a1a1a] text-white">
+                                            {r.displayName}
                                         </option>
                                     ))}
                                 </select>
@@ -424,17 +425,135 @@ export default function CostPage2() {
                                     </span>
                                 )}
                             </div>
-                        )}
-                        <p className="text-xs opacity-50 mt-2">
-                            {compareRegionsEnabled
-                                ? `Add multiple regions to compare pricing. Default: ${getRegionDisplayName(DEFAULT_REGIONS[selectedProvider] ?? "", selectedProvider)}`
-                                : `Default: ${getRegionDisplayName(DEFAULT_REGIONS[selectedProvider] ?? "", selectedProvider)}`}
-                        </p>
-                    </div>
+                            <p className="text-xs opacity-50 mt-2">
+                                Showing AWS and Azure pricing for the selected region.
+                            </p>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="mb-6">
+                                <p className="text-sm opacity-60 mb-3">Select Provider:</p>
+                                <div className="flex flex-wrap gap-3">
+                                    {(["aws", "azure"] as const).map((p) => (
+                                        <button
+                                            key={p}
+                                            onClick={() => setSelectedProvider(p)}
+                                            className={`px-6 py-2 rounded-lg font-medium capitalize transition-all ${selectedProvider === p
+                                                ? "bg-surface border border-border"
+                                                : "border border-border hover:bg-surface opacity-80"
+                                                }`}
+                                        >
+                                            {p.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                    <input
+                                        type="checkbox"
+                                        checked={compareRegionsEnabled}
+                                        onChange={(e) => setCompareRegionsEnabled(e.target.checked)}
+                                        className="rounded border-border bg-card text-green-500 focus:ring-green-500"
+                                    />
+                                    <span className="text-sm font-medium">Compare multiple regions</span>
+                                </label>
+                                <p className="text-xs opacity-50 mt-1 ml-6">Enable to add and compare costs across up to {MAX_REGIONS} regions</p>
+                            </div>
+
+                            <div>
+                                <p className="text-sm opacity-60 mb-3">
+                                    {compareRegionsEnabled ? "Regions to compare:" : "Select region:"}
+                                </p>
+                                {compareRegionsEnabled ? (
+                                    <div className="flex flex-wrap gap-2 items-center mb-3">
+                                        {selectedRegions.map((r) => (
+                                            <span
+                                                key={r}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border text-sm"
+                                            >
+                                                <MapPin className="w-3.5 h-3.5 opacity-70" />
+                                                {getRegionDisplayName(r, selectedProvider)}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeRegion(r)}
+                                                    className="p-0.5 rounded hover:bg-surface opacity-70 hover:opacity-100 transition-opacity"
+                                                    aria-label={`Remove ${getRegionDisplayName(r, selectedProvider)}`}
+                                                >
+                                                    <X className="w-3.5 h-3.5" />
+                                                </button>
+                                            </span>
+                                        ))}
+                                        <select
+                                            className="region-select bg-card text-white p-2.5 rounded-lg border border-border focus:border-white/30 focus:outline-none text-sm max-w-[220px] [color-scheme:dark]"
+                                            value=""
+                                            onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (v) addRegion(v);
+                                                e.target.value = "";
+                                            }}
+                                            disabled={regions.length === 0 || reloadingProviderCost || selectedRegions.length >= MAX_REGIONS}
+                                            title={selectedRegions.length >= MAX_REGIONS ? `Maximum ${MAX_REGIONS} regions` : undefined}
+                                        >
+                                            <option value="">
+                                                {selectedRegions.length >= MAX_REGIONS ? `Max ${MAX_REGIONS} regions` : "+ Add region"}
+                                            </option>
+                                            {regions
+                                                .filter((r) => !selectedRegions.includes(r))
+                                                .map((r) => (
+                                                    <option key={r} value={r} className="bg-[#1a1a1a] text-white">
+                                                        {getRegionDisplayName(r, selectedProvider)}
+                                                    </option>
+                                                ))}
+                                        </select>
+                                        {reloadingProviderCost && (
+                                            <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
+                                                <RefreshCw className="w-3 h-3" />
+                                                Updating…
+                                            </span>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-3 items-center">
+                                        <select
+                                            className="region-select bg-card text-white p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md [color-scheme:dark]"
+                                            value={selectedRegions[0] ?? ""}
+                                            onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (v) {
+                                                    setSelectedRegions([v]);
+                                                    handleFetchCostData(selectedProvider, v);
+                                                }
+                                            }}
+                                            disabled={regions.length === 0 || reloadingProviderCost}
+                                        >
+                                            {regions.map((r) => (
+                                                <option key={r} value={r} className="bg-[#1a1a1a] text-white">
+                                                    {getRegionDisplayName(r, selectedProvider)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {reloadingProviderCost && (
+                                            <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
+                                                <RefreshCw className="w-3 h-3" />
+                                                Updating…
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+                                <p className="text-xs opacity-50 mt-2">
+                                    {compareRegionsEnabled
+                                        ? `Add multiple regions to compare pricing. Default: ${getRegionDisplayName(DEFAULT_REGIONS[selectedProvider] ?? "", selectedProvider)}`
+                                        : `Default: ${getRegionDisplayName(DEFAULT_REGIONS[selectedProvider] ?? "", selectedProvider)}`}
+                                </p>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Region comparison table (when enabled and 2+ regions) */}
-                {compareRegionsEnabled && selectedRegions.length >= 2 && currentCosts.length > 0 && (
+                {viewMode === "by-provider" && compareRegionsEnabled && selectedRegions.length >= 2 && currentCosts.length > 0 && (
                     <div className="bg-card border border-border rounded-lg p-6 mb-8">
                         <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
                             <GitCompare className="w-5 h-5" />
@@ -445,7 +564,7 @@ export default function CostPage2() {
                                 <thead>
                                     <tr className="border-b border-border">
                                         <th className="text-left py-3 px-4 text-sm font-medium opacity-80">Plan</th>
-                                        <th className="text-left py-3 px-4 text-sm font-medium opacity-80">Instance</th>
+
                                         {selectedRegions.map((r) => (
                                             <th key={r} className="text-left py-3 px-4 text-sm font-medium opacity-80 whitespace-nowrap">
                                                 {getRegionDisplayName(r, selectedProvider)}
@@ -464,7 +583,6 @@ export default function CostPage2() {
                                         });
                                         return Array.from(byPlan.entries()).map(([planKey, costs]) => {
                                             const planLabel = costs[0].purchase_type + (costs[0].lease_contract_length ? ` (${costs[0].lease_contract_length})` : "");
-                                            const instanceLabel = costs[0].instance_type;
                                             const byRegion = new Map(costs.map((c) => [c.region, c]));
                                             const monthlyValues = selectedRegions.map((r) => byRegion.get(r)?.total_month ?? null);
                                             const validValues = monthlyValues.filter((v): v is number => v != null);
@@ -472,16 +590,20 @@ export default function CostPage2() {
                                             return (
                                                 <tr key={planKey} className="border-b border-border hover:bg-surface/50 transition-colors">
                                                     <td className="py-3 px-4 font-medium">{planLabel}</td>
-                                                    <td className="py-3 px-4 text-sm opacity-80">{instanceLabel}</td>
                                                     {selectedRegions.map((r) => {
                                                         const cost = byRegion.get(r);
                                                         const isMin = cost != null && validValues.length > 0 && cost.total_month === minMonthly;
                                                         return (
-                                                            <td key={r} className="py-3 px-4">
+                                                            <td key={r} className="py-3 px-4 align-top">
                                                                 {cost != null ? (
-                                                                    <span className={isMin ? "font-bold text-green-400" : ""}>
-                                                                        {formatCurrency(cost.total_month)}
-                                                                    </span>
+                                                                    <div className="space-y-1">
+                                                                        <span className={isMin ? "font-bold text-green-400" : ""}>
+                                                                            {formatCurrency(cost.total_month)}
+                                                                        </span>
+                                                                        <div className="text-xs opacity-60">
+                                                                            {cost.instance_type}
+                                                                        </div>
+                                                                    </div>
                                                                 ) : (
                                                                     <span className="opacity-50">—</span>
                                                                 )}
@@ -501,7 +623,91 @@ export default function CostPage2() {
                     </div>
                 )}
 
-                {(!compareRegionsEnabled || selectedRegions.length < 2) && (
+                {viewMode === "by-region" && genericRegion && (
+                    <div className="mb-8">
+                        <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                            <MapPin className="w-6 h-6" />
+                            Pricing by region — {genericRegion.displayName}
+                        </h2>
+                        <p className="text-sm opacity-60 mb-6">Costs for both AWS and Azure in this region</p>
+                        <div className="grid md:grid-cols-2 gap-8">
+                            <div className="bg-card border border-border rounded-lg p-6">
+                                <h3 className="text-xl font-semibold mb-4">AWS — {getRegionDisplayName(genericRegion.aws, "aws")}</h3>
+                                {costsByRegionAWS.length === 0 ? (
+                                    <div className="text-center py-8 opacity-60">
+                                        <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                                        <p>No instances found for AWS in this region</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {costsByRegionAWS.map((cost, index) => {
+                                            const isBest = bestAWS && cost.total_month === bestAWS.total_month;
+                                            const isMinimal = minimalAWS && cost.total_month === minimalAWS.total_month;
+                                            return (
+                                                <div key={`aws-${index}`} className="border border-border rounded-lg p-4">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
+                                                        <span className={`text-sm font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                            {cost.within_budget ? "Within Budget" : "Over Budget"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-sm opacity-70 mb-2">{cost.instance_type}</div>
+                                                    <div className="flex justify-between items-center text-lg font-bold">
+                                                        <span>Monthly</span>
+                                                        <span>{formatCurrency(cost.total_month)}</span>
+                                                    </div>
+                                                    {(isBest || isMinimal) && (
+                                                        <span className="text-xs font-bold text-blue-400 mt-2 inline-block">
+                                                            {isMinimal ? "MINIMAL COST" : "BEST IN BUDGET"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-6">
+                                <h3 className="text-xl font-semibold mb-4">Azure — {getRegionDisplayName(genericRegion.azure, "azure")}</h3>
+                                {costsByRegionAzure.length === 0 ? (
+                                    <div className="text-center py-8 opacity-60">
+                                        <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                                        <p>No instances found for Azure in this region</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {costsByRegionAzure.map((cost, index) => {
+                                            const isBest = bestAzure && cost.total_month === bestAzure.total_month;
+                                            const isMinimal = minimalAzure && cost.total_month === minimalAzure.total_month;
+                                            return (
+                                                <div key={`azure-${index}`} className="border border-border rounded-lg p-4">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
+                                                        <span className={`text-sm font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                            {cost.within_budget ? "Within Budget" : "Over Budget"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-sm opacity-70 mb-2">{cost.instance_type}</div>
+                                                    <div className="flex justify-between items-center text-lg font-bold">
+                                                        <span>Monthly</span>
+                                                        <span>{formatCurrency(cost.total_month)}</span>
+                                                    </div>
+                                                    {(isBest || isMinimal) && (
+                                                        <span className="text-xs font-bold text-blue-400 mt-2 inline-block">
+                                                            {isMinimal ? "MINIMAL COST" : "BEST IN BUDGET"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {viewMode === "by-provider" && (!compareRegionsEnabled || selectedRegions.length < 2) && (
                     <div>
                         <div className="flex items-center justify-between mb-6">
                             <h2 className="text-2xl font-bold">Pricing Options Breakdown</h2>

@@ -82,39 +82,39 @@ export default function CostPage() {
       setDesigns(designList);
     } catch (err) {
       console.error('Error fetching designs:', err);
-      const fallbackData: Design[] = [
-        {
-          id: "0610bab4-a1a6-4ab2-9314-2e54caa1d126",
-          requestNumber: 1,
-          workload: 2000,
-          preferred_vcpu: 5,
-          preferred_memory_gb: 24,
-          created_at: "Dec 4, 2025, 22:43",
-          best_candidate: {
-            candidate: {
-              spec: { vcpu: 16, memory_gb: 64 }
-            },
-            workload_distance: 100
-          },
-          all_candidates: []
-        },
-        {
-          id: "1e9a8484-958b-42a6-99c0-1e671a21eed6",
-          requestNumber: 2,
-          workload: 2000,
-          preferred_vcpu: 8,
-          preferred_memory_gb: 16,
-          created_at: "Dec 4, 2025, 22:18",
-          best_candidate: {
-            candidate: {
-              spec: { vcpu: 4, memory_gb: 8 }
-            },
-            workload_distance: 100
-          },
-          all_candidates: []
-        }
-      ];
-      setDesigns(fallbackData);
+      // const fallbackData: Design[] = [
+      //   {
+      //     id: "0610bab4-a1a6-4ab2-9314-2e54caa1d126",
+      //     requestNumber: 1,
+      //     workload: 2000,
+      //     preferred_vcpu: 5,
+      //     preferred_memory_gb: 24,
+      //     created_at: "Dec 4, 2025, 22:43",
+      //     best_candidate: {
+      //       candidate: {
+      //         spec: { vcpu: 16, memory_gb: 64 }
+      //       },
+      //       workload_distance: 100
+      //     },
+      //     all_candidates: []
+      //   },
+      //   {
+      //     id: "1e9a8484-958b-42a6-99c0-1e671a21eed6",
+      //     requestNumber: 2,
+      //     workload: 2000,
+      //     preferred_vcpu: 8,
+      //     preferred_memory_gb: 16,
+      //     created_at: "Dec 4, 2025, 22:18",
+      //     best_candidate: {
+      //       candidate: {
+      //         spec: { vcpu: 4, memory_gb: 8 }
+      //       },
+      //       workload_distance: 100
+      //     },
+      //     all_candidates: []
+      //   }
+      // ];
+      // setDesigns(fallbackData);
     } finally {
       setLoading(false);
     }
