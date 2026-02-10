@@ -145,20 +145,23 @@ export default function PatternsPage() {
 
   if (!last?.graph) {
     return (
-      <div className="p-6 space-y-3">
-        <div>No graph to display. Upload a YAML and run analysis.</div>
-        <Link
-          className="text-blue-600 underline"
-          href="/dashboard/patterns/upload"
-        >
-          Upload a YAML to analyze →
-        </Link>
+      <div className="space-y-4">
+        <div className="rounded-xl border border-border bg-card p-6 text-center">
+          <h2 className="text-lg font-semibold mb-2">No graph to display</h2>
+          <p className="text-sm opacity-70 mb-4">Upload a YAML and run analysis to visualize your architecture.</p>
+          <Link
+            href="/dashboard/patterns/upload"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Upload YAML to Analyze
+          </Link>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-4">
       <SuggestionModal
         open={open}
         loading={loadingSug}
@@ -170,56 +173,61 @@ export default function PatternsPage() {
         disabledApply={!hasDetections || applyLoading || loadingSug}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold">
-            Graph Visualization with Anti-Patterns
-          </h1>
+      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+          <div>
+            <h1 className="text-xl font-semibold mb-1">Architecture Graph Visualization</h1>
+            <p className="text-sm opacity-70">Analyze and visualize your architecture with anti-pattern detection</p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-border">
           <VersionSidebar />
-          <button
-            type="button"
-            onClick={openSuggestions}
-            disabled={!hasDetections || !editedYaml}
-            className="rounded bg-black px-3 py-1 text-xs text-white disabled:opacity-50"
-            title={
-              !editedYaml
-                ? "No current YAML available"
-                : hasDetections
-                ? "View suggestions to fix detected anti-patterns"
-                : "No anti-patterns detected"
-            }
-          >
-            View suggestions
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={openSuggestions}
+              disabled={!hasDetections || !editedYaml}
+              className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={
+                !editedYaml
+                  ? "No current YAML available"
+                  : hasDetections
+                  ? "View suggestions to fix detected anti-patterns"
+                  : "No anti-patterns detected"
+              }
+            >
+              View Suggestions
+            </button>
 
-          <button
-            type="button"
-            onClick={handleDownloadYaml}
-            className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100"
-          >
-            Download current YAML
-          </button>
+            <button
+              type="button"
+              onClick={handleDownloadYaml}
+              className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-surface transition-colors"
+            >
+              Download YAML
+            </button>
 
-          <Legend />
+            <Legend />
+          </div>
         </div>
       </div>
 
-      {graphRegenerating ? (
-        <div className="relative h-[60vh] overflow-hidden rounded border bg-slate-50 shadow-sm flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-slate-600">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-            <span className="text-sm font-medium">Regenerating graph…</span>
-            <span className="text-xs text-slate-500">
-              Applying fixes and updating visualization
-            </span>
+      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+        {graphRegenerating ? (
+          <div className="relative h-[60vh] flex items-center justify-center bg-surface/50">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <span className="text-sm font-medium">Regenerating graph…</span>
+              <span className="text-xs opacity-70">
+                Applying fixes and updating visualization
+              </span>
+            </div>
           </div>
-        </div>
-      ) : (
-        <GraphCanvas key={`amg-apd-graph-v${graphVersion}`} data={last} />
-      )}
+        ) : (
+          <GraphCanvas key={`amg-apd-graph-v${graphVersion}`} data={last} />
+        )}
+      </div>
     </div>
   );
 }

@@ -89,27 +89,27 @@ export default function VersionSidebar() {
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 min-w-[220px]">
+    <div className="rounded-lg border border-border bg-card p-3 min-w-[220px] shadow-sm">
       <div className="flex items-center justify-between gap-2 mb-2">
-        <h2 className="text-xs font-semibold uppercase text-slate-500">
+        <h2 className="text-xs font-semibold uppercase opacity-70">
           Versions
         </h2>
         <Link
           href="/dashboard/patterns/compare"
-          className="text-xs text-blue-600 hover:underline"
+          className="text-xs text-primary hover:underline font-medium"
         >
           Compare
         </Link>
       </div>
 
       {loading && (
-        <div className="text-xs text-slate-500 py-2">Loading…</div>
+        <div className="text-xs opacity-70 py-2">Loading…</div>
       )}
       {error && (
         <div className="text-xs text-red-600 py-2">{error}</div>
       )}
       {!loading && !error && versions.length === 0 && (
-        <div className="text-xs text-slate-500 py-2">
+        <div className="text-xs opacity-70 py-2">
           No versions yet. Upload & analyze to create one.
         </div>
       )}
@@ -118,18 +118,18 @@ export default function VersionSidebar() {
         {versions.map((v) => (
           <li
             key={v.id}
-            className="flex items-center gap-2 rounded border border-slate-200 bg-white p-2 text-xs"
+            className="flex items-center gap-2 rounded-lg border border-border bg-surface p-2 text-xs hover:bg-surface/80 transition-colors"
           >
             <div className="flex-1 min-w-0">
               <button
                 type="button"
                 onClick={() => handleOpen(v.id)}
-                className="text-left font-medium text-slate-800 hover:text-blue-600 truncate block w-full"
+                className="text-left font-medium hover:text-primary truncate block w-full transition-colors"
                 title={v.title}
               >
                 #{v.version_number} {v.title || "Untitled"}
               </button>
-              <div className="text-[10px] text-slate-500 mt-0.5">
+              <div className="text-[10px] opacity-70 mt-0.5">
                 {formatDate(v.created_at)}
               </div>
             </div>
@@ -137,7 +137,7 @@ export default function VersionSidebar() {
               type="button"
               onClick={() => handleDelete(v.id)}
               disabled={deletingId === v.id}
-              className="shrink-0 text-slate-400 hover:text-red-600 disabled:opacity-50"
+              className="shrink-0 opacity-60 hover:opacity-100 hover:text-red-600 disabled:opacity-50 transition-all"
               title="Delete version"
             >
               {deletingId === v.id ? (

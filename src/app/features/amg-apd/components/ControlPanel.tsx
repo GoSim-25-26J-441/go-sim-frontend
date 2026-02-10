@@ -40,11 +40,11 @@ export default function ControlPanel({
   const { services, databases, edges, detections } = stats;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded border bg-white px-3 py-2 text-xs shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold text-slate-700">Layout:</span>
         <select
-          className="rounded border px-2 py-1 text-xs text-slate-700"
+          className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-surface transition-colors"
           value={layoutName}
           onChange={(e) => onLayoutChange(e.target.value as LayoutName)}
         >
@@ -56,25 +56,25 @@ export default function ControlPanel({
         <button
           type="button"
           onClick={onFit}
-          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+          className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-surface transition-colors"
         >
-          Fit to screen
+          Fit to Screen
         </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Services: <strong>{services}</strong>
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
+            Services: <strong className="font-semibold">{services}</strong>
           </span>
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Databases: <strong>{databases}</strong>
+          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
+            Databases: <strong className="font-semibold">{databases}</strong>
           </span>
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Edges: <strong>{edges}</strong>
+          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
+            Edges: <strong className="font-semibold">{edges}</strong>
           </span>
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Anti-patterns: <strong>{detections}</strong>
+          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
+            Anti-patterns: <strong className="font-semibold">{detections}</strong>
           </span>
         </div>
 
@@ -82,10 +82,10 @@ export default function ControlPanel({
           <button
             type="button"
             onClick={onToggleEdit}
-            className={`rounded px-3 py-1 text-[11px] ${
+            className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
               editMode
                 ? "bg-amber-500 text-white hover:bg-amber-600"
-                : "bg-slate-900 text-white hover:bg-slate-800"
+                : "bg-primary text-primary-foreground hover:bg-primary/90"
             }`}
           >
             {editMode ? "Exit Edit Mode" : "Edit Graph"}
@@ -95,7 +95,7 @@ export default function ControlPanel({
             onClick={onSaveChanges}
             disabled={!editMode || isGenerating}
             style={{ visibility: editMode ? "visible" : "hidden" }}
-            className="rounded bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 transition-colors"
           >
             {isGenerating ? "Generating…" : "Generate Graph"}
           </button>

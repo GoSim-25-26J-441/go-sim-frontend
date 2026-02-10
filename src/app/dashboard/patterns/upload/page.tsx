@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
@@ -119,19 +120,19 @@ export default function UploadPage() {
 
   if (loading) {
     return (
-      <div className="p-6 min-h-[calc(100vh-3rem)] flex items-center justify-center">
-        <div className="w-full max-w-2xl rounded-lg border bg-white p-6 shadow-sm space-y-4">
+      <div className="min-h-[calc(100vh-3rem)] flex items-center justify-center">
+        <div className="w-full max-w-2xl rounded-xl border border-border bg-card p-8 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-lg font-semibold text-slate-600">
+              <h1 className="text-lg font-semibold mb-2">
                 Analyzing architecture…
               </h1>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="text-sm opacity-70">
                 Parsing YAML, building the graph, and running detectors.
               </p>
             </div>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-xs text-slate-500">
-              <div className="h-4 w-4 animate-spin rounded-full border border-slate-400 border-t-transparent" />
+            <div className="flex h-8 w-8 items-center justify-center">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             </div>
           </div>
         </div>
@@ -140,39 +141,53 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-xl font-semibold">Upload YAML to begin Analysis</h1>
-
-      <form onSubmit={onSubmit} className="space-y-4">
-        <div className="space-y-1">
-          <label className="block text-sm font-medium">
-            Architecture spec (YAML)
-          </label>
-          <input
-            type="file"
-            accept=".yaml,.yml,text/yaml"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block"
-          />
+    <div className="space-y-6">
+      <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold mb-2">Upload YAML to Begin Analysis</h1>
+            <p className="text-sm opacity-70">Upload your architecture specification to visualize and detect anti-patterns</p>
+          </div>
+          <Link
+            href="/dashboard/patterns"
+            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 transition-colors"
+          >
+            View Existing Versions
+          </Link>
         </div>
 
-        <div className="space-y-1">
-          <label className="block text-sm font-medium">Title</label>
-          <input
-            className="block w-full rounded border p-2"
-            value={title}
-            placeholder="Enter a Title"
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </div>
+        <form onSubmit={onSubmit} className="space-y-5">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">
+              Architecture spec (YAML)
+            </label>
+            <input
+              type="file"
+              accept=".yaml,.yml,text/yaml"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="block w-full rounded-lg border border-border bg-card px-3 py-2 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
+            />
+          </div>
 
-        <button
-          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-          disabled={!file || loading}
-        >
-          {loading ? "Analyzing…" : "Analyze & Visualize"}
-        </button>
-      </form>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">Title</label>
+            <input
+              className="block w-full rounded-lg border border-border bg-card px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              value={title}
+              placeholder="Enter a title for this analysis"
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            disabled={!file || loading}
+          >
+            {loading ? "Analyzing…" : "Analyze & Visualize"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

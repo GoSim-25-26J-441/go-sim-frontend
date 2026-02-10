@@ -97,6 +97,8 @@ export const cyStyles: StylesheetLike = [
       },
 
       "z-index": 10,
+      "events": "yes",
+      "text-events": "yes",
     },
   },
 
@@ -114,7 +116,25 @@ export const cyStyles: StylesheetLike = [
     style: {
       "curve-style": "bezier",
       "target-arrow-shape": "triangle",
-
+      "line-opacity": 1,
+      "target-arrow-opacity": 1,
+      "line-color": "#1f2937",
+      "target-arrow-color": "#1f2937",
+      width: 2.5,
+      opacity: 1,
+      "events": "yes",
+      "z-index": 8,
+      label: "data(label)",
+      "font-size": 10,
+      "text-background-color": "#ffffff",
+      "text-background-opacity": 1,
+      "text-background-padding": 2,
+      "min-zoomed-font-size": 7,
+    },
+  },
+  {
+    selector: "edge",
+    style: {
       "line-fill": (ele: any) => {
         const cols = getEdgeColors(ele);
         return cols.length > 1 ? "linear-gradient" : "solid";
@@ -135,7 +155,7 @@ export const cyStyles: StylesheetLike = [
       "line-color": (ele: any) => {
         const cols = getEdgeColors(ele);
         if (cols.length === 1) return cols[0];
-        if (cols.length > 1) return "#94a3b8";
+        if (cols.length > 1) return "#64748b";
         const kind = (ele.data("kind") as string) ?? "";
         return EDGE_KIND_COLOR[kind] ?? "#1f2937";
       },
@@ -149,21 +169,14 @@ export const cyStyles: StylesheetLike = [
 
       width: (ele: any) => {
         const severity = ele.data("severity") as Severity | null;
-        if (!severity) return 2;
+        if (!severity) return 2.5;
         return severity === "HIGH" ? 5 : severity === "MEDIUM" ? 4 : 3;
       },
-
-      label: "data(label)",
-      "font-size": 10,
-      "text-background-color": "#ffffff",
-      "text-background-opacity": 1,
-      "text-background-padding": 2,
-      "min-zoomed-font-size": 7,
-      "z-index": 1,
     },
   },
 
   { selector: "edge.reads", style: { "line-style": "dashed" } },
   { selector: ".has-detection-edge", style: { "line-style": "solid" } },
   { selector: "edge:hover", style: { cursor: "pointer", width: 4 } },
+  { selector: "edge:selected", style: { "z-index": 9998, width: 4 } },
 ];

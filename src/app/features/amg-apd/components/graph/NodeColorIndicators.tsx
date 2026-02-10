@@ -9,7 +9,14 @@ type Indicator = {
   x: number;
   y: number;
   colors: string[];
+  dotSize: number;
+  gap: number;
+  borderW: number;
 };
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
 
 export default function NodeColorIndicators({
   cy,
@@ -25,32 +32,55 @@ export default function NodeColorIndicators({
     if (!cy || !containerEl) return;
 
     const update = () => {
+      if (rafRef.current) return;
+
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = null;
+
         const list: Indicator[] = [];
 
         cy.nodes()
           .filter((n) => {
             const kinds = (n.data("detectionKinds") as string[]) ?? [];
-            return kinds.length > 0;
+            return kinds.length > 0 && !n.hasClass("halo");
           })
           .forEach((node) => {
             try {
-              const rbb = node.renderedBoundingBox();
-              const centerX = (rbb.x1 + rbb.x2) / 2;
-              const bottomY = rbb.y2 + 4;
               const kinds = (node.data("detectionKinds") as string[]) ?? [];
               const colors = kinds
                 .map((k) => colorForDetectionKind(k))
                 .filter(Boolean);
+
+              if (colors.length === 0) return;
+
+              // renderedBoundingBox already reflects zoom
+              const rbb = node.renderedBoundingBox();
+              const centerX = (rbb.x1 + rbb.x2) / 2;
+
+              // Dynamic sizing based on node rendered size (scales with zoom)
+              const nodeW = Math.max(1, rbb.w || node.renderedWidth?.() || 1);
+              const nodeH = Math.max(1, rbb.h || node.renderedHeight?.() || 1);
+              const nodeSize = Math.min(nodeW, nodeH);
+
+              // Tune these numbers if you want bigger/smaller orbs
+              const dotSize = clamp(nodeSize * 0.12, 6, 18); // 12% of node size
+              const gap = clamp(dotSize * 0.25, 2, 6);
+              const borderW = clamp(dotSize * 0.18, 1, 3);
+
+              // Keep the orbs just under the node, with spacing relative to dot size
+              const bottomY = rbb.y2 + Math.max(3, dotSize * 0.35);
+
               list.push({
                 id: node.id(),
                 x: centerX,
                 y: bottomY,
                 colors,
+                dotSize,
+                gap,
+                borderW,
               });
             } catch {
-              // Skip if node not rendered
+              // skip if node not rendered
             }
           });
 
@@ -59,14 +89,19 @@ export default function NodeColorIndicators({
     };
 
     const onRender = () => update();
+
     cy.on("render", onRender);
     cy.on("pan zoom", onRender);
+    cy.on("position", "node", onRender);
+
     update();
 
     return () => {
       cy.off("render", onRender);
       cy.off("pan zoom", onRender);
+      cy.off("position", "node", onRender);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     };
   }, [cy, containerEl]);
 
@@ -80,21 +115,23 @@ export default function NodeColorIndicators({
       {indicators.map((ind) => (
         <div
           key={ind.id}
-          className="absolute flex items-center justify-center gap-1"
+          className="absolute flex items-center justify-center"
           style={{
             left: ind.x,
             top: ind.y,
             transform: "translate(-50%, 0)",
+            gap: ind.gap,
           }}
         >
           {ind.colors.slice(0, 8).map((c, i) => (
             <div
               key={`${ind.id}-${i}`}
-              className="rounded-full border-2 border-white shadow-sm"
+              className="rounded-full shadow-sm"
               style={{
-                width: 14,
-                height: 14,
+                width: ind.dotSize,
+                height: ind.dotSize,
                 backgroundColor: c,
+                border: `${ind.borderW}px solid white`,
               }}
             />
           ))}

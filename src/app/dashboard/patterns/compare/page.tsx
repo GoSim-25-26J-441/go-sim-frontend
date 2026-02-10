@@ -90,18 +90,18 @@ export default function ComparePage() {
       <div className="flex items-center gap-4">
         <Link
           href="/dashboard/patterns"
-          className="text-sm text-blue-600 hover:underline"
+          className="text-sm font-medium text-slate-700 hover:text-slate-900 hover:underline"
         >
           ← Back to graph
         </Link>
-        <h1 className="text-xl font-semibold">Compare versions</h1>
+        <h1 className="text-xl font-semibold text-slate-900">Compare versions</h1>
       </div>
 
-      <div className="flex flex-wrap items-end gap-4 rounded-lg border bg-slate-50 p-4">
+      <div className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-slate-100 p-4">
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-600">Left version</label>
+          <label className="text-xs font-medium text-slate-700">Left version</label>
           <select
-            className="rounded border border-slate-300 px-3 py-2 text-sm min-w-[200px]"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-slate-400"
             value={leftId}
             onChange={(e) => setLeftId(e.target.value)}
             disabled={loadingVersions}
@@ -115,9 +115,9 @@ export default function ComparePage() {
           </select>
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-600">Right version</label>
+          <label className="text-xs font-medium text-slate-700">Right version</label>
           <select
-            className="rounded border border-slate-300 px-3 py-2 text-sm min-w-[200px]"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-slate-400"
             value={rightId}
             onChange={(e) => setRightId(e.target.value)}
             disabled={loadingVersions}
@@ -134,33 +134,33 @@ export default function ComparePage() {
           type="button"
           onClick={runCompare}
           disabled={loadingVersions || loadingCompare || !leftId || !rightId || leftId === rightId}
-          className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loadingCompare ? "Loading…" : "Compare"}
         </button>
       </div>
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
           {error}
         </div>
       )}
 
       {compareResult && leftData && rightData && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rounded-lg border bg-white overflow-hidden">
-            <div className="border-b bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+          <div className="rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">
               #{compareResult.left.version_number} {compareResult.left.title || "Left"}
             </div>
-            <div className="h-[50vh]">
+            <div className="h-[50vh] bg-slate-100">
               <GraphCanvas data={leftData} />
             </div>
           </div>
-          <div className="rounded-lg border bg-white overflow-hidden">
-            <div className="border-b bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+          <div className="rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">
               #{compareResult.right.version_number} {compareResult.right.title || "Right"}
             </div>
-            <div className="h-[50vh]">
+            <div className="h-[50vh] bg-slate-100">
               <GraphCanvas data={rightData} />
             </div>
           </div>
@@ -168,7 +168,7 @@ export default function ComparePage() {
       )}
 
       {!compareResult && !loadingCompare && !error && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-600">
           Select two versions and click Compare to view them side by side (e.g. initial graph vs after suggestions).
         </p>
       )}
