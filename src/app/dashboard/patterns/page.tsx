@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
 import SuggestionModal from "@/app/features/amg-apd/components/SuggestionModal";
@@ -23,8 +23,7 @@ export default function PatternsPage() {
   const editedYaml = useAmgApdStore((s) => s.editedYaml);
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
-
-  const hasDetections = (last?.detections?.length ?? 0) > 0;
+  const regenerating = useAmgApdStore((s) => s.regenerating);
 
   const [open, setOpen] = useState(false);
   const [loadingSug, setLoadingSug] = useState(false);
@@ -34,10 +33,75 @@ export default function PatternsPage() {
   const [graphRegenerating, setGraphRegenerating] = useState(false);
   const [graphVersion, setGraphVersion] = useState(0);
 
+  const restoreStartedRef = useRef(false);
+  const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+
+  const hasDetections = (last?.detections?.length ?? 0) > 0;
+  const showGraphOverlay = graphRegenerating || regenerating;
+
+  // When there's no graph (e.g. first visit or "View Existing Versions"), try to load latest version for this user/chat
+  useEffect(() => {
+    if (last?.graph || restoreStartedRef.current) return;
+    restoreStartedRef.current = true;
+    setRegenerating(true);
+
+    (async () => {
+      try {
+        const listRes = await fetch("/api/amg-apd/versions", {
+          headers: getAmgApdHeaders(),
+        });
+        if (!listRes.ok) return;
+        const listData = await listRes.json();
+        const versions = listData?.versions ?? [];
+        if (versions.length === 0) return;
+
+        const sorted = [...versions].sort(
+          (
+            a: { created_at?: string; version_number?: number },
+            b: { created_at?: string; version_number?: number },
+          ) => {
+            const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+            if (bTime !== aTime) return bTime - aTime;
+            return (b.version_number ?? 0) - (a.version_number ?? 0);
+          },
+        );
+        const latest = sorted[0];
+        const versionRes = await fetch(`/api/amg-apd/versions/${latest.id}`, {
+          headers: getAmgApdHeaders(),
+        });
+        if (!versionRes.ok) return;
+        const v = await versionRes.json();
+        const yamlContent = v?.yaml_content;
+        if (!yamlContent) return;
+
+        const blob = new Blob([yamlContent], { type: "text/yaml" });
+        const fd = new FormData();
+        fd.append("file", blob, "architecture.yaml");
+        fd.append("title", v.title || `Version ${v.version_number ?? ""}`);
+
+        const analyzeRes = await fetch("/api/amg-apd/analyze-upload", {
+          method: "POST",
+          headers: getAmgApdHeaders(),
+          body: fd,
+        });
+        if (!analyzeRes.ok) return;
+        const data: AnalysisResult = await analyzeRes.json();
+        if (!data?.graph) return;
+
+        setLast(data);
+        setEditedYaml(yamlContent);
+      } catch {
+        // Leave graph empty; user will see "No graph to display"
+      } finally {
+        setRegenerating(false);
+      }
+    })();
+  }, [last?.graph, setLast, setEditedYaml, setRegenerating]);
   function handleDownloadYaml() {
     if (!editedYaml) {
       alert(
-        "No current YAML found. Upload a YAML or generate one from Edit mode."
+        "No current YAML found. Upload a YAML or generate one from Edit mode.",
       );
       return;
     }
@@ -121,7 +185,7 @@ export default function PatternsPage() {
 
       if (!fixedYaml || !fixedAnalysis?.graph) {
         throw new Error(
-          "Backend did not return fixed_yaml / fixed_analysis.graph"
+          "Backend did not return fixed_yaml / fixed_analysis.graph",
         );
       }
 
@@ -144,11 +208,32 @@ export default function PatternsPage() {
   }
 
   if (!last?.graph) {
+    if (regenerating) {
+      return (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border bg-card p-8 text-center">
+            <div className="flex flex-col items-center gap-4">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <div>
+                <h2 className="text-lg font-semibold mb-1">
+                  Loading your latest version
+                </h2>
+                <p className="text-sm opacity-70">
+                  Fetching YAML, building graph, and detecting anti-patterns…
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="space-y-4">
         <div className="rounded-xl border border-border bg-card p-6 text-center">
           <h2 className="text-lg font-semibold mb-2">No graph to display</h2>
-          <p className="text-sm opacity-70 mb-4">Upload a YAML and run analysis to visualize your architecture.</p>
+          <p className="text-sm opacity-70 mb-4">
+            Upload a YAML and run analysis to visualize your architecture.
+          </p>
           <Link
             href="/dashboard/patterns/upload"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
@@ -176,8 +261,10 @@ export default function PatternsPage() {
       <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
           <div>
-            <h1 className="text-xl font-semibold mb-1">Architecture Graph Visualization</h1>
-            <p className="text-sm opacity-70">Analyze and visualize your architecture with anti-pattern detection</p>
+            <h1 className="text-xl font-semibold mb-1">
+              Analyze and visualize your architecture with anti-pattern
+              detection
+            </h1>
           </div>
         </div>
 
@@ -193,8 +280,8 @@ export default function PatternsPage() {
                 !editedYaml
                   ? "No current YAML available"
                   : hasDetections
-                  ? "View suggestions to fix detected anti-patterns"
-                  : "No anti-patterns detected"
+                    ? "View suggestions to fix detected anti-patterns"
+                    : "No anti-patterns detected"
               }
             >
               View Suggestions
@@ -214,13 +301,15 @@ export default function PatternsPage() {
       </div>
 
       <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-        {graphRegenerating ? (
+        {showGraphOverlay ? (
           <div className="relative h-[60vh] flex items-center justify-center bg-surface/50">
             <div className="flex flex-col items-center gap-3">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               <span className="text-sm font-medium">Regenerating graph…</span>
               <span className="text-xs opacity-70">
-                Applying fixes and updating visualization
+                {regenerating
+                  ? "Loading YAML, building graph, and detecting anti-patterns"
+                  : "Applying fixes and updating visualization"}
               </span>
             </div>
           </div>

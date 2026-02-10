@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
-import type { AmgApdVersionSummary } from "@/app/features/amg-apd/types";
+import type { AmgApdVersionSummary, AnalysisResult } from "@/app/features/amg-apd/types";
 
 export default function VersionSidebar() {
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
+  const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
 
   async function fetchVersions() {
     setLoading(true);
@@ -37,25 +40,51 @@ export default function VersionSidebar() {
     fetchVersions();
   }, []);
 
-  async function handleOpen(id: string) {
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  async function handleMoveToVersion(id: string) {
+    setOpen(false);
+    setRegenerating(true);
     try {
-      const res = await fetch(`/api/amg-apd/versions/${id}`, {
+      const versionRes = await fetch(`/api/amg-apd/versions/${id}`, {
         headers: getAmgApdHeaders(),
       });
-      if (!res.ok) throw new Error(await res.text());
-      const v = await res.json();
-      if (!v?.graph) throw new Error("Version has no graph");
-      setLast({
-        graph: v.graph,
-        detections: v.detections ?? [],
-        dot_content: v.dot_content,
-        version_id: v.id,
-        version_number: v.version_number,
-        created_at: v.created_at,
+      if (!versionRes.ok) throw new Error(await versionRes.text());
+      const v = await versionRes.json();
+      const yamlContent = v?.yaml_content;
+      if (!yamlContent) throw new Error("Version has no YAML content");
+
+      const blob = new Blob([yamlContent], { type: "text/yaml" });
+      const fd = new FormData();
+      fd.append("file", blob, "architecture.yaml");
+      fd.append("title", v.title || `Version ${v.version_number ?? ""}`);
+
+      const analyzeRes = await fetch("/api/amg-apd/analyze-upload", {
+        method: "POST",
+        headers: getAmgApdHeaders(),
+        body: fd,
       });
-      if (v.yaml_content) setEditedYaml(v.yaml_content);
+      if (!analyzeRes.ok) throw new Error(await analyzeRes.text());
+
+      const data: AnalysisResult = await analyzeRes.json();
+      if (!data?.graph) throw new Error("Backend did not return a graph.");
+
+      setLast(data);
+      setEditedYaml(yamlContent);
     } catch (e: any) {
       alert("Failed to load version: " + (e?.message ?? "Unknown error"));
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -89,66 +118,88 @@ export default function VersionSidebar() {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-3 min-w-[220px] shadow-sm">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <h2 className="text-xs font-semibold uppercase opacity-70">
-          Versions
-        </h2>
-        <Link
-          href="/dashboard/patterns/compare"
-          className="text-xs text-primary hover:underline font-medium"
-        >
-          Compare
-        </Link>
-      </div>
+    <div className="relative" ref={panelRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-surface transition-colors flex items-center gap-2"
+        title="View and switch versions"
+      >
+        <span>Versions</span>
+        {versions.length > 0 && (
+          <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700 min-w-[1.25rem] text-center">
+            {versions.length}
+          </span>
+        )}
+        <span className={`text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}>▼</span>
+      </button>
 
-      {loading && (
-        <div className="text-xs opacity-70 py-2">Loading…</div>
-      )}
-      {error && (
-        <div className="text-xs text-red-600 py-2">{error}</div>
-      )}
-      {!loading && !error && versions.length === 0 && (
-        <div className="text-xs opacity-70 py-2">
-          No versions yet. Upload & analyze to create one.
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="text-xs font-semibold uppercase text-slate-600">Versions</span>
+            <Link
+              href="/dashboard/patterns/compare"
+              className="text-xs text-blue-600 hover:underline font-medium"
+              onClick={() => setOpen(false)}
+            >
+              Compare
+            </Link>
+          </div>
+
+          <div className="max-h-[50vh] overflow-y-auto p-2">
+            {loading && (
+              <div className="text-xs text-slate-500 py-3 text-center">Loading…</div>
+            )}
+            {error && (
+              <div className="text-xs text-red-600 py-2 px-2">{error}</div>
+            )}
+            {!loading && !error && versions.length === 0 && (
+              <div className="text-xs text-slate-500 py-3 text-center">
+                No versions yet. Upload & analyze to create one.
+              </div>
+            )}
+
+            <ul className="space-y-1">
+              {versions.map((v) => (
+                <li
+                  key={v.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50/80 p-2 text-xs"
+                >
+                  <div className="font-medium text-slate-800 truncate" title={v.title}>
+                    #{v.version_number} {v.title || "Untitled"}
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">
+                    {formatDate(v.created_at)}
+                  </div>
+                  <div className="flex items-center gap-1 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleMoveToVersion(v.id)}
+                      className="rounded bg-slate-700 px-2 py-1 text-[10px] font-medium text-white hover:bg-slate-800"
+                    >
+                      Move to this version
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(v.id)}
+                      disabled={deletingId === v.id}
+                      className="rounded border border-slate-300 px-2 py-1 text-[10px] text-slate-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200 disabled:opacity-50"
+                      title="Delete version"
+                    >
+                      {deletingId === v.id ? (
+                        <span className="inline-block w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        "Delete"
+                      )}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
-
-      <ul className="space-y-1.5 max-h-[40vh] overflow-y-auto">
-        {versions.map((v) => (
-          <li
-            key={v.id}
-            className="flex items-center gap-2 rounded-lg border border-border bg-surface p-2 text-xs hover:bg-surface/80 transition-colors"
-          >
-            <div className="flex-1 min-w-0">
-              <button
-                type="button"
-                onClick={() => handleOpen(v.id)}
-                className="text-left font-medium hover:text-primary truncate block w-full transition-colors"
-                title={v.title}
-              >
-                #{v.version_number} {v.title || "Untitled"}
-              </button>
-              <div className="text-[10px] opacity-70 mt-0.5">
-                {formatDate(v.created_at)}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => handleDelete(v.id)}
-              disabled={deletingId === v.id}
-              className="shrink-0 opacity-60 hover:opacity-100 hover:text-red-600 disabled:opacity-50 transition-all"
-              title="Delete version"
-            >
-              {deletingId === v.id ? (
-                <span className="inline-block w-4 h-4 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
-              ) : (
-                "×"
-              )}
-            </button>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

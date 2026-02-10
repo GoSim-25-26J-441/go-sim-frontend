@@ -290,13 +290,9 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
           try {
             // After refresh layout, ensure edges are visible
             cy!.edges().forEach((edge) => {
-              const kind = edge.data("kind") || "";
-              const defaultColor = EDGE_KIND_COLOR[kind] || "#1f2937";
               edge.style("opacity", 1);
               edge.style("line-opacity", 1);
               edge.style("target-arrow-opacity", 1);
-              edge.style("line-color", defaultColor);
-              edge.style("target-arrow-color", defaultColor);
             });
             cy!.style().update();
             cy!.resize();
@@ -318,18 +314,11 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
 
       // CRITICAL: Ensure edges are visible and interactive (fixes arrows not visible on initial load)
       cy!.edges().forEach((edge) => {
-        const kind = edge.data("kind") || "";
-        const defaultColor = EDGE_KIND_COLOR[kind] || "#1f2937";
-
         // Force visibility properties
         edge.style("opacity", 1);
         edge.style("line-opacity", 1);
         edge.style("target-arrow-opacity", 1);
         edge.style("events", "yes");
-
-        // Force explicit colors - mapper functions might not evaluate on first render
-        edge.style("line-color", defaultColor);
-        edge.style("target-arrow-color", defaultColor);
         edge.style("width", edge.style("width") || 2.5);
       });
 
@@ -451,13 +440,9 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
         try {
           // Force edge visibility after layout change (same as initial load)
           cy!.edges().forEach((edge) => {
-            const kind = edge.data("kind") || "";
-            const defaultColor = EDGE_KIND_COLOR[kind] || "#1f2937";
             edge.style("opacity", 1);
             edge.style("line-opacity", 1);
             edge.style("target-arrow-opacity", 1);
-            edge.style("line-color", defaultColor);
-            edge.style("target-arrow-color", defaultColor);
           });
           cy!.style().update();
           cy!.resize();
@@ -579,14 +564,10 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
               try {
                 c.style().update();
                 c.edges().forEach((edge) => {
-                  const kind = edge.data("kind") || "";
                   edge.style("opacity", 1);
                   edge.style("line-opacity", 1);
                   edge.style("target-arrow-opacity", 1);
                   edge.style("events", "yes");
-                  const defaultColor = EDGE_KIND_COLOR[kind] || "#1f2937";
-                  edge.style("line-color", defaultColor);
-                  edge.style("target-arrow-color", defaultColor);
                   edge.style("width", edge.style("width") || 2.5);
                 });
                 c.style().update();
@@ -608,7 +589,7 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
                       // ✅ FIX: trigger React effect (instead of ref)
                       setInitialLayoutComplete(true);
 
-                      // keep your existing logic exactly
+                      // keep your existing logic exactly, but let stylesheet control colors
                       c.elements().forEach((ele) => {
                         ele.style("opacity", 1);
                         if (ele.isNode()) {
@@ -620,11 +601,6 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
                           ele.style("line-opacity", 1);
                           ele.style("target-arrow-opacity", 1);
                           ele.style("events", "yes");
-                          const kind = ele.data("kind") || "";
-                          const defaultColor =
-                            EDGE_KIND_COLOR[kind] || "#1f2937";
-                          ele.style("line-color", defaultColor);
-                          ele.style("target-arrow-color", defaultColor);
                           ele.style("width", ele.style("width") || 2.5);
                         }
                       });
@@ -644,14 +620,9 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
                             if (!cyAlive(c)) return;
                             try {
                               c.edges().forEach((edge) => {
-                                const kind = edge.data("kind") || "";
-                                const defaultColor =
-                                  EDGE_KIND_COLOR[kind] || "#1f2937";
                                 edge.style("opacity", 1);
                                 edge.style("line-opacity", 1);
                                 edge.style("target-arrow-opacity", 1);
-                                edge.style("line-color", defaultColor);
-                                edge.style("target-arrow-color", defaultColor);
                                 edge.style("width", edge.style("width") || 2.5);
                               });
                               c.style().update();

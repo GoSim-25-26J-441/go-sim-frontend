@@ -29,26 +29,32 @@ function borderColorForNode(ele: any) {
   return colorForDetectionKind(pick);
 }
 
-/** Edge colors: for CALLS, use source + target node problem colors (alternating); else edge detection kinds */
+/** Edge colors: for CALLS with any anti-pattern (on edge or on source/target nodes), show that color; else black. */
 function getEdgeColors(ele: any): string[] {
   const kind = (ele.data("kind") as string) ?? "";
   const sourceKinds = (ele.data("sourceNodeKinds") as string[]) ?? [];
   const targetKinds = (ele.data("targetNodeKinds") as string[]) ?? [];
   const edgeKinds = (ele.data("detectionKinds") as string[]) ?? [];
 
-  // For CALLS: use source and target node colors (alternating start→end)
-  if (kind === "CALLS" && (sourceKinds.length || targetKinds.length)) {
+  // For CALLS: combine colors from source node, target node, and edge's own detection kinds
+  // so that even a single anti-pattern between two services (edge-only or node-only) shows the color
+  if (kind === "CALLS") {
     const sourceCols = sourceKinds
       .map((k) => colorForDetectionKind(k))
       .filter(Boolean);
     const targetCols = targetKinds
       .map((k) => colorForDetectionKind(k))
       .filter(Boolean);
-    const combined = [...sourceCols, ...targetCols];
-    return [...new Set(combined)];
+    const edgeCols = edgeKinds
+      .map((k) => colorForDetectionKind(k))
+      .filter(Boolean);
+    const combined = [...sourceCols, ...targetCols, ...edgeCols];
+    const unique = [...new Set(combined)];
+    if (unique.length) return unique;
+    return [];
   }
 
-  // Fall back to edge's own detection kinds
+  // Non-CALLS: use edge's own detection kinds
   if (edgeKinds.length) {
     return edgeKinds.map((k) => colorForDetectionKind(k)).filter(Boolean);
   }
