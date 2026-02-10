@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendAmgApdHeaders } from "../headers";
 
 const BASE = process.env.NEXT_PUBLIC_BACKEND_BASE ?? "http://localhost:8080";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const backendHeaders = getBackendAmgApdHeaders(req);
 
     const res = await fetch(`${BASE}/api/v1/amg-apd/apply-suggestions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...backendHeaders,
+      },
       body: JSON.stringify(body),
     });
 

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 
 function decodeSafe(v: string) {
@@ -53,10 +54,10 @@ export default function UploadPage() {
         const fd = new FormData();
         fd.append("file", blob, "edited-architecture.yaml");
         fd.append("title", regenTitle || "Edited architecture");
-        fd.append("out_dir", "/app/out");
 
         const res = await fetch("/api/amg-apd/analyze-upload", {
           method: "POST",
+          headers: getAmgApdHeaders(),
           body: fd,
         });
 
@@ -92,10 +93,10 @@ export default function UploadPage() {
       const fd = new FormData();
       fd.append("file", blob, file.name || "architecture.yaml");
       fd.append("title", title || "Uploaded");
-      fd.append("out_dir", "/app/out");
 
       const res = await fetch("/api/amg-apd/analyze-upload", {
         method: "POST",
+        headers: getAmgApdHeaders(),
         body: fd,
       });
 

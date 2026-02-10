@@ -5,7 +5,9 @@ import { useState } from "react";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
 import SuggestionModal from "@/app/features/amg-apd/components/SuggestionModal";
+import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 
 type Suggestion = {
@@ -66,11 +68,13 @@ export default function PatternsPage() {
     try {
       const res = await fetch("/api/amg-apd/suggestions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAmgApdHeaders(),
+        },
         body: JSON.stringify({
           yaml: editedYaml,
           title: "Architecture",
-          out_dir: "/app/out",
         }),
       });
 
@@ -97,12 +101,14 @@ export default function PatternsPage() {
     try {
       const res = await fetch("/api/amg-apd/apply-suggestions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAmgApdHeaders(),
+        },
         body: JSON.stringify({
           job_id: "ui",
           yaml: editedYaml,
           title: "Architecture",
-          out_dir: "/app/out",
         }),
       });
 
@@ -172,6 +178,7 @@ export default function PatternsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <VersionSidebar />
           <button
             type="button"
             onClick={openSuggestions}

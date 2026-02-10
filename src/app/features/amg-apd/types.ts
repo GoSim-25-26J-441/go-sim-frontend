@@ -52,9 +52,34 @@ export interface Detection {
 
 export interface AnalysisResult {
   graph: Graph;
-  dot_path: string;
-  svg_path: string;
+  /** @deprecated use dot_content; backend no longer writes files */
+  dot_path?: string;
+  /** @deprecated use dot_content; backend no longer writes files */
+  svg_path?: string;
+  /** Dot source for graph (from backend versioning); use this instead of dot_path */
+  dot_content?: string;
   detections: Detection[];
+  /** Version from Postgres (after analyze) */
+  version_id?: string;
+  version_number?: number;
+  created_at?: string;
+}
+
+/** One version in the list from GET /versions */
+export interface AmgApdVersionSummary {
+  id: string;
+  version_number: number;
+  title: string;
+  created_at: string;
+}
+
+/** Full version from GET /versions/:id (or compare left/right) */
+export interface AmgApdVersionFull extends AnalysisResult {
+  id: string;
+  version_number: number;
+  title: string;
+  yaml_content?: string;
+  created_at: string;
 }
 
 export type EditTool =

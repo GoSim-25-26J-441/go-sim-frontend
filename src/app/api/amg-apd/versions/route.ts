@@ -3,18 +3,14 @@ import { getBackendAmgApdHeaders } from "../headers";
 
 const BASE = process.env.NEXT_PUBLIC_BACKEND_BASE ?? "http://localhost:8080";
 
-export async function POST(req: NextRequest) {
+/** GET /api/amg-apd/versions - list versions for user/chat */
+export async function GET(req: NextRequest) {
   try {
-    const body = await req.json();
     const backendHeaders = getBackendAmgApdHeaders(req);
 
-    const res = await fetch(`${BASE}/api/v1/amg-apd/suggestions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...backendHeaders,
-      },
-      body: JSON.stringify(body),
+    const res = await fetch(`${BASE}/api/v1/amg-apd/versions`, {
+      method: "GET",
+      headers: backendHeaders,
     });
 
     const text = await res.text();
@@ -26,7 +22,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message ?? "suggestions proxy failed" },
+      { error: e?.message ?? "versions list failed" },
       { status: 500 }
     );
   }
