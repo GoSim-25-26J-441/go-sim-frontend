@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { fetchDesignsList } from '@/app/api/asm/routes';
+import { useSession } from "@/modules/session/context";
 import {
   BarChart3,
   Cpu,
@@ -51,17 +52,17 @@ export default function CostPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-
-  const userId = "user-100";
+  const { userId } = useSession();
 
   useEffect(() => {
-    fetchDesigns();
-  }, []);
+    if (!userId) return;
+    fetchDesigns(userId);
+  }, [userId]);
 
-  const fetchDesigns = async () => {
+  const fetchDesigns = async (uid: string) => {
     try {
       setLoading(true);
-      const data = await fetchDesignsList(userId);
+      const data = await fetchDesignsList(uid);
       const designList: Design[] = data.rows.map((row, index) => ({
         id: row.id,
         requestNumber: index + 1,

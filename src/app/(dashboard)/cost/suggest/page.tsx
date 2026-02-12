@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchSuggestions } from '@/app/api/asm/routes';
 import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
+import { useSession } from "@/modules/session/context";
 
 interface Candidate {
     id: string;
@@ -54,8 +55,7 @@ export default function SuggestPage() {
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const router = useRouter();
-
-    const userId = 'user-100';
+    const { userId } = useSession();
     const design: DesignRequirements = {
         preferred_vcpu: 8,
         preferred_memory_gb: 16,
@@ -135,6 +135,7 @@ export default function SuggestPage() {
     const hasFetchedRef = useRef(false);
 
     useEffect(() => {
+        if (!userId) return;
         if (hasFetchedRef.current) return;
         hasFetchedRef.current = true;
 
@@ -176,7 +177,7 @@ export default function SuggestPage() {
         };
 
         loadSuggestions();
-    }, []);
+    }, [userId]);
 
     const formatPercentage = (value: number) => {
         return `${value.toFixed(1)}%`;
@@ -225,7 +226,7 @@ export default function SuggestPage() {
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                         <div className="bg-card border border-border p-4 rounded-lg">
                             <p className="text-sm opacity-60">User ID</p>
-                            <p className="text-lg font-semibold">{userId}</p>
+                                        <p className="text-lg font-semibold break-all">{userId}</p>
                         </div>
                         <div className="bg-card border border-border p-4 rounded-lg">
                             <p className="text-sm opacity-60">Preferred vCPU</p>
