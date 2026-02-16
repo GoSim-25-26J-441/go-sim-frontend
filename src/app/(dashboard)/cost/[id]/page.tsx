@@ -345,13 +345,13 @@ export default function CostPage2() {
                         </button>
                         <h1 className="text-4xl font-bold">Cluster Cost Analysis</h1>
                     </div>
-                    <Link
+                    {/* <Link
                         href={`/cost/suggest/${requestId}`}
                         className="rounded-xl border border-border px-4 py-2 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
                     >
                         <BarChart3 className="w-5 h-5" />
                         View Metrices Analysis
-                    </Link>
+                    </Link> */}
                 </div>
 
                 {/* Summary */}

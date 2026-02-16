@@ -275,7 +275,7 @@ export default function CostPage() {
         <div className="mt-12 pt-6 border-t border-border">
           <div className="text-center">
             <p className="text-sm opacity-60">
-              Showing {designs.length} design{designs.length !== 1 ? 's' : ''} • Data refreshes automatically
+              Showing {designs.length} design{designs.length !== 1 ? 's' : ''}
             </p>
             <p className="text-xs opacity-50 mt-2">
               Select any design to analyze cloud provider costs, compare pricing options, and optimize your infrastructure
