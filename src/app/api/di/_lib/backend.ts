@@ -19,8 +19,23 @@ export async function getUserId() {
   return uidFromHdr || uidFromCookie || forcedUid || "demo-user";
 }
 
-export async function diFetch(path: string, init?: RequestInit) {
-  const KEY = process.env.DESIGN_INPUT_API_KEY;  
+export type DiFetchOptions = {
+  /** When set, forwarded as Authorization header to the design-input backend */
+  token?: string | null;
+};
+
+/** Extract Bearer token from incoming request for forwarding to backend */
+export function getTokenFromRequest(req: Request): string | null {
+  const auth = req.headers.get("authorization");
+  return (auth?.startsWith("Bearer ") ? auth.slice(7) : auth) ?? null;
+}
+
+export async function diFetch(
+  path: string,
+  init?: RequestInit,
+  options?: DiFetchOptions
+) {
+  const KEY = process.env.DESIGN_INPUT_API_KEY;
 
   if (!KEY) {
     return new Response(
@@ -30,15 +45,24 @@ export async function diFetch(path: string, init?: RequestInit) {
   }
 
   const url = `${getDesignInputBase()}${path.startsWith("/") ? path : `/${path}`}`;
+  const outHeaders: Record<string, string> = {};
+  if (init?.headers) {
+    const h =
+      init.headers instanceof Headers
+        ? Object.fromEntries(init.headers.entries())
+        : (init.headers as Record<string, string>);
+    Object.assign(outHeaders, h);
+  }
+  outHeaders["X-API-Key"] = KEY;
+  outHeaders["X-User-Id"] = await getUserId();
+  if (options?.token) {
+    outHeaders["Authorization"] = `Bearer ${options.token}`;
+  }
 
   try {
     return await fetch(url, {
       ...init,
-      headers: {
-        ...(init?.headers || {}),
-        "X-API-Key": KEY, 
-        "X-User-Id": await getUserId(),
-      },
+      headers: outHeaders,
       cache: init?.cache ?? "no-store",
     });
   } catch (e: any) {

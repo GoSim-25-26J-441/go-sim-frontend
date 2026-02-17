@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { diFetch, readJsonSafe } from "../../../_lib/backend";
+import { diFetch, getTokenFromRequest, readJsonSafe } from "../../../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
@@ -10,11 +10,12 @@ export async function POST(
   const { id } = await ctx.params;
   const body = await req.text();
 
-  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/chat`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-  });
+  const token = getTokenFromRequest(req);
+  const r = await diFetch(
+    `/jobs/${encodeURIComponent(id)}/chat`,
+    { method: "POST", headers: { "content-type": "application/json" }, body },
+    { token }
+  );
 
   const parsed = await readJsonSafe(r);
 

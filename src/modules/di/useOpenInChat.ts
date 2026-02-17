@@ -1,70 +1,94 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useSession } from "@/modules/session/context";
+import { getFirebaseIdToken } from "@/lib/firebase/auth";
+import { getProjectThreadId } from "./getProjectThread";
 
-type OpenOpts = {
-  seed?: string;
-  runIntermediate?: boolean;
-  runFuse?: boolean;
+type OpenChatFromDiagramOpts = {
+  onLoadingChange?: (loading: boolean, message?: string) => void;
 };
 
 export function useOpenInChat() {
   const router = useRouter();
-  const { userId } = useSession();
 
-  return async function openInChat(canvasDoc: unknown, opts?: OpenOpts) {
-    const hdr = { "x-user-id": userId };
-
-    const fd = new FormData();
-    fd.append(
-      "files",
-      new Blob([JSON.stringify(canvasDoc)], { type: "application/json" }),
-      "diagram.json"
-    );
-    if (opts?.seed) fd.append("chat", opts.seed);
-
-    const ing = await fetch("/api/di/ingest", {
-      method: "POST",
-      headers: hdr,
-      body: fd,
-    });
-
-    const ingText = await ing.text();
-    let a: any;
-    try { a = JSON.parse(ingText); } catch { a = null; }
-
-    if (!ing.ok || !a?.ok || !a?.jobId) {
-      throw new Error(a?.error || "ingest failed");
+  return async function openInChat(
+    projectId: string,
+    opts?: OpenChatFromDiagramOpts
+  ): Promise<string> {
+    const token = await getFirebaseIdToken();
+    if (!token) {
+      throw new Error("No authentication token available");
     }
 
-    const jobId: string = a.jobId;
+    opts?.onLoadingChange?.(true, "Checking for existing chat...");
 
-    if (opts?.runIntermediate) {
-      const r = await fetch(`/api/di/jobs/${jobId}/intermediate?refresh=true`, {
-        method: "GET",
-        headers: hdr,
-      });
-      if (!r.ok) throw new Error(`intermediate failed: ${r.status}`);
-    }
+    try {
+      // Step 1: Check if thread already exists for this project
+      const existingThreadId = await getProjectThreadId(projectId);
+      
+      if (existingThreadId) {
+        console.log("Found existing thread:", existingThreadId);
+        opts?.onLoadingChange?.(false);
+        // Navigate to existing thread (no need to send initial message)
+        router.push(`/project/${projectId}/chat?thread=${existingThreadId}`);
+        return existingThreadId;
+      }
 
-    if (opts?.runFuse) {
-      const r = await fetch(`/api/di/jobs/${jobId}/fuse`, {
+      // Step 2: Create new chat thread if none exists
+      opts?.onLoadingChange?.(true, "Creating chat thread...");
+      const createThreadRes = await fetch(`/api/projects/${projectId}/chats`, {
         method: "POST",
-        headers: hdr,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: "Main chat",
+          binding_mode: "FOLLOW_LATEST",
+        }),
       });
-      if (!r.ok) throw new Error(`fuse failed: ${r.status}`);
 
-      try {
-        await fetch(`/api/di/jobs/${jobId}/export?format=json&download=false`, {
-          method: "GET",
-          headers: hdr,
-        });
-      } catch {}
+      if (!createThreadRes.ok) {
+        const errorText = await createThreadRes.text();
+        let errorMsg = `Failed to create chat thread: ${createThreadRes.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMsg = errorJson?.error || errorMsg;
+        } catch {
+          if (errorText) errorMsg = errorText.slice(0, 200);
+        }
+        throw new Error(errorMsg);
+      }
+
+      const threadData = await createThreadRes.json();
+      console.log("Thread creation response:", threadData);
+      
+      // Try multiple possible response formats
+      const newThreadId = 
+        threadData?.thread_id || 
+        threadData?.id || 
+        threadData?.threadId ||
+        threadData?.thread?.id ||
+        threadData?.thread?.thread_id ||
+        threadData?.data?.id ||
+        threadData?.data?.thread_id;
+      
+      if (!newThreadId) {
+        console.error("Thread data received:", JSON.stringify(threadData, null, 2));
+        throw new Error(`No thread ID returned from server. Response: ${JSON.stringify(threadData)}`);
+      }
+      
+      console.log("Extracted thread ID:", newThreadId);
+
+      opts?.onLoadingChange?.(false);
+
+      // Navigate to chat — user will send their own first message
+      router.push(`/project/${projectId}/chat?thread=${newThreadId}&from=diagram`);
+      
+      return newThreadId;
+    } catch (error) {
+      opts?.onLoadingChange?.(false);
+      throw error;
     }
-
-    router.push(`/chat/${jobId}/talk`);
-    return jobId;
   };
 }

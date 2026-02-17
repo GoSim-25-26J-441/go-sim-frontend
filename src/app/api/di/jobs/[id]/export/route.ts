@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { diFetch } from "../../../_lib/backend";
+import { diFetch, getTokenFromRequest } from "../../../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +12,11 @@ export async function GET(
   const url = new URL(req.url);
   const format = url.searchParams.get("format") ?? "json";
 
+  const token = getTokenFromRequest(req);
   const r = await diFetch(
     `/jobs/${encodeURIComponent(id)}/export${url.search}`,
-    { method: "GET" }
+    { method: "GET" },
+    { token }
   );
 
   const body = await r.text();

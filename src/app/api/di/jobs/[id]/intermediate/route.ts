@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { diFetch, readJsonSafe } from "../../../_lib/backend";
+import { diFetch, getTokenFromRequest, readJsonSafe } from "../../../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +12,11 @@ export async function GET(
   const url = new URL(req.url);
   const refresh = url.searchParams.get("refresh") ?? "false";
 
+  const token = getTokenFromRequest(req);
   const r = await diFetch(
     `/jobs/${encodeURIComponent(id)}/intermediate?refresh=${encodeURIComponent(refresh)}`,
-    { method: "GET" }
+    { method: "GET" },
+    { token }
   );
 
   const parsed = await readJsonSafe(r);

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import { getFirebaseIdToken } from "@/lib/firebase/auth";
 
 export type RemoteChat = {
   jobId: string;
@@ -25,9 +26,11 @@ export const diApi = createApi({
   reducerPath: "diApi",
   baseQuery: fetchBaseQuery({
     baseUrl: "",
-    prepareHeaders: (headers) => {
+    prepareHeaders: async (headers) => {
       const uid = readUidCookie();
       if (uid) headers.set("x-user-id", uid);
+      const token = await getFirebaseIdToken();
+      if (token) headers.set("Authorization", `Bearer ${token}`);
       return headers;
     },
   }),

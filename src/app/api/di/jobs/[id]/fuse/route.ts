@@ -1,17 +1,20 @@
 import type { NextRequest } from "next/server";
-import { diFetch } from "../../../_lib/backend";
+import { diFetch, getTokenFromRequest } from "../../../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
 
-  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/fuse`, {
-    method: "POST",
-  });
+  const token = getTokenFromRequest(req);
+  const r = await diFetch(
+    `/jobs/${encodeURIComponent(id)}/fuse`,
+    { method: "POST" },
+    { token }
+  );
 
   const body = await r.text();
 

@@ -59,11 +59,11 @@ export default function DashboardLanding() {
 
       {jobId && (
         <div className="flex gap-2 pt-2">
-          <Link href={`/chat/${jobId}/summary`} className="text-sm underline opacity-80 hover:opacity-100">
+          <Link href={`/project/${jobId}/summary`} className="text-sm underline opacity-80 hover:opacity-100">
             Open Summary
           </Link>
           <span className="opacity-40">·</span>
-          <Link href={`/chat/${jobId}/talk`} className="text-sm underline opacity-80 hover:opacity-100">
+          <Link href={`/project/${jobId}/chat`} className="text-sm underline opacity-80 hover:opacity-100">
             Open Chat
           </Link>
         </div>

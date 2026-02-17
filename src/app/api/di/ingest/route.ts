@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
-import { diFetch, readJsonSafe } from "../_lib/backend";
+import { diFetch, getTokenFromRequest, readJsonSafe } from "../_lib/backend";
 
 export async function POST(req: Request) {
   const inForm = await req.formData();
@@ -15,7 +15,8 @@ export async function POST(req: Request) {
   out.append("files", file, (file as any)?.name || "upload");
   if (typeof hint === "string" && hint.trim()) out.append("chat", hint.trim());
 
-  const r = await diFetch("/ingest", { method: "POST", body: out });
+  const token = getTokenFromRequest(req);
+  const r = await diFetch("/ingest", { method: "POST", body: out }, { token });
 
   const parsed = await readJsonSafe(r);
   if (!parsed.ok) {
