@@ -65,12 +65,14 @@ export const fetchRegions = async (provider: string) => {
   }
 };
 
-// Fetch suggestions
+// Fetch suggestions (project_id and run_id are required)
 export const fetchSuggestions = async (
   userId: string,
   design: any,
   simulation: SimulationRequirements,
   candidates: any[],
+  projectId: string,
+  runId: string,
 ) => {
   try {
     const response = await fetch(
@@ -82,6 +84,8 @@ export const fetchSuggestions = async (
         },
         body: JSON.stringify({
           user_id: userId,
+          project_id: projectId,
+          run_id: runId,
           design,
           simulation,
           candidates,

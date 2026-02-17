@@ -144,7 +144,9 @@ export default function SuggestPage() {
             setError(null);
 
             try {
-                const data = await fetchSuggestions(userId, design, simulation, candidates);
+                const PROJECT_ID = "default-project";
+                const runId = `run-${Date.now()}`;
+                const data = await fetchSuggestions(userId, design, simulation, candidates, PROJECT_ID, runId);
                 setSuggestionData(data);
             } catch (err) {
                 console.error('Error fetching suggestions:', err);
