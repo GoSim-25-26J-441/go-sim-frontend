@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { diFetchClient } from "@/modules/di/clientFetch";
+
 export type HistoryMsg = {
   role: "user" | "assistant" | "rag" | "llm" | "ai";
   message: string;
@@ -7,7 +9,7 @@ export type HistoryMsg = {
 };
 
 export async function getHistory(jobId: string, userId?: string): Promise<HistoryMsg[]> {
-  const res = await fetch(`/api/di/jobs/${jobId}/chat/history`, {
+  const res = await diFetchClient(`/api/di/jobs/${jobId}/chat/history`, {
     cache: "no-store",
     headers: userId ? { "x-user-id": userId } : undefined,
   });

@@ -10,7 +10,7 @@ export default function Summary({ params }: { params: { id: string } }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Link href={`/chat/${id}/talk`} className="rounded-xl border border-border p-4 hover:bg-surface">
+        <Link href={`/project/${id}/chat`} className="rounded-xl border border-border p-4 hover:bg-surface">
           <div className="font-medium">Chat</div>
           <div className="opacity-60 text-sm">Ask about the architecture</div>
         </Link>

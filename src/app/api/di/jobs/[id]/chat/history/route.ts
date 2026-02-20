@@ -1,17 +1,20 @@
-import { diFetch, readJsonSafe } from "@/app/api/di/_lib/backend";
+import { diFetch, getTokenFromRequest, readJsonSafe } from "@/app/api/di/_lib/backend";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
 
-  const r = await diFetch(`/jobs/${encodeURIComponent(id)}/chat/history`, {
-    method: "GET",
-  });
+  const token = getTokenFromRequest(req);
+  const r = await diFetch(
+    `/jobs/${encodeURIComponent(id)}/chat/history`,
+    { method: "GET" },
+    { token }
+  );
 
   const parsed = await readJsonSafe(r);
 

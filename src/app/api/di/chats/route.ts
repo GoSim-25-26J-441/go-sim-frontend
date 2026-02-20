@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
-import { diFetch, readJsonSafe } from "../_lib/backend";
+import { NextRequest, NextResponse } from "next/server";
+import { diFetch, getTokenFromRequest, readJsonSafe } from "../_lib/backend";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const r = await diFetch("/jobs", { method: "GET" });
+export async function GET(req: NextRequest) {
+  const token = getTokenFromRequest(req);
+  const r = await diFetch("/jobs", { method: "GET" }, { token });
 
   const parsed = await readJsonSafe(r);
   if (!r.ok) {

@@ -2,6 +2,7 @@
 "use client";
 
 import { useSession } from "@/modules/session/context";
+import { diFetchClient } from "./clientFetch";
 
 type ExportOpts = {
   download?: boolean;
@@ -28,7 +29,7 @@ export function useExport(jobId: string | null | undefined) {
 
      await ensureFused(jobId, userId); 
 
-    const r = await fetch(
+    const r = await diFetchClient(
       `/api/di/jobs/${jobId}/export?format=yaml&download=false`,
       { headers: { "x-user-id": userId } }
     );
@@ -50,7 +51,7 @@ export function useExport(jobId: string | null | undefined) {
 
     await ensureFused(jobId, userId);
 
-    const r = await fetch(
+    const r = await diFetchClient(
       `/api/di/jobs/${jobId}/export?format=json&download=false`,
       { headers: { "x-user-id": userId } }
     );
@@ -73,7 +74,7 @@ export function useExport(jobId: string | null | undefined) {
 }
 
 async function ensureFused(jobId: string, userId: string) {
-  const r = await fetch(`/api/di/jobs/${jobId}/fuse`, {
+  const r = await diFetchClient(`/api/di/jobs/${jobId}/fuse`, {
     method: "POST",
     headers: {
       "x-user-id": userId,
