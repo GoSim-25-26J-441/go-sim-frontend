@@ -20,6 +20,18 @@ export type UpdateProjectArg = {
   name: string;
 };
 
+export type TempChatArg = {
+  message: string;
+  mode?: string;
+};
+
+export type TempChatResponse = {
+  ok: boolean;
+  answer: string;
+  source: string;
+  refs: unknown[];
+};
+
 export const projectsApi = createApi({
   reducerPath: "projectsApi",
   baseQuery: fetchBaseQuery({
@@ -222,6 +234,27 @@ export const projectsApi = createApi({
         };
       },
     }),
+
+    tempChat: b.mutation<TempChatResponse, TempChatArg>({
+      query: (body) => ({
+        url: "/api/temp-chat",
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: {
+          message: body.message,
+          mode: body.mode || "default",
+        },
+      }),
+      transformResponse: (res: unknown): TempChatResponse => {
+        const data = res as any;
+        return {
+          ok: data?.ok ?? true,
+          answer: data?.answer || "",
+          source: data?.source || "",
+          refs: data?.refs || [],
+        };
+      },
+    }),
   }),
 });
 
@@ -232,4 +265,5 @@ export const {
   useDeleteProjectMutation,
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
+  useTempChatMutation,
 } = projectsApi;

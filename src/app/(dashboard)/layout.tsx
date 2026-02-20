@@ -3,6 +3,7 @@
 
 import { SessionProvider } from "@/modules/session/context";
 import { AuthGuard } from "@/components/auth/AuthGuard";
+import { ConnectionMonitor } from "@/components/connection/ConnectionMonitor";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import { ReduxProvider } from "../store/uidp/ReduxProvider";
@@ -16,6 +17,7 @@ export default function DashboardLayout({
     <AuthGuard>
       <SessionProvider>
         <ReduxProvider>
+          <ConnectionMonitor />
           <div className="h-dvh grid grid-rows-[56px_1fr] bg-linear-to-b from-[#1F1F1F] to-black">
             <Topbar />
             <div className="min-h-0 grid md:grid-cols-[280px_1fr]">
