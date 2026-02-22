@@ -13,7 +13,6 @@ export default function Summary({ params }: { params: Promise<{ id: string }> })
   const [loadingThread, setLoadingThread] = useState(true);
 
   useEffect(() => {
-    // Check for existing thread when component mounts
     getProjectThreadId(id)
       .then((tid) => {
         setThreadId(tid);
@@ -28,10 +27,8 @@ export default function Summary({ params }: { params: Promise<{ id: string }> })
   const handleChatClick = (e: React.MouseEvent) => {
     e.preventDefault();
     if (threadId) {
-      // Navigate to existing thread
       router.push(`/project/${id}/chat?thread=${threadId}`);
     } else {
-      // Navigate to chat page, which will create a thread if needed
       router.push(`/project/${id}/chat`);
     }
   };

@@ -4,7 +4,6 @@
 import { useState, useEffect, useRef } from "react";
 import { X, ChevronDown, Trash2, Send, Loader2, MessageCircle } from "lucide-react";
 import { useTempChatMutation } from "@/app/store/projectsApi";
-import Bubble from "@/components/chat/Bubble";
 
 interface TempChatModalProps {
   isOpen: boolean;
@@ -157,11 +156,7 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
             <div className="relative">
               <button
                 onClick={() => setShowModeDropdown(!showModeDropdown)}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150"
-                style={{
-                  backgroundColor: "#ffffff",
-                  color: "#000000",
-                }}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black"
                 onMouseEnter={(e) =>
                   ((e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.25)")
                 }
