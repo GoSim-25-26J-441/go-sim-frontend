@@ -4,7 +4,14 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
-import { useEffect, useState, useRef } from "react";
+import {
+  useEffect,
+  useState,
+  useRef,
+  useLayoutEffect,
+  useCallback,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   Plus,
   LogOut,
@@ -44,11 +51,48 @@ export default function Sidebar() {
   const [deleteProject] = useDeleteProjectMutation();
 
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
   const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const menuPortalRef = useRef<HTMLDivElement | null>(null);
+  const projectsScrollRef = useRef<HTMLDivElement | null>(null);
   const isOpeningMenuRef = useRef(false);
+
+  const updateMenuPosition = useCallback(() => {
+    if (!openMenuId) return;
+    const el = menuRefs.current[openMenuId];
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setMenuPosition({
+      top: rect.top,
+      left: rect.right + 8,
+    });
+  }, [openMenuId]);
+
+  useLayoutEffect(() => {
+    if (!openMenuId) {
+      setMenuPosition(null);
+      return;
+    }
+    updateMenuPosition();
+  }, [openMenuId, updateMenuPosition]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const handleScroll = () => updateMenuPosition();
+    const scrollEl = projectsScrollRef.current;
+    scrollEl?.addEventListener("scroll", handleScroll);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      scrollEl?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [openMenuId, updateMenuPosition]);
 
   const selectedProject = sp.get("project") ?? sp.get("job");
 
@@ -175,6 +219,9 @@ export default function Sidebar() {
       const menuElement = menuRefs.current[currentOpenMenuId];
 
       if (menuElement?.contains(target)) {
+        return;
+      }
+      if (menuPortalRef.current?.contains(target)) {
         return;
       }
 
@@ -312,7 +359,10 @@ export default function Sidebar() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-4 space-y-6">
+        <div
+          ref={projectsScrollRef}
+          className="flex-1 overflow-y-auto py-4 space-y-6"
+        >
           <div>
             <div className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider mb-2 px-2">
               Projects
@@ -413,45 +463,6 @@ export default function Sidebar() {
                             >
                               <MoreVertical className="w-3.5 h-3.5" />
                             </button>
-                            {openMenuId === project.id && (
-                              <div
-                                className="absolute right-0 top-full mt-3 w-56 py-2 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                              >
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleRenameClick(project);
-                                  }}
-                                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700/50 transition-colors duration-150"
-                                  type="button"
-                                >
-                                  <Edit className="w-3.5 h-3.5" />
-                                  <span>Rename</span>
-                                </button>
-                                <div className="h-[1px] bg-white mx-2 my-2" />
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleDeleteClick(project);
-                                  }}
-                                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  type="button"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Delete</span>
-                                </button>
-                              </div>
-                            )}
                           </div>
                         </div>
                       )}
@@ -461,6 +472,60 @@ export default function Sidebar() {
             </nav>
           </div>
         </div>
+
+        {openMenuId &&
+          menuPosition &&
+          typeof document !== "undefined" &&
+          (() => {
+            const project = projects.find((p) => p.id === openMenuId);
+            if (!project) return null;
+            return createPortal(
+              <div
+                ref={menuPortalRef}
+                className="fixed w-56 py-2 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                style={{
+                  top: menuPosition.top,
+                  left: menuPosition.left,
+                  zIndex: 9999,
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleRenameClick(project);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700/50 transition-colors duration-150 text-left"
+                  type="button"
+                >
+                  <Edit className="w-3.5 h-3.5 shrink-0" />
+                  <span>Rename</span>
+                </button>
+                <div className="h-[1px] bg-white mx-2 my-2" />
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDeleteClick(project);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                  type="button"
+                >
+                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Delete</span>
+                </button>
+              </div>,
+              document.body,
+            );
+          })()}
 
         <div className="border-t border-gray-800 p-3">
           <button
