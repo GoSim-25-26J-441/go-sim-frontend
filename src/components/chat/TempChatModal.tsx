@@ -2,9 +2,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { X, ChevronDown } from "lucide-react";
+import { X, ChevronDown, Trash2, Send, Loader2, MessageCircle } from "lucide-react";
 import { useTempChatMutation } from "@/app/store/projectsApi";
-import Bubble from "@/components/chat/Bubble";
 
 interface TempChatModalProps {
   isOpen: boolean;
@@ -19,10 +18,7 @@ interface ChatMessage {
   ts: number;
 }
 
-export default function TempChatModal({
-  isOpen,
-  onClose,
-}: TempChatModalProps) {
+export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ChatMode>("default");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -33,12 +29,10 @@ export default function TempChatModal({
 
   const [tempChat] = useTempChatMutation();
 
-  // Scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Show welcome message when modal opens
   useEffect(() => {
     if (isOpen && messages.length === 0) {
       setMessages([
@@ -51,69 +45,47 @@ export default function TempChatModal({
     }
   }, [isOpen, messages.length]);
 
-
-
   const handleSend = async () => {
     const text = input.trim();
     if (!text || loading) return;
 
-    // Optimistic user message
-    const userMessage: ChatMessage = {
-      role: "user",
-      message: text,
-      ts: Date.now(),
-    };
+    const userMessage: ChatMessage = { role: "user", message: text, ts: Date.now() };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setLoading(true);
     setErr(null);
 
     try {
-      const result = await tempChat({
-        message: text,
-        mode,
-      }).unwrap();
-
+      const result = await tempChat({ message: text, mode }).unwrap();
       if (result.ok && result.answer) {
-        const assistantMessage: ChatMessage = {
-          role: "assistant",
-          message: result.answer,
-          ts: Date.now(),
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", message: result.answer, ts: Date.now() },
+        ]);
       } else {
         throw new Error("Failed to get response");
       }
     } catch (error: any) {
-      const isServerOffline = 
+      const isServerOffline =
         error?.status === 502 ||
         error?.status === 503 ||
         error?.status === 504 ||
         error?.data?.error?.toLowerCase().includes("backend offline") ||
-        error?.data?.error?.toLowerCase().includes("server offline") ||
-        error?.error?.toLowerCase().includes("backend offline") ||
-        error?.error?.toLowerCase().includes("server offline");
+        error?.data?.error?.toLowerCase().includes("server offline");
 
-      // Check for network connection errors
-      const isNetworkError = 
+      const isNetworkError =
         error?.status === "FETCH_ERROR" ||
         error?.name === "AbortError" ||
         error?.message?.includes("Failed to fetch") ||
         error?.message?.includes("NetworkError");
 
       let errorMessage: string;
-      if (isServerOffline) {
-        errorMessage = "Server is offline. Please try again later.";
-      } else if (isNetworkError) {
-        errorMessage = "Network error. Please check your connection and try again.";
-      } else {
-        errorMessage =
-          error?.data?.error || error?.error || "Failed to send message. Please try again.";
-      }
+      if (isServerOffline) errorMessage = "Server is offline. Please try again later.";
+      else if (isNetworkError) errorMessage = "Network error. Check your connection and try again.";
+      else errorMessage = error?.data?.error || error?.error || "Failed to send message. Please try again.";
 
       setErr(errorMessage);
       setMessages((prev) => prev.slice(0, -1));
-      console.error("Temp chat error:", error);
     } finally {
       setLoading(false);
     }
@@ -139,44 +111,86 @@ export default function TempChatModal({
     setErr(null);
   };
 
-  const modeOptions: { value: ChatMode; label: string }[] = [
-    { value: "thinking", label: "Thinking" },
-    { value: "default", label: "Default" },
-    { value: "instant", label: "Instant" },
+  const modeOptions: { value: ChatMode; label: string; desc: string }[] = [
+    { value: "thinking", label: "Thinking", desc: "Deep reasoning" },
+    { value: "default", label: "Default", desc: "Balanced" },
+    { value: "instant", label: "Instant", desc: "Fast replies" },
   ];
 
-  const currentModeLabel = modeOptions.find((m) => m.value === mode)?.label || "Default";
+  const currentMode = modeOptions.find((m) => m.value === mode)!;
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-w-4xl w-full mx-4 h-[85vh] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-md">
+      <div
+        className="relative flex flex-col w-full mx-4 overflow-hidden rounded-md shadow-xl bg-[#1F1F1F]"
+        style={{
+          maxWidth: "56rem",
+          height: "85vh",
+        }}
+      >
+        <div
+          className="absolute top-0 left-0 right-0 h-px"
+          style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)" }}
+        />
+
+        <div
+          className="flex items-center justify-between px-5 py-4"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+        >
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-white">Temporary Chat</h2>
-            <span className="text-xs text-gray-400">(No history saved)</span>
+            
+              <MessageCircle className="w-6 h-6" />
+        
+            <div>
+              <h2 className="text-white font-semibold text-base leading-none">Temporary Chat</h2>
+              <span className="text-xs mt-0.5 block" style={{ color: "rgba(255,255,255,0.35)" }}>
+                Session not saved
+              </span>
+            </div>
           </div>
-          
-          <div className="flex items-center gap-2">
-            {/* Mode selector */}
+
+          <div className="flex items-center gap-4">
             <div className="relative">
               <button
                 onClick={() => setShowModeDropdown(!showModeDropdown)}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-700 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black"
+                onMouseEnter={(e) =>
+                  ((e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.25)")
+                }
+                onMouseLeave={(e) =>
+                  ((e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.12)")
+                }
               >
-                <span>Mode: {currentModeLabel}</span>
-                <ChevronDown className="w-4 h-4" />
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor:
+                      mode === "thinking" ? "#000000" : mode === "instant" ? "#34d399" : "#a78bfa",
+                  }}
+                />
+                {currentMode.label}
+                <ChevronDown
+                  className="w-3.5 h-3.5 transition-transform duration-150"
+                  style={{
+                    color: "#000000",
+                    transform: showModeDropdown ? "rotate(180deg)" : "rotate(0deg)",
+                  }}
+                />
               </button>
-              
+
               {showModeDropdown && (
                 <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowModeDropdown(false)} />
                   <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setShowModeDropdown(false)}
-                  />
-                  <div className="absolute right-0 top-full mt-1 w-40 bg-gray-900 border border-gray-700 rounded-lg shadow-lg z-20">
+                    className="absolute right-0 top-full mt-2 w-44 rounded-xl overflow-hidden z-20"
+                    style={{
+                      backgroundColor: "#000",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      boxShadow: "0 16px 40px rgba(0,0,0,0.5)",
+                    }}
+                  >
                     {modeOptions.map((option) => (
                       <button
                         key={option.value}
@@ -184,13 +198,26 @@ export default function TempChatModal({
                           setMode(option.value);
                           setShowModeDropdown(false);
                         }}
-                        className={`w-full text-left px-3 py-2 text-sm transition-colors ${
-                          mode === option.value
-                            ? "bg-gray-800 text-blue-400"
-                            : "text-gray-300 hover:bg-gray-800"
-                        }`}
+                        className="w-full text-left px-3 py-2.5 text-sm transition-colors duration-100 flex items-center justify-between"
+                        style={{
+                          backgroundColor:
+                            mode === option.value ? "rgba(255,255,255,0.07)" : "transparent",
+                          color:
+                            mode === option.value ? "#fff" : "rgba(255,255,255,0.6)",
+                        }}
+                        onMouseEnter={(e) =>
+                          ((e.currentTarget as HTMLElement).style.backgroundColor =
+                            "rgba(255,255,255,0.05)")
+                        }
+                        onMouseLeave={(e) =>
+                          ((e.currentTarget as HTMLElement).style.backgroundColor =
+                            mode === option.value ? "rgba(255,255,255,0.07)" : "transparent")
+                        }
                       >
-                        {option.label}
+                        <span>{option.label}</span>
+                        <span className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+                          {option.desc}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -200,54 +227,100 @@ export default function TempChatModal({
 
             <button
               onClick={handleClose}
-              className="text-gray-400 hover:text-white transition-colors p-1"
+              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 scroll-smooth">
           {messages.map((m, i) => (
-            <Bubble
+            <div
               key={`msg-${m.ts}-${i}`}
-              role={m.role === "user" ? "user" : "ai"}
-              text={m.message}
-            />
+              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className="max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed"
+                style={
+                  m.role === "user"
+                    ? {
+                        backgroundColor: "#000",
+                        color: "#fff",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        borderBottomRightRadius: "4px",
+                      }
+                    : {
+                        backgroundColor: "rgba(255,255,255,0.05)",
+                        color: "rgba(255,255,255,0.9)",
+                        border: "1px solid rgba(255,255,255,0.07)",
+                        borderBottomLeftRadius: "4px",
+                      }
+                }
+              >
+                {m.message}
+              </div>
+            </div>
           ))}
 
-          {/* Loading indicator */}
           {loading && (
-            <div className="max-w-[70ch] w-fit rounded-2xl px-4 py-2 border border-gray-700 bg-gray-900 animate-pulse">
-              <span className="opacity-70">Thinking…</span>
+            <div className="flex justify-start">
+              <div
+                className="rounded-2xl px-4 py-2.5 flex items-center gap-2"
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.07)",
+                  borderBottomLeftRadius: "4px",
+                }}
+              >
+                <Loader2
+                  className="w-3.5 h-3.5 animate-spin"
+                  style={{ color: "rgba(255,255,255,0.4)" }}
+                />
+                <span className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
+                  Thinking…
+                </span>
+              </div>
             </div>
           )}
 
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Composer */}
-        <div className="border-t border-gray-800 p-3">
-          {/* Error message above input */}
+        <div
+          className="px-4 pb-4 pt-3"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
+        >
           {err && (
-            <div className="mb-2 px-3 py-2 text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg">
+            <div
+              className="mb-2.5 px-3 py-2 text-xs rounded-lg flex items-center gap-2"
+              style={{
+                backgroundColor: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                color: "#fca5a5",
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <circle cx="6" cy="6" r="5" stroke="#fca5a5" strokeWidth="1.5" />
+                <path d="M6 3.5v3M6 8v.5" stroke="#fca5a5" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
               {err}
             </div>
           )}
+
           <div className="flex items-center gap-2">
             <button
               onClick={handleClearChat}
-              className="px-3 py-2 text-xs text-gray-400 hover:text-white transition-colors border border-gray-700 rounded-lg hover:border-gray-600"
-              title="Clear chat history"
+              title="Clear chat"
+              className="flex-shrink-0 flex items-center justify-center w-9 h-9 bg-white text-black hover:bg-white/80 rounded-full transition-all duration-150"
             >
-              Clear
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
+
             <input
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
-                // Clear error when user starts typing
                 if (err) setErr(null);
               }}
               onKeyDown={(e) => {
@@ -256,16 +329,21 @@ export default function TempChatModal({
                   handleSend();
                 }
               }}
-              placeholder="Type your message..."
+              placeholder="Type your message…"
               disabled={loading}
-              className="flex-1 rounded-xl border border-gray-700 bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 rounded-full px-4 py-2.5 text-sm bg-white text-black focus:outline-none transition-all duration-150 placeholder:text-black/20"
             />
+
             <button
               disabled={loading || !input.trim()}
               onClick={handleSend}
-              className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex-shrink-0 flex items-center justify-center w-9 h-9 bg-white text-black hover:bg-white/80 rounded-full transition-all duration-150"
             >
-              {loading ? "Sending…" : "Send"}
+              {loading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
             </button>
           </div>
         </div>

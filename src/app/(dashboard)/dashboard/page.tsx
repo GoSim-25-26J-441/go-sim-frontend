@@ -4,14 +4,11 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { useSession } from "@/modules/session/context";
 import { useEffect, useState } from "react";
-import { Plus, MessageSquare } from "lucide-react";
+import { MessageCircle,  ShieldAlert, LayersPlus } from "lucide-react";
 import { useToast } from "@/hooks/useToast";
-import {
-  useCreateProjectMutation,
-} from "@/app/store/projectsApi";
+import { useCreateProjectMutation } from "@/app/store/projectsApi";
 import { getCurrentUser, getFirebaseIdToken } from "@/lib/firebase/auth";
 import TempChatModal from "@/components/chat/TempChatModal";
 
@@ -26,7 +23,6 @@ export default function DashboardLanding() {
   const [showTempChatModal, setShowTempChatModal] = useState(false);
   const [createProject] = useCreateProjectMutation();
 
-  // 🔄 reflect query changes (e.g., clicking Local → draft)
   useEffect(() => {
     setJobId(sp.get("job"));
   }, [sp]);
@@ -37,12 +33,15 @@ export default function DashboardLanding() {
     try {
       setIsCreatingNew(true);
 
-      // Sync user to backend before creating project (required for FK constraint)
       try {
         const firebaseUser = getCurrentUser();
         const token = await getFirebaseIdToken();
         if (firebaseUser && token) {
-          const syncData: { email?: string; display_name?: string; photo_url?: string } = {};
+          const syncData: {
+            email?: string;
+            display_name?: string;
+            photo_url?: string;
+          } = {};
           if (firebaseUser.email) {
             syncData.email = firebaseUser.email;
           }
@@ -52,7 +51,6 @@ export default function DashboardLanding() {
           if (firebaseUser.photoURL) {
             syncData.photo_url = firebaseUser.photoURL;
           }
-          // Call sync endpoint directly to include email (syncUser type doesn't include email)
           const syncRes = await fetch("/api/sync", {
             method: "POST",
             headers: {
@@ -74,21 +72,20 @@ export default function DashboardLanding() {
           }
         }
       } catch (syncError) {
-        // Sync failed - log and show error; project creation will likely fail with FK error
         console.error("User sync failed:", syncError);
-        const syncMsg = syncError instanceof Error ? syncError.message : String(syncError);
+        const syncMsg =
+          syncError instanceof Error ? syncError.message : String(syncError);
         showToast(
           `User sync failed: ${syncMsg}. Project creation may fail.`,
           "error",
         );
-        // Continue anyway - project creation will show its own error if FK constraint fails
       }
 
       const project = await createProject({
         name: "New project",
         is_temporary: false,
       }).unwrap();
-      
+
       router.push(`/diagram?project=${project.id}`);
       showToast("New project created successfully", "success");
     } catch (e: any) {
@@ -100,8 +97,7 @@ export default function DashboardLanding() {
 
       const errorMessage =
         e?.data?.error || e?.error || "Failed to create new project";
-      
-      // Check for FK constraint error
+
       if (errorMessage.includes("foreign key constraint")) {
         showToast(
           "Please ensure you are logged in and try again. If the issue persists, contact support.",
@@ -120,54 +116,43 @@ export default function DashboardLanding() {
 
   return (
     <div className="relative p-6 space-y-4 min-h-full">
-      {/* Temporary Chat Button - Top Right */}
-      <div className="absolute top-6 right-6">
-        <button
-          onClick={() => setShowTempChatModal(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-md"
-        >
-          <MessageSquare className="w-4 h-4" />
-          <span className="text-sm font-medium">Temporary Chat</span>
-        </button>
+      <div className="flex flex-col items-start gap-2">
+        <div className="flex flex-row justify-between items-center w-full">
+          <h2 className="text-lg font-medium">Architecture workspace</h2>
+
+          <div className="flex flex-row gap-1">
+            <button
+              onClick={() => setShowTempChatModal(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-800/50 text-white/80 hover:text-white transition-colors shadow-md"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span className="text-sm font-regular">Temporary Chat</span>
+            </button>
+            <button
+              onClick={() => router.push("/docs")}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-800/50 text-white/80 hover:text-white transition-colors shadow-md"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              <span className="text-sm font-regular">Docs & Guides</span>
+            </button>
+          </div>
+        </div>
+        <div className="w-full h-0.5 bg-white/50" />
       </div>
 
-      <h2 className="text-lg font-medium">Architecture workspace</h2>
-
-      {jobId && (
-        <div className="bg-card py-2 text-sm">
-          <span className="opacity-70 mr-2">Job:</span>
-          <span className="font-mono">{jobId}</span>
-        </div>
-      )}
-
-      {/* Centered New Project Button */}
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex mt-10">
         <button
           onClick={onNewProject}
           disabled={isCreatingNew}
-          className="flex items-center gap-3 px-6 py-4 rounded-xl border border-border bg-surface hover:bg-surface/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+          className="flex items-center gap-1 px-3 py-2 rounded-md bg-[#E5E7EB]/80 hover:bg-[#E5E7EB]/40 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
         >
-          <Plus className="w-5 h-5" />
-          <div className="text-left">
-            <div className="font-medium text-lg">New Project</div>
-            <div className="opacity-60 text-sm">Create a new architecture project</div>
+          <LayersPlus className="w-4 h-4" />
+          <div className="font-medium text-xs">
+            New Project (draw diagram/spec)
           </div>
         </button>
       </div>
 
-      {jobId && (
-        <div className="flex gap-2 pt-2">
-          <Link href={`/project/${jobId}/summary`} className="text-sm underline opacity-80 hover:opacity-100">
-            Open Summary
-          </Link>
-          <span className="opacity-40">·</span>
-          <Link href={`/project/${jobId}/chat`} className="text-sm underline opacity-80 hover:opacity-100">
-            Open Chat
-          </Link>
-        </div>
-      )}
-
-      {/* Temporary Chat Modal */}
       <TempChatModal
         isOpen={showTempChatModal}
         onClose={() => setShowTempChatModal(false)}
