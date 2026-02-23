@@ -1,9 +1,11 @@
-const BASE_URL = process.env.API_BASE || "http://localhost:8080/api/";
+const BASE_URL = process.env.API_BASE || "http://localhost:8080";
 
 //Fetch designs list for a user
 export const fetchDesignsList = async (userId: string) => {
   try {
-    const response = await fetch(`${BASE_URL}requests/user/${userId}`);
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/requests/user/${userId}`,
+    );
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -19,10 +21,12 @@ export const fetchDesignsList = async (userId: string) => {
 export const fetchCostData = async (
   requestId: string,
   provider?: string,
-  region?: string
+  region?: string,
 ) => {
   try {
-    const url = new URL(`${BASE_URL}cost/${requestId}`);
+    const url = new URL(
+      `${BASE_URL}/api/v1/analysis-suggestions/cost/${requestId}`,
+    );
     if (provider && region) {
       url.searchParams.append("provider", provider);
       url.searchParams.append("region", region);
@@ -48,7 +52,9 @@ export const fetchCostData = async (
 //Fetch region data
 export const fetchRegions = async (provider: string) => {
   try {
-    const response = await fetch(`${BASE_URL}cost/regions/${provider}`);
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/cost/regions/${provider}`,
+    );
     if (!response.ok) {
       throw new Error("Failed to fetch regions");
     }
@@ -59,30 +65,56 @@ export const fetchRegions = async (provider: string) => {
   }
 };
 
-// Fetch suggestions
+// Fetch suggestions (project_id and run_id are required)
 export const fetchSuggestions = async (
   userId: string,
   design: any,
   simulation: SimulationRequirements,
-  candidates: any[]
+  candidates: any[],
+  projectId: string,
+  runId: string,
 ) => {
   try {
-    const response = await fetch(`${BASE_URL}suggest`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/suggest`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          project_id: projectId,
+          run_id: runId,
+          design,
+          simulation,
+          candidates,
+        }),
       },
-      body: JSON.stringify({
-        user_id: userId,
-        design,
-        simulation,
-        candidates,
-      }),
-    });
+    );
 
     if (!response.ok) {
       throw new Error(
-        `Failed to get suggestions: ${response.status} ${response.statusText}`
+        `Failed to get suggestions: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Fetch stored metrics analysis by id 
+export const fetchMetricsAnalysisById = async (id: string) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/requests/${id}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch metrics analysis: ${response.status} ${response.statusText}`,
       );
     }
 
