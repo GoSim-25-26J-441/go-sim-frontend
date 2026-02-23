@@ -74,7 +74,7 @@
 
 //         const data: QuestionsResponse = await res.json();
 //         console.log("Design questions response:", data);
-        
+
 //         if (data.ok && data.enabled && data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
 //           console.log("Setting questions:", data.questions);
 //           const normalizedQuestions: Question[] = data.questions.map((q: any) => ({
@@ -82,8 +82,8 @@
 //             label: q.Label || q.label || "",
 //             type: ((q.Type || q.type || "text").toLowerCase() as "number" | "text" | "textarea"),
 //             placeholder: q.Placeholder || q.placeholder,
-//           })).filter((q) => q.id && q.label); 
-          
+//           })).filter((q) => q.id && q.label);
+
 //           if (normalizedQuestions.length > 0) {
 //             setQuestions(normalizedQuestions);
 //             setEnabled(true);
@@ -142,11 +142,11 @@
 
 //   const handleSubmit = () => {
 //     const design: any = {};
-    
+
 //     if (answers.concurrent_users !== undefined) {
 //       design.workload = { concurrent_users: answers.concurrent_users };
 //     }
-    
+
 //     if (answers.preferred_vcpu !== undefined) {
 //       design.preferred_vcpu = answers.preferred_vcpu;
 //     }
@@ -259,12 +259,21 @@
 //   );
 // }
 
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Server, Cpu, MemoryStick, Users, DollarSign, Loader2, ChevronRight, AlertCircle } from "lucide-react";
+import {
+  X,
+  Server,
+  Cpu,
+  MemoryStick,
+  Users,
+  DollarSign,
+  Loader2,
+  ChevronRight,
+  AlertCircle,
+} from "lucide-react";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 
 interface Question {
@@ -329,7 +338,6 @@ export default function DesignQuestionsModal({
   const [loading, setLoading] = useState(true);
   const [answers, setAnswers] = useState<DesignAnswers>({});
   const [enabled, setEnabled] = useState(false);
-  const [focusedId, setFocusedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -340,22 +348,34 @@ export default function DesignQuestionsModal({
         const token = await getFirebaseIdToken();
         if (!token) throw new Error("No authentication token available");
 
-        const res = await fetch("/api/design-input/rag/requirements-questions", {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
+        const res = await fetch(
+          "/api/design-input/rag/requirements-questions",
+          {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
 
-        if (!res.ok) throw new Error(`Failed to fetch questions: ${res.status}`);
+        if (!res.ok)
+          throw new Error(`Failed to fetch questions: ${res.status}`);
 
         const data: QuestionsResponse = await res.json();
 
-        if (data.ok && data.enabled && Array.isArray(data.questions) && data.questions.length > 0) {
+        if (
+          data.ok &&
+          data.enabled &&
+          Array.isArray(data.questions) &&
+          data.questions.length > 0
+        ) {
           const normalized: Question[] = data.questions
             .map((q: any) => ({
               id: q.ID || q.id || "",
               label: q.Label || q.label || "",
-              type: ((q.Type || q.type || "text").toLowerCase() as "number" | "text" | "textarea"),
+              type: (q.Type || q.type || "text").toLowerCase() as
+                | "number"
+                | "text"
+                | "textarea",
               placeholder: q.Placeholder || q.placeholder,
             }))
             .filter((q) => q.id && q.label);
@@ -366,7 +386,10 @@ export default function DesignQuestionsModal({
             const init: DesignAnswers = {};
             normalized.forEach((q) => {
               if (initialDesign) {
-                if (q.id === "concurrent_users" && initialDesign.workload?.concurrent_users !== undefined) {
+                if (
+                  q.id === "concurrent_users" &&
+                  initialDesign.workload?.concurrent_users !== undefined
+                ) {
                   init[q.id] = initialDesign.workload.concurrent_users;
                 } else {
                   init[q.id] = initialDesign[q.id] ?? undefined;
@@ -420,57 +443,65 @@ export default function DesignQuestionsModal({
     const design: any = {};
     if (answers.concurrent_users !== undefined)
       design.workload = { concurrent_users: answers.concurrent_users };
-    if (answers.preferred_vcpu !== undefined) design.preferred_vcpu = answers.preferred_vcpu;
-    if (answers.preferred_memory_gb !== undefined) design.preferred_memory_gb = answers.preferred_memory_gb;
+    if (answers.preferred_vcpu !== undefined)
+      design.preferred_vcpu = answers.preferred_vcpu;
+    if (answers.preferred_memory_gb !== undefined)
+      design.preferred_memory_gb = answers.preferred_memory_gb;
     if (answers.budget !== undefined) design.budget = answers.budget;
     Object.keys(answers).forEach((key) => {
-      if (!["concurrent_users","preferred_vcpu","preferred_memory_gb","budget"].includes(key) && answers[key] !== undefined)
+      if (
+        ![
+          "concurrent_users",
+          "preferred_vcpu",
+          "preferred_memory_gb",
+          "budget",
+        ].includes(key) &&
+        answers[key] !== undefined
+      )
         design[key] = answers[key];
     });
     onSubmit(design);
     onClose();
   };
 
-  const filledCount = Object.values(answers).filter((v) => v !== undefined && v !== null).length;
+  const filledCount = Object.values(answers).filter(
+    (v) => v !== undefined && v !== null,
+  ).length;
   const totalCount = questions.length;
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-md">
       <div
-        className="relative flex flex-col w-full mx-4 rounded-2xl overflow-hidden"
+        className="relative flex flex-col w-full mx-4 overflow-hidden rounded-md shadow-xl bg-[#1F1F1F]"
         style={{
-          backgroundColor: "#1F2937",
           maxWidth: "40rem",
           maxHeight: "90vh",
-          border: "1px solid rgba(255,255,255,0.08)",
-          boxShadow: "0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
         }}
       >
-        {/* Top accent */}
         <div
           className="absolute top-0 left-0 right-0 h-px"
-          style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)" }}
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)",
+          }}
         />
 
-        {/* ── Header ── */}
         <div
           className="flex items-center justify-between px-6 py-5"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
         >
           <div className="flex items-center gap-3">
-            <div
-              className="flex items-center justify-center w-9 h-9 rounded-xl"
-              style={{ backgroundColor: "#000", border: "1px solid rgba(255,255,255,0.12)" }}
-            >
-              <Server className="w-4 h-4 text-white/70" />
-            </div>
+            <Server className="w-6 h-6 text-white/70" />
             <div>
               <h2 className="text-white font-semibold text-base leading-none">
                 Server Design Requirements
               </h2>
-              <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>
+              <p
+                className="text-xs mt-1"
+                style={{ color: "rgba(255,255,255,0.35)" }}
+              >
                 Configure your infrastructure parameters
               </p>
             </div>
@@ -478,57 +509,58 @@ export default function DesignQuestionsModal({
 
           <button
             onClick={onClose}
-            className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150"
-            style={{
-              backgroundColor: "transparent",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "rgba(255,255,255,0.4)",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.backgroundColor = "#000";
-              (e.currentTarget as HTMLElement).style.color = "#fff";
-              (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-              (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.4)";
-              (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.08)";
-            }}
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* ── Progress bar (when questions loaded) ── */}
         {!loading && enabled && totalCount > 0 && (
           <div
             className="px-6 py-3 flex items-center gap-3"
             style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
           >
-            <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.07)" }}>
+            <div
+              className="flex-1 h-1 rounded-full overflow-hidden"
+              style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+            >
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
-                  width: totalCount > 0 ? `${(filledCount / totalCount) * 100}%` : "0%",
-                  backgroundColor: filledCount === totalCount ? "#34d399" : "rgba(255,255,255,0.4)",
+                  width:
+                    totalCount > 0
+                      ? `${(filledCount / totalCount) * 100}%`
+                      : "0%",
+                  backgroundColor:
+                    filledCount === totalCount
+                      ? "#34d399"
+                      : "rgba(255,255,255,0.4)",
                 }}
               />
             </div>
-            <span className="text-xs flex-shrink-0" style={{ color: "rgba(255,255,255,0.3)" }}>
+            <span
+              className="text-xs flex-shrink-0"
+              style={{ color: "rgba(255,255,255,0.3)" }}
+            >
               {filledCount}/{totalCount} filled
             </span>
           </div>
         )}
 
-        {/* ── Body ── */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <div
                 className="flex items-center justify-center w-12 h-12 rounded-2xl"
-                style={{ backgroundColor: "#000", border: "1px solid rgba(255,255,255,0.1)" }}
+                style={{
+                  backgroundColor: "#000",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                }}
               >
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "rgba(255,255,255,0.5)" }} />
+                <Loader2
+                  className="w-5 h-5 animate-spin"
+                  style={{ color: "rgba(255,255,255,0.5)" }}
+                />
               </div>
               <p className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
                 Loading configuration options…
@@ -538,29 +570,44 @@ export default function DesignQuestionsModal({
             <div className="flex flex-col items-center justify-center py-12 gap-4">
               <div
                 className="flex items-center justify-center w-12 h-12 rounded-2xl"
-                style={{ backgroundColor: "#000", border: "1px solid rgba(255,255,255,0.1)" }}
+                style={{
+                  backgroundColor: "#000",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                }}
               >
-                <AlertCircle className="w-5 h-5" style={{ color: "rgba(255,255,255,0.3)" }} />
+                <AlertCircle
+                  className="w-5 h-5"
+                  style={{ color: "rgba(255,255,255,0.3)" }}
+                />
               </div>
               <div className="text-center">
                 <p className="text-sm font-medium text-white/70 mb-1">
                   Design parameters unavailable
                 </p>
-                <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
-                  You can continue to chat without specifying design requirements.
+                <p
+                  className="text-xs"
+                  style={{ color: "rgba(255,255,255,0.3)" }}
+                >
+                  You can continue to chat without specifying design
+                  requirements.
                 </p>
               </div>
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-xs mb-5" style={{ color: "rgba(255,255,255,0.35)" }}>
-                Provide the following parameters to receive tailored server architecture recommendations.
-                All fields are optional but improve recommendation accuracy.
+              <p
+                className="text-xs mb-5"
+                style={{ color: "rgba(255,255,255,0.35)" }}
+              >
+                Provide the following parameters to receive tailored server
+                architecture recommendations. All fields are optional but
+                improve recommendation accuracy.
               </p>
 
               {questions.map((question) => {
-                const isFocused = focusedId === question.id;
-                const hasValue = answers[question.id] !== undefined && answers[question.id] !== null;
+                const hasValue =
+                  answers[question.id] !== undefined &&
+                  answers[question.id] !== null;
                 const icon = questionIconMap[question.id];
                 const unit = questionUnitMap[question.id];
                 const hint = questionHintMap[question.id];
@@ -569,27 +616,23 @@ export default function DesignQuestionsModal({
                   <div
                     key={question.id}
                     className="rounded-xl overflow-hidden transition-all duration-200"
-                    style={{
-                      backgroundColor: "#000",
-                      border: isFocused
-                        ? "1px solid rgba(255,255,255,0.25)"
-                        : hasValue
-                        ? "1px solid rgba(255,255,255,0.12)"
-                        : "1px solid rgba(255,255,255,0.07)",
-                    }}
                   >
-                    {/* Field header */}
-                    <div
-                      className="flex items-center gap-2.5 px-4 pt-3 pb-1"
-                    >
+                    <div className="flex items-center gap-2.5 pt-3 pb-1">
                       {icon && (
-                        <span style={{ color: hasValue ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.25)" }}>
+                        <span
+                          style={{
+                            color: hasValue
+                              ? "rgba(255,255,255,0.6)"
+                              : "rgba(255,255,255,0.25)",
+                          }}
+                        >
                           {icon}
                         </span>
                       )}
                       <label
-                        className="text-xs font-semibold uppercase tracking-wider"
-                        style={{ color: hasValue ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.3)" }}
+                        className={`text-xs font-semibold uppercase tracking-wider ${
+                          hasValue ? "text-white/30" : "text-white"
+                        }`}
                       >
                         {question.label}
                       </label>
@@ -607,24 +650,25 @@ export default function DesignQuestionsModal({
                       )}
                     </div>
 
-                    {/* Hint */}
                     {hint && (
                       <p
-                        className="px-4 pb-2 text-xs"
-                        style={{ color: "rgba(255,255,255,0.2)" }}
+                        className="pb-2 text-xs text-white/60"
                       >
                         {hint}
                       </p>
                     )}
 
-                    {/* Input area */}
-                    <div className="relative flex items-center px-3 pb-3">
+                    <div className="relative flex items-center pb-3">
                       {question.type === "textarea" ? (
                         <textarea
                           value={answers[question.id]?.toString() || ""}
-                          onChange={(e) => handleChange(question.id, e.target.value, question.type)}
-                          onFocus={() => setFocusedId(question.id)}
-                          onBlur={() => setFocusedId(null)}
+                          onChange={(e) =>
+                            handleChange(
+                              question.id,
+                              e.target.value,
+                              question.type,
+                            )
+                          }
                           placeholder={question.placeholder || "Enter value…"}
                           rows={3}
                           className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none placeholder:text-white/15"
@@ -639,9 +683,13 @@ export default function DesignQuestionsModal({
                           <input
                             type={question.type}
                             value={answers[question.id]?.toString() || ""}
-                            onChange={(e) => handleChange(question.id, e.target.value, question.type)}
-                            onFocus={() => setFocusedId(question.id)}
-                            onBlur={() => setFocusedId(null)}
+                            onChange={(e) =>
+                              handleChange(
+                                question.id,
+                                e.target.value,
+                                question.type,
+                              )
+                            }
                             placeholder={question.placeholder || "0"}
                             className="w-full rounded-lg px-3 py-2.5 text-sm focus:outline-none placeholder:text-white/15"
                             style={{
@@ -669,22 +717,25 @@ export default function DesignQuestionsModal({
           )}
         </div>
 
-        {/* ── Footer ── */}
         <div
           className="flex items-center justify-between px-6 py-4"
           style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
         >
           <button
             onClick={onSkip}
-            className="text-sm transition-all duration-150 px-3 py-2 rounded-lg"
+            className="text-sm transition-all duration-150 px-2 py-1 rounded-md"
             style={{ color: "rgba(255,255,255,0.35)" }}
             onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.7)";
-              (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(255,255,255,0.04)";
+              (e.currentTarget as HTMLElement).style.color =
+                "rgba(255,255,255,0.7)";
+              (e.currentTarget as HTMLElement).style.backgroundColor =
+                "rgba(255,255,255,0.04)";
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.35)";
-              (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+              (e.currentTarget as HTMLElement).style.color =
+                "rgba(255,255,255,0.35)";
+              (e.currentTarget as HTMLElement).style.backgroundColor =
+                "transparent";
             }}
           >
             Skip for now
@@ -693,7 +744,7 @@ export default function DesignQuestionsModal({
           <button
             onClick={handleSubmit}
             disabled={loading || !enabled || questions.length === 0}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-150"
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-150"
             style={{
               backgroundColor:
                 loading || !enabled || questions.length === 0
@@ -703,7 +754,10 @@ export default function DesignQuestionsModal({
                 loading || !enabled || questions.length === 0
                   ? "rgba(255,255,255,0.2)"
                   : "#000",
-              cursor: loading || !enabled || questions.length === 0 ? "not-allowed" : "pointer",
+              cursor:
+                loading || !enabled || questions.length === 0
+                  ? "not-allowed"
+                  : "pointer",
             }}
           >
             {loading ? (

@@ -124,9 +124,8 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-md">
       <div
-        className="relative flex flex-col w-full mx-4 overflow-hidden rounded-md shadow-xl"
+        className="relative flex flex-col w-full mx-4 overflow-hidden rounded-md shadow-xl bg-[#1F1F1F]"
         style={{
-          backgroundColor: "#1F1F1F",
           maxWidth: "56rem",
           height: "85vh",
         }}
@@ -228,22 +227,7 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
 
             <button
               onClick={handleClose}
-              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150"
-              style={{
-                backgroundColor: "#fff",
-                border: "1px solid rgba(0,0,0,0.08)",
-                color: "#000",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = "#fff0f0";
-                (e.currentTarget as HTMLElement).style.color = "#000";
-                (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = "#fff";
-                (e.currentTarget as HTMLElement).style.color = "#000";
-                (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,0,0,0.08)";
-              }}
+              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
             >
               <X className="w-4 h-4" />
             </button>

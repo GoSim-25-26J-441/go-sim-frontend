@@ -430,7 +430,6 @@ import { useEffect, useState, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
-  ChevronDown,
   Send,
   Loader2,
   AlertCircle,
@@ -438,7 +437,9 @@ import {
   Upload,
 } from "lucide-react";
 import { getProjectThreadId } from "@/modules/di/getProjectThread";
-import DesignQuestionsModal from "./DesignQuestionsModal";
+import DesignQuestionsModal from "./comp/DesignQuestionsModal";
+import Dropdown from "./comp/DropDown";
+import MessageBubble from "./comp/MessageBubble";
 
 type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
@@ -456,147 +457,6 @@ interface ChatResponse {
   [key: string]: unknown;
 }
 
-function Dropdown<T extends string>({
-  label,
-  value,
-  options,
-  onSelect,
-}: {
-  label: string;
-  value: T;
-  options: { value: T; label: string; desc?: string }[];
-  onSelect: (v: T) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const current = options.find((o) => o.value === value)!;
-
-  const dotColor: Record<string, string> = {
-    thinking: "#60a5fa",
-    instant: "#34d399",
-    default: "#a78bfa",
-    high: "#f87171",
-    medium: "#fbbf24",
-    low: "#6ee7b7",
-  };
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-      >
-        <span
-          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-          style={{ backgroundColor: dotColor[value] ?? "#9ca3af" }}
-        />
-        <span className="text-black/60 text-xs">{label}:</span>
-        {current.label}
-        <ChevronDown
-          className="w-3.5 h-3.5 transition-transform duration-150"
-          style={{
-            transform: open ? "rotate(180deg)" : "rotate(0deg)",
-          }}
-        />
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div
-            className="absolute right-0 top-full mt-2 rounded-xl overflow-hidden z-20"
-            style={{
-              minWidth: "10rem",
-              backgroundColor: "#000",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: "0 16px 40px rgba(0,0,0,0.5)",
-            }}
-          >
-            {options.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  onSelect(opt.value);
-                  setOpen(false);
-                }}
-                className="w-full text-left px-3 py-2.5 text-sm transition-colors duration-100 flex items-center justify-between gap-4"
-                style={{
-                  backgroundColor:
-                    value === opt.value
-                      ? "rgba(255,255,255,0.07)"
-                      : "transparent",
-                  color:
-                    value === opt.value ? "#fff" : "rgba(255,255,255,0.55)",
-                }}
-                onMouseEnter={(e) =>
-                  ((e.currentTarget as HTMLElement).style.backgroundColor =
-                    "rgba(255,255,255,0.05)")
-                }
-                onMouseLeave={(e) =>
-                  ((e.currentTarget as HTMLElement).style.backgroundColor =
-                    value === opt.value
-                      ? "rgba(255,255,255,0.07)"
-                      : "transparent")
-                }
-              >
-                <span className="flex items-center gap-2">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{
-                      backgroundColor: dotColor[opt.value] ?? "#9ca3af",
-                    }}
-                  />
-                  {opt.label}
-                </span>
-                {opt.desc && (
-                  <span
-                    className="text-xs"
-                    style={{ color: "rgba(255,255,255,0.25)" }}
-                  >
-                    {opt.desc}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function MessageBubble({
-  role,
-  text,
-}: {
-  role: "user" | "assistant";
-  text: string;
-}) {
-  const isUser = role === "user";
-  return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} gap-2`}>
-      <div
-        className="max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap"
-        style={
-          isUser
-            ? {
-                backgroundColor: "#000",
-                color: "#fff",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderBottomRightRadius: "4px",
-              }
-            : {
-                backgroundColor: "rgba(255,255,255,0.05)",
-                color: "rgba(255,255,255,0.88)",
-                border: "1px solid rgba(255,255,255,0.07)",
-                borderBottomLeftRadius: "4px",
-              }
-        }
-      >
-        {text}
-      </div>
-    </div>
-  );
-}
 
 export default function ClientChat({ id }: Props) {
   const searchParams = useSearchParams();
