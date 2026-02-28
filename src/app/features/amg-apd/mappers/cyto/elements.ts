@@ -3,6 +3,7 @@ import type {
   AnalysisResult,
   DetectionKind,
 } from "@/app/features/amg-apd/types";
+import { toDisplayName } from "@/app/features/amg-apd/utils/displayNames";
 import { buildMetaMaps, resolveNodeIdFromData } from "./meta";
 
 function normalizeKinds(kinds: DetectionKind[] | undefined): DetectionKind[] {
@@ -27,7 +28,7 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     return {
       data: {
         id,
-        label: n?.name ?? id,
+        label: toDisplayName(n?.name ?? id.replace(/^[^:]+:/, "")),
         kind: n?.kind ?? "SERVICE",
         detectionKinds: kinds,
         severity,

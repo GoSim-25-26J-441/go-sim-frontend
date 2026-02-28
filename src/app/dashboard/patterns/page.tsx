@@ -4,19 +4,14 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
-import SuggestionModal from "@/app/features/amg-apd/components/SuggestionModal";
+import SuggestionModal, {
+  type Suggestion,
+} from "@/app/features/amg-apd/components/SuggestionModal";
 import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 
-type Suggestion = {
-  kind: string;
-  title: string;
-  bullets: string[];
-  auto_fix_applied?: boolean;
-  auto_fix_notes?: string[];
-};
 
 export default function PatternsPage() {
   const last = useAmgApdStore((s) => s.last);
@@ -153,7 +148,7 @@ export default function PatternsPage() {
     }
   }
 
-  async function applySuggestions() {
+  async function applySuggestions(selectedIds: string[]) {
     if (!editedYaml) {
       alert("No current YAML available.");
       return;
@@ -173,6 +168,7 @@ export default function PatternsPage() {
           job_id: "ui",
           yaml: editedYaml,
           title: "Architecture",
+          selected_suggestion_ids: selectedIds,
         }),
       });
 
@@ -255,7 +251,7 @@ export default function PatternsPage() {
         onClose={() => setOpen(false)}
         onApply={applySuggestions}
         applyLoading={applyLoading}
-        disabledApply={!hasDetections || applyLoading || loadingSug}
+        disabledApply={!hasDetections || loadingSug}
       />
 
       <div className="rounded-xl border border-border bg-card p-4 shadow-sm">

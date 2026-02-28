@@ -7,6 +7,7 @@ import {
   DETECTION_KIND_COLOR,
   colorForDetectionKind,
 } from "@/app/features/amg-apd/utils/colors";
+import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
 
 function prettyLabel(key: string) {
@@ -88,7 +89,7 @@ export default function Legend() {
                 style={{ background: colorForDetectionKind(k) }}
                 className="inline-block h-3 w-3 rounded-full"
               />
-              <span>{prettyLabel(k)}</span>
+              <span>{antipatternKindLabel(k)}</span>
             </span>
           ))}
         </div>
@@ -126,7 +127,7 @@ export default function Legend() {
                   />
                   <div>
                     <div className="text-[11px] font-semibold">
-                      {prettyLabel(k)}
+                      {antipatternKindLabel(k)}
                     </div>
                     <div className="text-[11px] text-slate-600">
                       {HELP[k] ?? "Detected issue in the architecture."}

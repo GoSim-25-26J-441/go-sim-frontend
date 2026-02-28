@@ -8,6 +8,7 @@ import type {
   NodeKind,
   SelectedItem,
 } from "@/app/features/amg-apd/types";
+import { toDisplayName } from "@/app/features/amg-apd/utils/displayNames";
 
 type Props = {
   data: AnalysisResult;
@@ -121,7 +122,7 @@ export default function SelectedDetails({
                 </button>
               </form>
             ) : (
-              <div className="text-sm font-semibold">{name}</div>
+              <div className="text-sm font-semibold">{toDisplayName(name)}</div>
             )}
           </div>
           <div className="text-[11px] text-slate-400">ID: {nodeId}</div>
@@ -192,7 +193,7 @@ export default function SelectedDetails({
     <div className="rounded border bg-white px-3 py-3 text-xs text-slate-700 shadow-sm">
       <div className="mb-2 text-[11px] uppercase text-slate-500">Edge</div>
       <div className="mb-1 text-sm font-semibold">
-        {fromName} → {toName}
+        {toDisplayName(fromName)} → {toDisplayName(toName)}
       </div>
       <div className="mb-2 text-[11px] text-slate-500">
         Kind: <span className="font-semibold">{kind}</span>
