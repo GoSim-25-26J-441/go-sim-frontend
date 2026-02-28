@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendAmgApdHeaders } from "../headers";
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_BASE ?? "http://localhost:8080";
+const BASE = process.env.BACKEND_BASE ?? "http://localhost:8080";
 
 export async function GET() {
   return NextResponse.json({ ok: true, where: "next: analyze-upload" });

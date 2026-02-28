@@ -2,10 +2,11 @@
 "use client";
 
 import { useSession } from "@/modules/session/context";
+import { diFetchClient } from "./clientFetch";
 
 type ExportOpts = {
-  download?: boolean;                 
-  filename?: string;                 
+  download?: boolean;
+  filename?: string;
 };
 
 function downloadText(text: string, filename: string, mime = "text/plain") {
@@ -26,7 +27,9 @@ export function useExport(jobId: string | null | undefined) {
   async function exportYaml(opts?: ExportOpts) {
     if (!jobId) throw new Error("Missing jobId");
 
-    const r = await fetch(
+     await ensureFused(jobId, userId); 
+
+    const r = await diFetchClient(
       `/api/di/jobs/${jobId}/export?format=yaml&download=false`,
       { headers: { "x-user-id": userId } }
     );
@@ -34,25 +37,53 @@ export function useExport(jobId: string | null | undefined) {
     const yamlText = await r.text();
 
     if (opts?.download) {
-      downloadText(yamlText, opts.filename || `gosim-${jobId}.yaml`, "text/yaml");
+      downloadText(
+        yamlText,
+        opts.filename || `gosim-${jobId}.yaml`,
+        "text/yaml"
+      );
     }
     return yamlText;
   }
 
   async function exportJson(opts?: ExportOpts) {
     if (!jobId) throw new Error("Missing jobId");
-    const r = await fetch(
+
+    await ensureFused(jobId, userId);
+
+    const r = await diFetchClient(
       `/api/di/jobs/${jobId}/export?format=json&download=false`,
       { headers: { "x-user-id": userId } }
     );
+
     if (!r.ok) throw new Error(`Export JSON failed: ${r.status}`);
     const spec = await r.json();
 
     if (opts?.download) {
-      downloadText(JSON.stringify(spec, null, 2), opts.filename || `gosim-${jobId}.json`, "application/json");
+      downloadText(
+        JSON.stringify(spec, null, 2),
+        opts.filename || `gosim-${jobId}.json`,
+        "application/json"
+      );
     }
+
     return spec;
   }
 
   return { exportYaml, exportJson };
 }
+
+async function ensureFused(jobId: string, userId: string) {
+  const r = await diFetchClient(`/api/di/jobs/${jobId}/fuse`, {
+    method: "POST",
+    headers: {
+      "x-user-id": userId,
+    },
+  });
+
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`Fuse failed: ${t}`);
+  }
+}
+

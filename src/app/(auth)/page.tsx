@@ -148,7 +148,6 @@ export default function Login() {
     <section className="max-w-7xl mx-auto min-h-screen px-4 sm:px-6 lg:px-8">
       <div className="grid lg:grid-cols-[1fr_auto_1fr] gap-0 py-10 lg:py-0 min-h-screen lg:items-center">
         
-        {/* Left - Animation & Bottom Section */}
         <div className="flex flex-col justify-center py-10 lg:py-20">
           <div className="relative h-64 sm:h-80 lg:h-[500px] mb-6">
             <canvas ref={canvasRef} className="w-full h-full rounded-2xl" />
@@ -156,18 +155,15 @@ export default function Login() {
           <SectionBottom />
         </div>
 
-        {/* Vertical Line - Desktop Only */}
         <div className="hidden lg:block relative w-px bg-white/30 my-20">
           <div className="absolute top-0 left-0 w-px bg-white animate-grow-vertical"></div>
         </div>
 
-        {/* Horizontal Line - Mobile Only */}
         <div className="lg:hidden w-full h-px bg-white/30 my-8 relative">
           <div className="absolute left-0 top-0 h-px bg-white animate-grow-horizontal"></div>
         </div>
 
-        {/* Right - Login Form */}
-        <div className="flex flex-col justify-center py-10 lg:py-20 lg:pl-12">
+        <div className="flex flex-col justify-center lg:pl-12">
           <Form />
         </div>
         

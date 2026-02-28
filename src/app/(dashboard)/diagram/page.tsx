@@ -2,21 +2,24 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import React, {
   useState,
   useRef,
+  useEffect,
+  useCallback,
   MouseEvent as ReactMouseEvent,
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { useGetProjectSummaryQuery, useSaveDiagramMutation } from "@/app/store/projectsApi";
+import { useOpenInChat } from "@/modules/di/useOpenInChat";
+import LoaderModal from "@/components/chat/LoaderModal";
 
 import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
 import S3 from "../../../../public/diagram-icons/S3.svg";
 import S4 from "../../../../public/diagram-icons/S4.svg";
-import { useSession } from "@/modules/session";
-import { useOpenInChat } from "@/modules/di/useOpenInChat";
 
 type NodeKind =
   | "service"
@@ -45,12 +48,6 @@ interface DiagramEdge {
   sync: boolean;
   label?: string;
 }
-
-type OpenOpts = {
-  seed?: string;
-  runIntermediate?: boolean;
-  runFuse?: boolean;
-};
 
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 60;
@@ -114,10 +111,19 @@ function colorForKind(kind: NodeKind): string {
 }
 
 export default function DrawDiagram() {
+  const searchParams = useSearchParams();
   const router = useRouter();
+  const projectId = searchParams.get("project");
+  
+  const { data: summary, isLoading: loadingSummary } = useGetProjectSummaryQuery(
+    projectId || "",
+    { skip: !projectId }
+  );
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
+  const [diagramLoaded, setDiagramLoaded] = useState(false);
+  const [lastLoadedProjectId, setLastLoadedProjectId] = useState<string | null>(null);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -131,6 +137,7 @@ export default function DrawDiagram() {
   const [zoom, setZoom] = useState<number>(1);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [saveDiagram] = useSaveDiagramMutation();
 
   // Helpers
 
@@ -359,6 +366,248 @@ export default function DrawDiagram() {
 
   // Export JSON
 
+  // Transform current diagram format to backend format
+  const transformToBackendFormat = useCallback(() => {
+    // Map node kinds to backend types
+    const kindToType = (kind: NodeKind): string => {
+      if (kind === "database") return "db";
+      if (kind === "topic") return "topic";
+      return "service";
+    };
+
+    // Map edge kinds to protocols
+    const kindToProtocol = (kind: EdgeKind, sync: boolean): string => {
+      if (kind === "rest") return "REST";
+      if (kind === "grpc") return "gRPC";
+      if (kind === "event") return sync ? "EventSync" : "EventAsync";
+      return "REST";
+    };
+
+    const backendNodes = nodes.map((node) => ({
+      id: node.id,
+      label: node.name,
+      type: kindToType(node.kind),
+    }));
+
+    const backendEdges = edges.map((edge) => ({
+      from: edge.fromId,
+      to: edge.toId,
+      protocol: kindToProtocol(edge.kind, edge.sync),
+    }));
+
+    // Build spec_summary
+    const services = nodes
+      .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
+      .map((n) => n.name);
+    
+    const datastores = nodes
+      .filter((n) => n.kind === "database")
+      .map((n) => n.name);
+
+    const dependencies = edges.map((e) => {
+      const from = nodes.find((n) => n.id === e.fromId);
+      const to = nodes.find((n) => n.id === e.toId);
+      const protocol = kindToProtocol(e.kind, e.sync).toLowerCase();
+      return `${from?.name ?? e.fromId}->${to?.name ?? e.toId}(${protocol})`;
+    });
+
+    return {
+      source: "canvas_json",
+      diagram_json: {
+        nodes: backendNodes,
+        edges: backendEdges,
+      },
+      spec_summary: {
+        services,
+        datastores,
+        dependencies,
+      },
+    };
+  }, [nodes, edges]);
+
+  // Load diagram from JSON structure (supports both old and new formats)
+  const loadDiagramFromJson = useCallback((diagramData: {
+    // Old format
+    services?: Array<{ name: string; kind: NodeKind }>;
+    datastores?: Array<{ name: string }>;
+    topics?: Array<{ name: string }>;
+    dependencies?: Array<{
+      from: string;
+      to: string;
+      kind: EdgeKind;
+      sync: boolean;
+      label?: string;
+    }>;
+    // New format
+    nodes?: Array<{ id: string; label: string; type: string }>;
+    edges?: Array<{ from: string; to: string; protocol: string }>;
+  }) => {
+    const newNodes: DiagramNode[] = [];
+    const idToNodeId: Record<string, string> = {};
+    const nameToNodeId: Record<string, string> = {};
+    let nodeCounter = 0;
+    const GRID_SPACING = 180;
+    const START_X = 100;
+    const START_Y = 100;
+
+    // Check if this is the new format (has nodes/edges)
+    if (diagramData.nodes && diagramData.edges) {
+      // New format: nodes with id, label, type
+      diagramData.nodes.forEach((node, idx) => {
+        const nodeId = node.id || `node-${nodeCounter++}`;
+        idToNodeId[node.id] = nodeId;
+        nameToNodeId[node.label] = nodeId;
+        
+        // Map backend type to frontend kind
+        let kind: NodeKind = "service";
+        if (node.type === "db") kind = "database";
+        else if (node.type === "topic") kind = "topic";
+        else if (node.type === "service") kind = "service";
+        
+        newNodes.push({
+          id: nodeId,
+          name: node.label,
+          kind,
+          x: START_X + (idx % 4) * GRID_SPACING,
+          y: START_Y + Math.floor(idx / 4) * GRID_SPACING,
+        });
+      });
+
+      // Create edges from new format
+      const newEdges: DiagramEdge[] = [];
+      diagramData.edges.forEach((edge, idx) => {
+        const fromId = idToNodeId[edge.from] || edge.from;
+        const toId = idToNodeId[edge.to] || edge.to;
+        
+        // Map protocol to edge kind and sync
+        let kind: EdgeKind = "rest";
+        let sync = true;
+        const protocol = edge.protocol?.toUpperCase() || "REST";
+        if (protocol === "GRPC") {
+          kind = "grpc";
+        } else if (protocol.includes("EVENT")) {
+          kind = "event";
+          sync = protocol.includes("SYNC");
+        }
+        
+        if (newNodes.find((n) => n.id === fromId) && newNodes.find((n) => n.id === toId)) {
+          newEdges.push({
+            id: `edge-${idx}`,
+            fromId,
+            toId,
+            kind,
+            sync,
+          });
+        }
+      });
+
+      setNodes(newNodes);
+      setEdges(newEdges);
+      setDiagramLoaded(true);
+      return;
+    }
+
+    // Old format: services/datastores/topics/dependencies
+    // Create nodes from services
+    (diagramData.services || []).forEach((s, idx) => {
+      const nodeId = `node-${nodeCounter++}`;
+      nameToNodeId[s.name] = nodeId;
+      newNodes.push({
+        id: nodeId,
+        name: s.name,
+        kind: s.kind,
+        x: START_X + (idx % 4) * GRID_SPACING,
+        y: START_Y + Math.floor(idx / 4) * GRID_SPACING,
+      });
+    });
+
+    // Create nodes from datastores
+    const servicesCount = diagramData.services?.length || 0;
+    (diagramData.datastores || []).forEach((d, idx) => {
+      const nodeId = `node-${nodeCounter++}`;
+      nameToNodeId[d.name] = nodeId;
+      newNodes.push({
+        id: nodeId,
+        name: d.name,
+        kind: "database",
+        x: START_X + (idx % 4) * GRID_SPACING,
+        y: START_Y + Math.floor((servicesCount + idx) / 4) * GRID_SPACING,
+      });
+    });
+
+    // Create nodes from topics
+    const servicesAndDatastoresCount =
+      servicesCount + (diagramData.datastores?.length || 0);
+    (diagramData.topics || []).forEach((t, idx) => {
+      const nodeId = `node-${nodeCounter++}`;
+      nameToNodeId[t.name] = nodeId;
+      newNodes.push({
+        id: nodeId,
+        name: t.name,
+        kind: "topic",
+        x: START_X + (idx % 4) * GRID_SPACING,
+        y: START_Y + Math.floor((servicesAndDatastoresCount + idx) / 4) * GRID_SPACING,
+      });
+    });
+
+    // Create edges from dependencies
+    const newEdges: DiagramEdge[] = [];
+    (diagramData.dependencies || []).forEach((dep, idx) => {
+      const fromId = nameToNodeId[dep.from];
+      const toId = nameToNodeId[dep.to];
+      if (fromId && toId) {
+        newEdges.push({
+          id: `edge-${idx}`,
+          fromId,
+          toId,
+          kind: dep.kind,
+          sync: dep.sync,
+          label: dep.label,
+        });
+      }
+    });
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+    setDiagramLoaded(true);
+  }, []);
+
+  // Reset diagram when projectId changes
+  useEffect(() => {
+    if (projectId && projectId !== lastLoadedProjectId) {
+      setNodes([]);
+      setEdges([]);
+      setDiagramLoaded(false);
+      setLastLoadedProjectId(projectId);
+    }
+  }, [projectId, lastLoadedProjectId]);
+
+  // Load diagram from summary when available
+  useEffect(() => {
+    if (
+      !projectId ||
+      loadingSummary ||
+      diagramLoaded ||
+      projectId !== lastLoadedProjectId ||
+      !summary?.latest_diagram_version?.diagram_json
+    ) {
+      return;
+    }
+
+    const diagramJson = summary.latest_diagram_version.diagram_json;
+    if (diagramJson && typeof diagramJson === "object") {
+      try {
+        console.log("Loading diagram from summary:", diagramJson);
+        loadDiagramFromJson(diagramJson as any);
+        setLastLoadedProjectId(projectId);
+      } catch (error) {
+        console.error("Failed to load diagram from summary:", error);
+      }
+    } else {
+      console.log("No diagram_json found in summary:", summary);
+    }
+  }, [projectId, summary, loadingSummary, diagramLoaded, loadDiagramFromJson, lastLoadedProjectId]);
+
   const buildExportModel = () => {
     const services = nodes
       .filter((n) =>
@@ -571,28 +820,55 @@ export default function DrawDiagram() {
     img.src = url;
   };
 
+  const [opening, setOpening] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>("");
   const openInChat = useOpenInChat();
 
   const handleOpenInChat = async () => {
+    if (opening || !projectId) return;
+    setOpening(true);
     try {
-      await navigator.clipboard.writeText(exportJson);
-    } catch {
-      /* ignore clipboard errors */
+      // Save diagram to backend first
+      try {
+        const backendFormat = transformToBackendFormat();
+        setLoadingMessage("Saving diagram...");
+        await saveDiagram({
+          projectId,
+          diagram: backendFormat,
+        }).unwrap();
+        console.log("Diagram saved successfully");
+      } catch (saveError) {
+        console.error("Failed to save diagram:", saveError);
+        // Continue even if save fails - user can still open chat
+      }
+
+      // Copy JSON to clipboard
+      try {
+        await navigator.clipboard.writeText(exportJson);
+      } catch {
+        // ignore clipboard errors
+      }
+
+      // Create chat thread and send initial message
+      setLoadingMessage("Creating chat thread...");
+      await openInChat(projectId, {
+        onLoadingChange: (loading, message) => {
+          setOpening(loading);
+          if (message) setLoadingMessage(message);
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      setOpening(false);
+      setLoadingMessage("");
+      alert((e as Error).message || "Failed to open chat");
     }
-
-    // ensure we pass an object to the hook
-    const doc =
-      typeof exportJson === "string" ? JSON.parse(exportJson) : exportJson;
-
-    await openInChat(doc, {
-      seed: "~200 RPS; internal gRPC", // optional
-      runIntermediate: true, // optional
-      runFuse: true, // optional
-    });
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
+    <React.Fragment>
+      <LoaderModal isOpen={opening} message={loadingMessage || "Loading..."} />
+      <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
       {/* Toolbox */}
       <aside className="w-60 shrink-0 rounded-xl border border-slate-800 bg-slate-950/60 p-3 flex flex-col">
         <div className="text-sm font-semibold mb-2">Toolbox</div>
@@ -998,9 +1274,15 @@ export default function DrawDiagram() {
             <button
               type="button"
               onClick={handleOpenInChat}
-              className="rounded border border-emerald-500 bg-emerald-600/80 px-2 py-0.5 text-[11px] text-white hover:bg-emerald-500"
+              disabled={opening}
+              className={`rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
+        ${
+          opening
+            ? "bg-emerald-700/60 cursor-not-allowed opacity-70"
+            : "bg-emerald-600/80 hover:bg-emerald-500"
+        }`}
             >
-              Open in Chat (JSON copied)
+              {opening ? "Opening in Chat…" : "Open in Chat (JSON copied)"}
             </button>
           </div>
           <p className="text-[10px] text-slate-500">
@@ -1010,5 +1292,6 @@ export default function DrawDiagram() {
         </div>
       </aside>
     </div>
+    </React.Fragment>
   );
 }
