@@ -23,6 +23,7 @@ type Props = {
   onSaveChanges: () => void;
 
   isGenerating?: boolean;
+  readOnly?: boolean;
 
   data?: AnalysisResult;
 };
@@ -36,15 +37,16 @@ export default function ControlPanel({
   onToggleEdit,
   onSaveChanges,
   isGenerating = false,
+  readOnly = false,
 }: Props) {
   const { services, databases, edges, detections } = stats;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-slate-700">Layout:</span>
+        <span className="font-semibold text-[#9AA4B2]">Layout:</span>
         <select
-          className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs hover:bg-surface transition-colors"
+          className="rounded-lg border border-white/15 bg-gray-800 px-3 py-1.5 text-xs text-white [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
           value={layoutName}
           onChange={(e) => onLayoutChange(e.target.value as LayoutName)}
         >
@@ -56,7 +58,7 @@ export default function ControlPanel({
         <button
           type="button"
           onClick={onFit}
-          className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-surface transition-colors"
+          className="rounded-lg border border-white/15 bg-gray-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 transition-colors"
         >
           Fit to Screen
         </button>
@@ -64,42 +66,44 @@ export default function ControlPanel({
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
-            Services: <strong className="font-semibold">{services}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Services: <strong className="font-semibold text-white">{services}</strong>
           </span>
-          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
-            Databases: <strong className="font-semibold">{databases}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Databases: <strong className="font-semibold text-white">{databases}</strong>
           </span>
-          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
-            Edges: <strong className="font-semibold">{edges}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Edges: <strong className="font-semibold text-white">{edges}</strong>
           </span>
-          <span className="rounded-lg bg-card border border-border px-3 py-1.5">
-            Anti-patterns: <strong className="font-semibold">{detections}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Anti-patterns: <strong className="font-semibold text-white">{detections}</strong>
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onToggleEdit}
-            className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
-              editMode
-                ? "bg-amber-500 text-white hover:bg-amber-600"
-                : "bg-primary text-primary-foreground hover:bg-primary/90"
-            }`}
-          >
-            {editMode ? "Exit Edit Mode" : "Edit Graph"}
-          </button>
-          <button
-            type="button"
-            onClick={onSaveChanges}
-            disabled={!editMode || isGenerating}
-            style={{ visibility: editMode ? "visible" : "hidden" }}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 transition-colors"
-          >
-            {isGenerating ? "Generating…" : "Generate Graph"}
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onToggleEdit}
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
+                editMode
+                  ? "bg-amber-500 text-white hover:bg-amber-600"
+                  : "bg-[#9AA4B2] text-white hover:bg-[#9AA4B2]/90"
+              }`}
+            >
+              {editMode ? "Exit Edit Mode" : "Edit Graph"}
+            </button>
+            <button
+              type="button"
+              onClick={onSaveChanges}
+              disabled={!editMode || isGenerating}
+              style={{ visibility: editMode ? "visible" : "hidden" }}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 transition-colors"
+            >
+              {isGenerating ? "Generating…" : "Generate Graph"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -86,89 +86,105 @@ export default function ComparePage() {
     : null;
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-4">
+    <div className="flex flex-col gap-6 min-h-[calc(100dvh-280px)] max-w-[1600px] mx-auto">
+      <div className="flex items-center gap-4 flex-shrink-0">
         <Link
           href="/dashboard/patterns"
-          className="text-sm font-medium text-slate-700 hover:text-slate-900 hover:underline"
+          className="text-sm font-medium text-white/80 hover:text-white hover:underline transition-colors"
         >
           ← Back to graph
         </Link>
-        <h1 className="text-xl font-semibold text-slate-900">Compare versions</h1>
+        <h1 className="text-xl font-semibold text-white">Compare versions</h1>
       </div>
 
-      <div className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-slate-100 p-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-700">Left version</label>
-          <select
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-slate-400"
-            value={leftId}
-            onChange={(e) => setLeftId(e.target.value)}
-            disabled={loadingVersions}
+      <div className="rounded-3xl border border-white/10 bg-gray-900/80 backdrop-blur-sm p-5 shadow-xl shadow-black/20 flex-shrink-0">
+        <div className="flex flex-wrap items-end gap-5">
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
+              Left version
+            </label>
+            <select
+              className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
+              value={leftId}
+              onChange={(e) => setLeftId(e.target.value)}
+              disabled={loadingVersions}
+            >
+              <option value="">Select…</option>
+              {versions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  #{v.version_number} {v.title || "Untitled"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
+              Right version
+            </label>
+            <select
+              className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
+              value={rightId}
+              onChange={(e) => setRightId(e.target.value)}
+              disabled={loadingVersions}
+            >
+              <option value="">Select…</option>
+              {versions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  #{v.version_number} {v.title || "Untitled"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={runCompare}
+            disabled={loadingVersions || loadingCompare || !leftId || !rightId || leftId === rightId}
+            className="rounded-2xl bg-[#9AA4B2] px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#9AA4B2]/20 hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           >
-            <option value="">Select…</option>
-            {versions.map((v) => (
-              <option key={v.id} value={v.id}>
-                #{v.version_number} {v.title || "Untitled"}
-              </option>
-            ))}
-          </select>
+            {loadingCompare ? "Loading…" : "Compare"}
+          </button>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-700">Right version</label>
-          <select
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-slate-400"
-            value={rightId}
-            onChange={(e) => setRightId(e.target.value)}
-            disabled={loadingVersions}
-          >
-            <option value="">Select…</option>
-            {versions.map((v) => (
-              <option key={v.id} value={v.id}>
-                #{v.version_number} {v.title || "Untitled"}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button
-          type="button"
-          onClick={runCompare}
-          disabled={loadingVersions || loadingCompare || !leftId || !rightId || leftId === rightId}
-          className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loadingCompare ? "Loading…" : "Compare"}
-        </button>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300 flex-shrink-0">
           {error}
         </div>
       )}
 
       {compareResult && leftData && rightData && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden shadow-sm">
-            <div className="border-b border-slate-200 bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">
-              #{compareResult.left.version_number} {compareResult.left.title || "Left"}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
+          <div className="rounded-3xl border border-white/10 bg-gray-900/80 overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
+            <div className="border-b border-white/10 bg-[#9AA4B2]/20 px-5 py-3 flex-shrink-0">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
+                Left
+              </span>
+              <span className="text-sm font-semibold text-white">
+                #{compareResult.left.version_number} {compareResult.left.title || "Version"}
+              </span>
             </div>
-            <div className="h-[50vh] bg-slate-100">
-              <GraphCanvas data={leftData} />
+            <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
+              <GraphCanvas data={leftData} readOnly />
             </div>
           </div>
-          <div className="rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden shadow-sm">
-            <div className="border-b border-slate-200 bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">
-              #{compareResult.right.version_number} {compareResult.right.title || "Right"}
+          <div className="rounded-3xl border border-white/10 bg-gray-900/80 overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
+            <div className="border-b border-white/10 bg-[#9AA4B2]/20 px-5 py-3 flex-shrink-0">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
+                Right
+              </span>
+              <span className="text-sm font-semibold text-white">
+                #{compareResult.right.version_number} {compareResult.right.title || "Version"}
+              </span>
             </div>
-            <div className="h-[50vh] bg-slate-100">
-              <GraphCanvas data={rightData} />
+            <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
+              <GraphCanvas data={rightData} readOnly />
             </div>
           </div>
         </div>
       )}
 
       {!compareResult && !loadingCompare && !error && (
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-white/60 max-w-xl flex-shrink-0 mt-2">
           Select two versions and click Compare to view them side by side (e.g. initial graph vs after suggestions).
         </p>
       )}

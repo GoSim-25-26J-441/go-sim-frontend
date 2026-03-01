@@ -108,7 +108,13 @@ function isTypingTarget(t: EventTarget | null) {
   return false;
 }
 
-export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
+export default function GraphCanvas({
+  data,
+  readOnly = false,
+}: {
+  data?: AnalysisResult;
+  readOnly?: boolean;
+}) {
   // IMPORTANT: return BEFORE any hooks if there's no graph (Rules of Hooks)
   if (!data?.graph) {
     return (
@@ -525,25 +531,28 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
   }
 
   return (
-    <div className="space-y-3 p-4">
+    <div className={`flex flex-col gap-3 p-4 h-full min-h-0 ${readOnly ? "flex-1" : ""}`}>
       <ControlPanel
         layoutName={layoutName}
         onLayoutChange={setLayoutName}
         onFit={handleFit}
         stats={stats}
-        editMode={editMode}
+        editMode={readOnly ? false : editMode}
         onToggleEdit={handleToggleEdit}
         onSaveChanges={handleSaveChanges}
         data={analysis}
         isGenerating={false}
+        readOnly={readOnly}
       />
 
       <div
         ref={containerRef}
-        className="relative h-[60vh] overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
+        className={`relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ${
+          readOnly ? "flex-1 min-h-[50vh]" : "h-[60vh]"
+        }`}
       >
         <EditToolbar
-          editMode={editMode}
+          editMode={readOnly ? false : editMode}
           tool={tool}
           pendingSourceId={pendingSource}
           onToolChange={setTool}
@@ -657,7 +666,7 @@ export default function GraphCanvas({ data }: { data?: AnalysisResult }) {
       <SelectedDetails
         data={analysis}
         selected={selected}
-        editMode={editMode}
+        editMode={readOnly ? false : editMode}
         onRenameNode={handleRenameNode}
       />
     </div>

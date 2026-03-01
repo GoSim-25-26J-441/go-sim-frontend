@@ -10,8 +10,10 @@ import SuggestionModal, {
 import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
-import type { AnalysisResult } from "@/app/features/amg-apd/types";
-
+import type {
+  AnalysisResult,
+  AmgApdVersionSummary,
+} from "@/app/features/amg-apd/types";
 
 export default function PatternsPage() {
   const last = useAmgApdStore((s) => s.last);
@@ -27,6 +29,11 @@ export default function PatternsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [graphRegenerating, setGraphRegenerating] = useState(false);
   const [graphVersion, setGraphVersion] = useState(0);
+  const [versionCount, setVersionCount] = useState<number | null>(null);
+  const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
+  const [simulationModalOpen, setSimulationModalOpen] = useState(false);
+  const [simulationSelectedVersion, setSimulationSelectedVersion] =
+    useState("");
 
   const restoreStartedRef = useRef(false);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
@@ -34,7 +41,7 @@ export default function PatternsPage() {
   const hasDetections = (last?.detections?.length ?? 0) > 0;
   const showGraphOverlay = graphRegenerating || regenerating;
 
-  // When there's no graph (e.g. first visit or "View Existing Versions"), try to load latest version for this user/chat
+  // When there's no graph (e.g. first visit or "View Existing Versions"), load latest version directly (no new version created)
   useEffect(() => {
     if (last?.graph || restoreStartedRef.current) return;
     restoreStartedRef.current = true;
@@ -46,11 +53,12 @@ export default function PatternsPage() {
           headers: getAmgApdHeaders(),
         });
         if (!listRes.ok) return;
-        const listData = await listRes.json();
-        const versions = listData?.versions ?? [];
-        if (versions.length === 0) return;
 
-        const sorted = [...versions].sort(
+        const listData = await listRes.json();
+        const versionsList = listData?.versions ?? [];
+        if (versionsList.length === 0) return;
+
+        const sorted = [...versionsList].sort(
           (
             a: { created_at?: string; version_number?: number },
             b: { created_at?: string; version_number?: number },
@@ -61,28 +69,27 @@ export default function PatternsPage() {
             return (b.version_number ?? 0) - (a.version_number ?? 0);
           },
         );
+
         const latest = sorted[0];
         const versionRes = await fetch(`/api/amg-apd/versions/${latest.id}`, {
           headers: getAmgApdHeaders(),
         });
         if (!versionRes.ok) return;
+
         const v = await versionRes.json();
+        const graph = v?.graph;
         const yamlContent = v?.yaml_content;
-        if (!yamlContent) return;
+        if (!graph || !yamlContent) return;
 
-        const blob = new Blob([yamlContent], { type: "text/yaml" });
-        const fd = new FormData();
-        fd.append("file", blob, "architecture.yaml");
-        fd.append("title", v.title || `Version ${v.version_number ?? ""}`);
-
-        const analyzeRes = await fetch("/api/amg-apd/analyze-upload", {
-          method: "POST",
-          headers: getAmgApdHeaders(),
-          body: fd,
-        });
-        if (!analyzeRes.ok) return;
-        const data: AnalysisResult = await analyzeRes.json();
-        if (!data?.graph) return;
+        // Use version data directly - do NOT call analyze-upload (that creates a new version)
+        const data: AnalysisResult = {
+          graph,
+          detections: v?.detections ?? [],
+          dot_content: v?.dot_content,
+          version_id: v?.id,
+          version_number: v?.version_number,
+          created_at: v?.created_at,
+        };
 
         setLast(data);
         setEditedYaml(yamlContent);
@@ -92,7 +99,37 @@ export default function PatternsPage() {
         setRegenerating(false);
       }
     })();
-  }, [last?.graph, setLast, setEditedYaml, setRegenerating]);
+  }, [last?.graph, setLast, setEditedYaml, setRegenerating, setRegenerating]);
+
+  useEffect(() => {
+    if (!last?.graph) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/amg-apd/versions", {
+          headers: getAmgApdHeaders(),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = data?.versions ?? [];
+        setVersions(list);
+        setVersionCount(list.length);
+      } catch {
+        setVersionCount(null);
+        setVersions([]);
+      }
+    })();
+  }, [last?.graph]);
+
+  function handleReturnToChat() {
+    alert("Button is clicked");
+  }
+
+  function handleSimulationConfirm() {
+    alert("Button is clicked");
+    setSimulationModalOpen(false);
+    setSimulationSelectedVersion("");
+  }
+
   function handleDownloadYaml() {
     if (!editedYaml) {
       alert(
@@ -206,15 +243,15 @@ export default function PatternsPage() {
   if (!last?.graph) {
     if (regenerating) {
       return (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-card p-8 text-center">
-            <div className="flex flex-col items-center gap-4">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <div>
-                <h2 className="text-lg font-semibold mb-1">
+        <div className="space-y-6 max-w-4xl mx-auto">
+          <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-12 text-center shadow-xl shadow-black/20">
+            <div className="flex flex-col items-center gap-6">
+              <div className="h-12 w-12 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
+              <div className="space-y-1">
+                <h2 className="text-xl font-semibold text-white/95">
                   Loading your latest version
                 </h2>
-                <p className="text-sm opacity-70">
+                <p className="text-sm text-white/60">
                   Fetching YAML, building graph, and detecting anti-patterns…
                 </p>
               </div>
@@ -223,16 +260,19 @@ export default function PatternsPage() {
         </div>
       );
     }
+
     return (
-      <div className="space-y-4">
-        <div className="rounded-xl border border-border bg-card p-6 text-center">
-          <h2 className="text-lg font-semibold mb-2">No graph to display</h2>
-          <p className="text-sm opacity-70 mb-4">
+      <div className="space-y-6 max-w-4xl mx-auto">
+        <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-10 text-center shadow-xl shadow-black/20">
+          <h2 className="text-xl font-semibold text-white/95 mb-2">
+            No graph to display
+          </h2>
+          <p className="text-sm text-white/60 mb-6 max-w-md mx-auto">
             Upload a YAML and run analysis to visualize your architecture.
           </p>
           <Link
             href="/dashboard/patterns/upload"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            className="inline-flex items-center gap-2 rounded-2xl bg-[#9AA4B2] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#9AA4B2]/20 hover:bg-[#9AA4B2]/90 hover:shadow-[#9AA4B2]/30 transition-all duration-200 hover:scale-[1.02]"
           >
             Upload YAML to Analyze
           </Link>
@@ -242,7 +282,65 @@ export default function PatternsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 max-w-[1600px] mx-auto">
+      {/* Simulation modal */}
+      {simulationModalOpen && (
+        <div
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={(e) =>
+            e.target === e.currentTarget && setSimulationModalOpen(false)
+          }
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/15 bg-gray-900 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-1">
+              Proceed to Performance Simulation
+            </h3>
+            <p className="text-sm text-white/60 mb-4">
+              Select which version to use for the simulation.
+            </p>
+
+            <div className="flex flex-col gap-2 mb-4">
+              <label className="text-xs font-semibold text-[#9AA4B2] uppercase tracking-wider">
+                Version
+              </label>
+              <select
+                className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                value={simulationSelectedVersion}
+                onChange={(e) => setSimulationSelectedVersion(e.target.value)}
+              >
+                <option value="">Select version…</option>
+                {versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    #{v.version_number} {v.title || "Untitled"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSimulationModalOpen(false)}
+                className="rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSimulationConfirm}
+                disabled={!simulationSelectedVersion}
+                className="rounded-lg bg-[#9AA4B2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SuggestionModal
         open={open}
         loading={loadingSug}
@@ -254,55 +352,81 @@ export default function PatternsPage() {
         disabledApply={!hasDetections || loadingSug}
       />
 
-      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-          <div>
-            <h1 className="text-xl font-semibold mb-1">
-              Analyze and visualize your architecture with anti-pattern
-              detection
-            </h1>
-          </div>
+      {/* Top panel */}
+      <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-4 shadow-xl shadow-black/20 overflow-hidden">
+        {/* Title row: title + Return to Chat (moved up next to title) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h1 className="text-lg font-semibold text-white/95">
+            Architecture Model & Anti-Pattern Detector
+          </h1>
+
+          <button
+            type="button"
+            onClick={handleReturnToChat}
+            className="rounded-2xl border border-white/15 bg-card/80 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+          >
+            Return to Chat
+          </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-border">
+        {/* Controls row: move remaining buttons left */}
+        <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-white/10">
           <VersionSidebar />
-          <div className="flex flex-wrap items-center gap-2">
+
+          <button
+            type="button"
+            onClick={openSuggestions}
+            disabled={!hasDetections || !editedYaml}
+            className="rounded-2xl border border-white/15 bg-surface/80 px-5 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+            title={
+              !editedYaml
+                ? "No current YAML available"
+                : hasDetections
+                  ? "View suggestions to fix detected anti-patterns"
+                  : "No anti-patterns detected"
+            }
+          >
+            View Suggestions
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownloadYaml}
+            className="rounded-2xl border border-white/15 bg-card/80 px-5 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+          >
+            Download YAML
+          </button>
+        </div>
+
+        {/* Legend + Proceed button row:
+            - Proceed button moved to the RIGHT side
+            - Positioned lower so it sits parallel with the Legend (node types + anti-patterns)
+        */}
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pt-3">
+          <Legend versionCount={versionCount ?? undefined} />
+
+          <div className="lg:flex-shrink-0 lg:self-end">
             <button
               type="button"
-              onClick={openSuggestions}
-              disabled={!hasDetections || !editedYaml}
-              className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title={
-                !editedYaml
-                  ? "No current YAML available"
-                  : hasDetections
-                    ? "View suggestions to fix detected anti-patterns"
-                    : "No anti-patterns detected"
-              }
+              onClick={() => setSimulationModalOpen(true)}
+              className="w-full lg:w-auto rounded-2xl bg-[#0d307c] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#2563eb]/30 hover:bg-[#1d4ed8] transition-all duration-200"
             >
-              View Suggestions
+              Proceed to Performance Simulation
             </button>
-
-            <button
-              type="button"
-              onClick={handleDownloadYaml}
-              className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-surface transition-colors"
-            >
-              Download YAML
-            </button>
-
-            <Legend />
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+      {/* Graph */}
+      <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden">
         {showGraphOverlay ? (
-          <div className="relative h-[60vh] flex items-center justify-center bg-surface/50">
-            <div className="flex flex-col items-center gap-3">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <span className="text-sm font-medium">Regenerating graph…</span>
-              <span className="text-xs opacity-70">
+          <div className="relative h-[60vh] flex items-center justify-center bg-black/30">
+            <div className="flex flex-col items-center gap-4">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
+              <span className="text-sm font-medium text-white/90">
+                Regenerating graph…
+              </span>
+              <span className="text-xs text-white/50">
                 {regenerating
                   ? "Loading YAML, building graph, and detecting anti-patterns"
                   : "Applying fixes and updating visualization"}

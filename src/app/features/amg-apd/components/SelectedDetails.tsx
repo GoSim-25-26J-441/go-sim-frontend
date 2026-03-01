@@ -8,7 +8,9 @@ import type {
   NodeKind,
   SelectedItem,
 } from "@/app/features/amg-apd/types";
-import { toDisplayName } from "@/app/features/amg-apd/utils/displayNames";
+import { toDisplayName, antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
+import { colorForDetectionKind, NODE_KIND_COLOR } from "@/app/features/amg-apd/utils/colors";
+import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
 
 type Props = {
   data: AnalysisResult;
@@ -82,21 +84,34 @@ export default function SelectedDetails({
 
   if (!selected) {
     return (
-      <div className="rounded border bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        Click on a <strong>node</strong> or <strong>connection</strong> in the
-        graph to see more details here.
+      <div className="rounded-xl border border-white/10 bg-gray-800/60 px-4 py-4 text-sm">
+        <p className="text-white/70 leading-relaxed">
+          Click on a <strong className="text-white/90 font-semibold">node</strong> or{" "}
+          <strong className="text-white/90 font-semibold">connection</strong> in the graph
+          to see more details here.
+        </p>
+        <p className="mt-2 text-[11px] text-white/50">
+          Select a service, database, or edge to view its properties and linked anti-patterns.
+        </p>
       </div>
     );
   }
 
   if (isNode && nodeId && nodeKind) {
     const showRename = editMode;
+    const nodeColor = NODE_KIND_COLOR[nodeKind] ?? "#9AA4B2";
 
     return (
-      <div className="rounded border bg-white px-3 py-3 text-xs text-slate-700 shadow-sm">
-        <div className="mb-2 flex items-center justify-between">
-          <div>
-            <div className="text-[11px] uppercase text-slate-500">
+      <div
+        className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
+        style={{
+          borderLeftWidth: "4px",
+          borderLeftColor: nodeColor,
+        }}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2] mb-1">
               {NODE_KIND_LABEL[nodeKind] ?? nodeKind}
             </div>
             {showRename ? (
@@ -107,37 +122,38 @@ export default function SelectedDetails({
                   onRenameNode(nodeId, trimmed);
                   setName(trimmed);
                 }}
-                className="flex items-center gap-1"
+                className="flex items-center gap-2"
               >
                 <input
-                  className="w-40 rounded border px-1 py-0.5 text-xs"
+                  className="w-40 rounded-lg border border-white/15 bg-gray-900 px-2.5 py-1.5 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  placeholder="Node name"
                 />
                 <button
                   type="submit"
-                  className="rounded bg-slate-900 px-2 py-0.5 text-[10px] text-white"
+                  className="rounded-lg bg-[#9AA4B2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#9AA4B2]/90 transition-colors"
                 >
                   Rename
                 </button>
               </form>
             ) : (
-              <div className="text-sm font-semibold">{toDisplayName(name)}</div>
+              <div className="text-sm font-semibold text-white">{toDisplayName(name)}</div>
             )}
           </div>
-          <div className="text-[11px] text-slate-400">ID: {nodeId}</div>
+          <div className="text-[10px] text-white/50 font-mono shrink-0">ID: {nodeId}</div>
         </div>
 
         {Object.keys(nodeAttrs).length > 0 && (
-          <div className="mb-2">
-            <div className="mb-1 text-[11px] font-semibold text-slate-600">
+          <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
               Extra information
             </div>
-            <ul className="space-y-0.5">
+            <ul className="space-y-1">
               {Object.entries(nodeAttrs).map(([k, v]) => (
-                <li key={k}>
-                  <span className="font-medium">{k}:</span>{" "}
-                  <span className="text-slate-600">
+                <li key={k} className="text-xs">
+                  <span className="font-medium text-white/80">{k}:</span>{" "}
+                  <span className="text-white/60">
                     {typeof v === "string" ? v : JSON.stringify(v)}
                   </span>
                 </li>
@@ -188,40 +204,50 @@ export default function SelectedDetails({
   }
 
   const hasCallMeta = kind === "CALLS" && (endpoints.length > 0 || rpm > 0);
+  const firstDetectionColor = detections.length > 0
+    ? colorForDetectionKind(normalizeDetectionKind((detections[0] as any).kind) ?? "")
+    : null;
 
   return (
-    <div className="rounded border bg-white px-3 py-3 text-xs text-slate-700 shadow-sm">
-      <div className="mb-2 text-[11px] uppercase text-slate-500">Edge</div>
-      <div className="mb-1 text-sm font-semibold">
+    <div
+      className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
+      style={
+        firstDetectionColor
+          ? { borderLeftWidth: "4px", borderLeftColor: firstDetectionColor }
+          : undefined
+      }
+    >
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">Edge</div>
+      <div className="mb-2 text-sm font-semibold text-white">
         {toDisplayName(fromName)} → {toDisplayName(toName)}
       </div>
-      <div className="mb-2 text-[11px] text-slate-500">
-        Kind: <span className="font-semibold">{kind}</span>
+      <div className="mb-3 text-[11px] text-white/70">
+        Kind: <span className="font-semibold text-[#9AA4B2]">{kind}</span>
       </div>
 
       {hasCallMeta && (
-        <div className="mb-2">
-          <div className="mb-1 text-[11px] font-semibold text-slate-600">
+        <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
             Call details
           </div>
           {endpoints.length > 0 && (
-            <div className="mb-0.5 text-[11px] text-slate-600">
-              <span className="font-medium">Endpoints:</span>{" "}
+            <div className="mb-1 text-[11px] text-white/70">
+              <span className="font-medium text-white/80">Endpoints:</span>{" "}
               {endpoints.join(", ")}
             </div>
           )}
-          <div className="text-[11px] text-slate-600">
-            <span className="font-medium">Rate per minute:</span> {rpm}
+          <div className="text-[11px] text-white/70">
+            <span className="font-medium text-white/80">Rate per minute:</span> {rpm}
           </div>
         </div>
       )}
 
       {Object.keys(attrs).length > 0 && (
-        <div className="mb-2">
-          <div className="mb-1 text-[11px] font-semibold text-slate-600">
+        <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
             Extra information
           </div>
-          <ul className="space-y-0.5">
+          <ul className="space-y-1">
             {Object.entries(attrs).map(([k, v]) => {
               if (
                 kind === "CALLS" &&
@@ -229,9 +255,9 @@ export default function SelectedDetails({
               )
                 return null;
               return (
-                <li key={k}>
-                  <span className="font-medium">{k}:</span>{" "}
-                  <span className="text-slate-600">
+                <li key={k} className="text-xs">
+                  <span className="font-medium text-white/80">{k}:</span>{" "}
+                  <span className="text-white/60">
                     {typeof v === "string" ? v : JSON.stringify(v)}
                   </span>
                 </li>
@@ -249,31 +275,64 @@ export default function SelectedDetails({
 function DetectionsList({ detections }: { detections: Detection[] }) {
   if (!detections.length) {
     return (
-      <div className="mt-1 text-[11px] text-slate-500">
+      <div className="text-[11px] text-white/50 italic">
         No anti-patterns directly linked to this item.
       </div>
     );
   }
 
   return (
-    <div className="mt-2">
-      <div className="mb-1 text-[11px] font-semibold text-slate-600">
-        Anti-patterns affecting this item
+    <div className="mt-3 pt-3 border-t border-white/10">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+          Anti-patterns affecting this item
+        </span>
+        <span className="flex gap-1">
+          {detections.map((d, idx) => {
+            const kind = normalizeDetectionKind((d as any).kind);
+            const color = colorForDetectionKind(kind ?? "");
+            return (
+              <span
+                key={idx}
+                className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white/20 shrink-0"
+                style={{ background: color }}
+                title={antipatternKindLabel(kind ?? "")}
+              />
+            );
+          })}
+        </span>
       </div>
-      <ul className="space-y-1">
-        {detections.map((d, idx) => (
-          <li key={idx} className="rounded bg-slate-50 px-2 py-1">
-            <div className="text-[11px] font-semibold">
-              {d.title}{" "}
-              <span className="ml-1 text-[10px] uppercase text-slate-500">
-                ({d.severity})
-              </span>
-            </div>
-            {d.summary && (
-              <div className="text-[11px] text-slate-600">{d.summary}</div>
-            )}
-          </li>
-        ))}
+      <ul className="space-y-2">
+        {detections.map((d, idx) => {
+          const kind = normalizeDetectionKind((d as any).kind);
+          const color = colorForDetectionKind(kind ?? "");
+          return (
+            <li
+              key={idx}
+              className="rounded-lg border-l-4 pl-3 py-2 pr-3"
+              style={{
+                borderLeftColor: color,
+                backgroundColor: color.startsWith("#") && color.length === 7 ? `${color}18` : "rgba(255,255,255,0.05)",
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block h-3 w-3 rounded-full shrink-0 ring-1 ring-white/20"
+                  style={{ background: color }}
+                />
+                <span className="text-[11px] font-semibold text-white/95">
+                  {d.title}{" "}
+                  <span className="text-[10px] uppercase font-medium opacity-80" style={{ color }}>
+                    ({d.severity})
+                  </span>
+                </span>
+              </div>
+              {d.summary && (
+                <div className="text-[11px] text-white/60 mt-1 ml-5">{d.summary}</div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

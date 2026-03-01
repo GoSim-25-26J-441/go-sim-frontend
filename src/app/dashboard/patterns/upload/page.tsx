@@ -19,6 +19,7 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
+  const [searchingVersions, setSearchingVersions] = useState(false);
 
   const setLast = useAmgApdStore((s) => s.setLast);
   const editedYaml = useAmgApdStore((s) => s.editedYaml);
@@ -118,17 +119,39 @@ export default function UploadPage() {
     }
   }
 
-  if (loading) {
+  async function handleViewExistingVersions() {
+    setSearchingVersions(true);
+    try {
+      const res = await fetch("/api/amg-apd/versions", {
+        headers: getAmgApdHeaders(),
+      });
+      if (!res.ok) throw new Error("Failed to fetch versions");
+      const data = await res.json();
+      const versions = data?.versions ?? [];
+      if (versions.length === 0) {
+        alert("No existing versions found. Upload a YAML first to create one.");
+        return;
+      }
+      router.push("/dashboard/patterns");
+    } catch (e: any) {
+      alert("Could not load versions: " + (e?.message ?? "Unknown error"));
+      setSearchingVersions(false);
+    }
+  }
+
+  if (loading || searchingVersions) {
     return (
       <div className="min-h-[calc(100vh-3rem)] flex items-center justify-center">
         <div className="w-full max-w-2xl rounded-xl border border-border bg-card p-8 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-lg font-semibold mb-2">
-                Analyzing architecture…
+                {searchingVersions ? "Searching for versions…" : "Analyzing architecture…"}
               </h1>
               <p className="text-sm opacity-70">
-                Parsing YAML, building the graph, and running detectors.
+                {searchingVersions
+                  ? "Loading your saved architecture versions."
+                  : "Parsing YAML, building the graph, and running detectors."}
               </p>
             </div>
             <div className="flex h-8 w-8 items-center justify-center">
@@ -148,12 +171,14 @@ export default function UploadPage() {
             <h1 className="text-2xl font-semibold mb-2">Upload YAML to Begin Analysis</h1>
             <p className="text-sm opacity-70">Upload your architecture specification to visualize and detect anti-patterns</p>
           </div>
-          <Link
-            href="/dashboard/patterns"
-            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 transition-colors"
+          <button
+            type="button"
+            onClick={handleViewExistingVersions}
+            disabled={searchingVersions}
+            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            View Existing Versions
-          </Link>
+            {searchingVersions ? "Searching…" : "View Existing Versions"}
+          </button>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-5">
