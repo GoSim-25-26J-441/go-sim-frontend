@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -15,8 +15,12 @@ import {
   TrendingUp,
   BarChart3,
 } from "lucide-react";
-import { SimulationRun } from "@/types/simulation";
-import { getSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
+import { SimulationRun, TimeSeriesData } from "@/types/simulation";
+import {
+  getSimulationRun,
+  stopSimulationRun,
+  streamSimulationRunEvents,
+} from "@/lib/api-client/simulation";
 import { MetricsChart } from "@/components/simulation/MetricsChart";
 import { MultiAxisChart } from "@/components/simulation/MultiAxisChart";
 import { NodeMetricsCard } from "@/components/simulation/NodeMetricsCard";
@@ -25,15 +29,20 @@ import { ResourceGraph } from "@/components/simulation/ResourceGraph";
 import { ResourceGraphViewer } from "@/components/simulation/ResourceGraphViewer";
 import { DynamicConfigControl } from "@/components/simulation/DynamicConfigControl";
 
+function validateTimeSeriesPoint(v: number): number {
+  return typeof v === "number" && isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+}
+
 export default function SimulationDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
   const [run, setRun] = useState<SimulationRun | null>(null);
   const [loading, setLoading] = useState(true);
+  const [liveTimeSeries, setLiveTimeSeries] = useState<TimeSeriesData[]>([]);
+  const closeStreamRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    // Fetch simulation run from API (currently uses dummy data)
     getSimulationRun(id)
       .then((data) => {
         setRun(data);
@@ -44,6 +53,69 @@ export default function SimulationDetailPage() {
         setLoading(false);
       });
   }, [id]);
+
+  // Subscribe to SSE events when run is running
+  useEffect(() => {
+    if (!run || run.status !== "running" || run.id !== id) {
+      if (closeStreamRef.current) {
+        closeStreamRef.current();
+        closeStreamRef.current = null;
+      }
+      return;
+    }
+    setLiveTimeSeries([]);
+    closeStreamRef.current = streamSimulationRunEvents(id, {
+      onEvent(ev) {
+        const d = ev.data as Record<string, unknown> | undefined;
+        if (ev.type === "update") {
+          getSimulationRun(id).then(setRun).catch(console.error);
+          return;
+        }
+        if (ev.type === "status_change" && d && "status" in d) {
+          setRun((prev) =>
+            prev ? { ...prev, status: String(d.status) as SimulationRun["status"] } : prev
+          );
+          return;
+        }
+        if (ev.type === "metric_update" && d) {
+          const data = d.data ?? d;
+          const raw = typeof data === "object" && data !== null ? data as Record<string, unknown> : {};
+          const value = Number(raw.value ?? 0);
+          const ts = (raw.timestamp as string) ?? new Date().toISOString();
+          const metric = String(raw.metric ?? "");
+          const labels = (raw.labels as Record<string, string>) ?? {};
+          setLiveTimeSeries((prev) => {
+            const last = prev[prev.length - 1];
+            const base = last
+              ? { ...last, timestamp: ts }
+              : {
+                  timestamp: ts,
+                  cpu_util_pct: 0,
+                  mem_util_pct: 0,
+                  rps: 0,
+                  latency_ms: 0,
+                  concurrent_users: 0,
+                  error_rate: 0,
+                };
+            const pct = Math.min(100, Math.max(0, metric.includes("memory") ? value * 100 : value * 100));
+            if (metric.includes("cpu")) base.cpu_util_pct = validateTimeSeriesPoint(pct);
+            else if (metric.includes("memory") || metric.includes("mem")) base.mem_util_pct = validateTimeSeriesPoint(pct);
+            return [...prev.slice(-199), base];
+          });
+        }
+      },
+      onClose() {
+        closeStreamRef.current = null;
+        getSimulationRun(id).then(setRun).catch(console.error);
+      },
+    });
+    return () => {
+      if (closeStreamRef.current) {
+        closeStreamRef.current();
+        closeStreamRef.current = null;
+      }
+    };
+  }, [id, run?.id, run?.status]);
 
   if (loading) {
     return (
@@ -71,6 +143,9 @@ export default function SimulationDetailPage() {
 
   const isRunning = run.status === "running";
   const hasResults = !!run.results;
+  const timeSeriesForCharts =
+    liveTimeSeries.length > 0 ? liveTimeSeries : (run.results?.time_series ?? []);
+  const nodeMetricsForCharts = run.results?.node_metrics ?? [];
 
   return (
     <div className="p-6 space-y-6">
@@ -219,17 +294,18 @@ export default function SimulationDetailPage() {
         />
       )}
 
-      {/* Results */}
-      {hasResults && (
+      {/* Results (from run.results or live stream) */}
+      {(hasResults || timeSeriesForCharts.length > 0) && (
         <>
-          {/* Summary Stats */}
-          <SummaryStats results={run.results!} />
+          {run.results && (
+            <SummaryStats results={run.results} />
+          )}
 
           {/* Resource Graph */}
           <div className="relative">
             <ResourceGraph
-              timeSeriesData={run.results!.time_series}
-              nodeMetrics={run.results!.node_metrics}
+              timeSeriesData={timeSeriesForCharts}
+              nodeMetrics={nodeMetricsForCharts}
             />
           </div>
 
@@ -240,7 +316,7 @@ export default function SimulationDetailPage() {
               Performance Overview (Multi-Axis)
             </h3>
             <MultiAxisChart
-              data={run.results!.time_series}
+              data={timeSeriesForCharts}
               metrics={[
                 {
                   key: "rps",
@@ -273,7 +349,7 @@ export default function SimulationDetailPage() {
                 Performance Metrics
               </h3>
               <MetricsChart
-                data={run.results!.time_series}
+                data={timeSeriesForCharts}
                 metrics={["rps", "latency_ms"]}
                 labels={["RPS", "Latency (ms)"]}
                 colors={["#8b5cf6", "#f59e0b"]}
@@ -289,7 +365,7 @@ export default function SimulationDetailPage() {
                 Load Metrics
               </h3>
               <MetricsChart
-                data={run.results!.time_series}
+                data={timeSeriesForCharts}
                 metrics={["concurrent_users", "error_rate"]}
                 labels={["Concurrent Users", "Error Rate"]}
                 colors={["#06b6d4", "#ef4444"]}
@@ -302,22 +378,25 @@ export default function SimulationDetailPage() {
           </div>
 
           {/* Resource Topology Graph */}
-          <div>
-            <ResourceGraphViewer
-              nodeMetrics={run.results!.node_metrics}
-              config={run.config}
-            />
-          </div>
-
-          {/* Node Metrics */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Node Metrics</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {run.results!.node_metrics.map((node) => (
-                <NodeMetricsCard key={node.node_id} node={node} />
-              ))}
+          {nodeMetricsForCharts.length > 0 && (
+            <div>
+              <ResourceGraphViewer
+                nodeMetrics={nodeMetricsForCharts}
+                config={run.config}
+              />
             </div>
-          </div>
+          )}
+
+          {nodeMetricsForCharts.length > 0 && (
+            <div>
+              <h2 className="text-lg font-semibold text-white mb-4">Node Metrics</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {nodeMetricsForCharts.map((node) => (
+                  <NodeMetricsCard key={node.node_id} node={node} />
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
 

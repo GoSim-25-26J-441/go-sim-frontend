@@ -1,6 +1,33 @@
-// Simulation types matching simulation-core data structures
+// Simulation types matching simulation-core and go-sim-backend API
 
 export type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/** Backend API run shape (go-sim-backend /api/v1/simulation) */
+export interface BackendSimulationRun {
+  run_id: string;
+  user_id?: string;
+  project_id?: string;
+  engine_run_id?: string;
+  status: SimulationStatus;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string | null;
+  metadata?: {
+    name?: string;
+    description?: string;
+    config?: SimulationConfig;
+    results?: SimulationResults;
+    error?: string;
+  };
+}
+
+/** Create run request body (POST /api/v1/simulation/runs) */
+export interface CreateSimulationRunRequest {
+  scenario_yaml?: string;
+  duration_ms?: number;
+  real_time_mode?: boolean;
+  metadata?: Record<string, unknown>;
+}
 
 export interface SimulationRun {
   id: string;
