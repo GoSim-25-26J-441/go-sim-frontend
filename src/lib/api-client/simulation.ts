@@ -70,10 +70,13 @@ workload:
 }
 
 /**
- * Get all simulation runs (GET /api/v1/simulation/runs)
+ * Get all simulation runs for a project (GET /api/v1/simulation/projects/:project_id/runs)
  */
-export async function getSimulationRuns(): Promise<SimulationRun[]> {
-  const response = await authenticatedFetch(`${BASE_URL}/runs`, { method: "GET" });
+export async function getSimulationRuns(projectId: string): Promise<SimulationRun[]> {
+  const response = await authenticatedFetch(
+    `${BASE_URL}/projects/${encodeURIComponent(projectId)}/runs`,
+    { method: "GET" }
+  );
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? "Failed to fetch simulation runs");
@@ -99,10 +102,11 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
 }
 
 /**
- * Create a new simulation run (POST /api/v1/simulation/runs).
+ * Create a new simulation run for a project (POST /api/v1/simulation/projects/:project_id/runs).
  * Accepts either backend-shaped request or legacy frontend config; builds scenario_yaml and metadata.
  */
 export async function createSimulationRun(
+  projectId: string,
   input:
     | CreateSimulationRunRequest
     | (Omit<SimulationRun, "id" | "status" | "created_at" | "started_at" | "completed_at" | "duration_seconds" | "results" | "error">)
@@ -124,11 +128,14 @@ export async function createSimulationRun(
       },
     };
   }
-  const response = await authenticatedFetch(`${BASE_URL}/runs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const response = await authenticatedFetch(
+    `${BASE_URL}/projects/${encodeURIComponent(projectId)}/runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? "Failed to create simulation");
@@ -218,13 +225,21 @@ export async function deleteSimulationRun(id: string): Promise<void> {
   }
 }
 
-/** SSE event types from GET /api/v1/simulation/runs/:id/events (backend proxies simulation-core events) */
+/**
+ * SSE event types from GET /api/v1/simulation/runs/:id/events.
+ * Backend (go-sim-backend) subscribes to Redis pub/sub; events are published by the metrics
+ * proxy that reads from simulation-core GET /v1/runs/{id}/metrics/stream.
+ * Proxy events have payload shape: { event, run_id, data } (inner payload in .data).
+ */
 export type SimulationRunEventType =
-  | "update"
+  | "initial"   // first message: { run: SimulationRun }
+  | "update"    // run updated: { run: SimulationRun }
   | "metric_update"
   | "status_change"
   | "metrics_snapshot"
-  | "complete";
+  | "optimization_progress"
+  | "complete"
+  | "error";
 
 export interface SimulationRunEvent {
   type: SimulationRunEventType;
@@ -233,9 +248,51 @@ export interface SimulationRunEvent {
 }
 
 /**
+ * Backend wraps proxy events as { event, run_id, data }; simulation-core sends flat payload in data.
+ * Use ev.data.data for metric_update, status_change, metrics_snapshot, etc.
+ */
+export interface MetricUpdatePayload {
+  metric?: string;
+  value?: number;
+  /** simulation-core: RFC3339Nano string */
+  timestamp?: string;
+  timestamp_unix_ms?: number;
+  labels?: { service?: string; instance?: string; [k: string]: string | undefined };
+}
+
+/** metrics_snapshot.data from simulation-core (convertMetricsToJSON) */
+export interface MetricsSnapshotPayload {
+  metrics?: {
+    total_requests?: number;
+    successful_requests?: number;
+    failed_requests?: number;
+    latency_p50_ms?: number;
+    latency_p95_ms?: number;
+    latency_p99_ms?: number;
+    latency_mean_ms?: number;
+    throughput_rps?: number;
+    service_metrics?: Array<{
+      service_name?: string;
+      request_count?: number;
+      error_count?: number;
+      cpu_utilization?: number;
+      memory_utilization?: number;
+      active_replicas?: number;
+      [k: string]: unknown;
+    }>;
+    [k: string]: unknown;
+  };
+}
+
+/**
  * Subscribe to real-time run events via SSE (GET /api/v1/simulation/runs/:id/events).
  * Uses fetch so we can send Authorization header. Calls onEvent for each event and onClose when stream ends.
  * Returns an abort function to close the stream.
+ *
+ * Backend (go-sim-backend) streams events from Redis; the metrics proxy republishes simulation-core
+ * SSE (GET /v1/runs/{engine_run_id}/metrics/stream) into Redis. Proxy events have payload
+ * { event, run_id, data } — use ev.data.data for the inner payload (metric_update, status_change,
+ * metrics_snapshot, complete, error). "initial" and "update" send { run } only.
  */
 export function streamSimulationRunEvents(
   runId: string,
@@ -266,6 +323,25 @@ export function streamSimulationRunEvents(
       const decoder = new TextDecoder();
       let buffer = "";
       let currentType = "message";
+      const dataLines: string[] = [];
+      const flushEvent = () => {
+        if (dataLines.length === 0) return;
+        const raw = dataLines.join("\n").trim();
+        dataLines.length = 0;
+        try {
+          const data = raw ? JSON.parse(raw) : undefined;
+          const event: SimulationRunEvent = {
+            type: currentType as SimulationRunEventType,
+            data,
+            timestamp: new Date().toISOString(),
+          };
+          callbacks.onEvent(event);
+          if (event.type === "complete") callbacks.onClose?.();
+        } catch {
+          callbacks.onEvent({ type: currentType as SimulationRunEventType, data: raw, timestamp: new Date().toISOString() });
+        }
+        currentType = "message";
+      };
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -275,23 +351,16 @@ export function streamSimulationRunEvents(
           buffer = lines.pop() ?? "";
           for (const line of lines) {
             if (line.startsWith("event: ")) {
+              flushEvent();
               currentType = line.slice(7).trim();
             } else if (line.startsWith("data: ")) {
-              const raw = line.slice(6);
-              try {
-                const data = raw ? JSON.parse(raw) : undefined;
-                callbacks.onEvent({
-                  type: currentType as SimulationRunEventType,
-                  data,
-                  timestamp: new Date().toISOString(),
-                });
-              } catch {
-                callbacks.onEvent({ type: currentType as SimulationRunEventType, data: raw, timestamp: new Date().toISOString() });
-              }
-              currentType = "message";
+              dataLines.push(line.slice(6));
+            } else if (line.trim() === "") {
+              flushEvent();
             }
           }
         }
+        flushEvent();
       } catch (e) {
         if ((e as Error).name !== "AbortError") callbacks.onError?.(e as Error);
       } finally {
