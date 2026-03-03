@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Play } from "lucide-react";
@@ -88,6 +88,118 @@ interface ScenarioState {
   services: ScenarioService[];
   workload: ScenarioWorkloadPattern[];
   policies?: ScenarioPolicies;
+}
+
+function scenarioToYaml(scenario: ScenarioState): string {
+  const lines: string[] = [];
+
+  // hosts
+  lines.push("hosts:");
+  if (scenario.hosts.length === 0) {
+    lines.push("  []");
+  } else {
+    for (const host of scenario.hosts) {
+      lines.push(`  - id: ${host.id || "host-1"}`);
+      lines.push(`    cores: ${host.cores || 1}`);
+    }
+  }
+
+  // services
+  lines.push("", "services:");
+  if (scenario.services.length === 0) {
+    lines.push("  []");
+  } else {
+    for (const svc of scenario.services) {
+      lines.push(`  - id: ${svc.id || "svc1"}`);
+      lines.push(`    replicas: ${svc.replicas || 1}`);
+      lines.push(`    model: ${svc.model || "cpu"}`);
+
+      const cpuCores = svc.cpu_cores && svc.cpu_cores > 0 ? svc.cpu_cores : 1.0;
+      const memoryMb = svc.memory_mb && svc.memory_mb > 0 ? svc.memory_mb : 512.0;
+      lines.push(`    cpu_cores: ${cpuCores}`);
+      lines.push(`    memory_mb: ${memoryMb}`);
+
+      lines.push("    endpoints:");
+      if (svc.endpoints.length === 0) {
+        lines.push("      []");
+      } else {
+        for (const ep of svc.endpoints) {
+          lines.push(`      - path: ${ep.path}`);
+          lines.push(`        mean_cpu_ms: ${ep.mean_cpu_ms}`);
+          lines.push(`        cpu_sigma_ms: ${ep.cpu_sigma_ms}`);
+          const defaultMem = ep.default_memory_mb && ep.default_memory_mb > 0 ? ep.default_memory_mb : 10.0;
+          lines.push(`        default_memory_mb: ${defaultMem}`);
+
+          // downstream
+          lines.push("        downstream:");
+          if (!ep.downstream || ep.downstream.length === 0) {
+            lines.push("          []");
+          } else {
+            for (const d of ep.downstream) {
+              lines.push(`          - to: ${d.to}`);
+              lines.push(`            call_count_mean: ${d.call_count_mean}`);
+              lines.push("            call_latency_ms:");
+              lines.push(`              mean: ${d.call_latency_ms.mean}`);
+              lines.push(`              sigma: ${d.call_latency_ms.sigma}`);
+              lines.push(`            downstream_fraction_cpu: ${d.downstream_fraction_cpu}`);
+            }
+          }
+
+          // net latency
+          lines.push("        net_latency_ms:");
+          lines.push(`          mean: ${ep.net_latency_ms.mean}`);
+          lines.push(`          sigma: ${ep.net_latency_ms.sigma}`);
+        }
+      }
+    }
+  }
+
+  // workload
+  lines.push("", "workload:");
+  if (scenario.workload.length === 0) {
+    lines.push("  []");
+  } else {
+    for (const w of scenario.workload) {
+      lines.push(`  - from: ${w.from || "client"}`);
+      lines.push(`    to: ${w.to || "svc1:/test"}`);
+      lines.push("    arrival:");
+      lines.push(`      type: ${w.arrival.type}`);
+      lines.push(`      rate_rps: ${w.arrival.rate_rps ?? 0}`);
+
+      if (w.arrival.type === "normal") {
+        lines.push(`      stddev_rps: ${w.arrival.stddev_rps ?? 0}`);
+      } else if (w.arrival.type === "bursty") {
+        lines.push(`      burst_rate_rps: ${w.arrival.burst_rate_rps ?? 0}`);
+        lines.push(
+          `      burst_duration_seconds: ${w.arrival.burst_duration_seconds ?? 0}`
+        );
+        lines.push(
+          `      quiet_duration_seconds: ${w.arrival.quiet_duration_seconds ?? 0}`
+        );
+      } else {
+        // keep optional fields present with safe defaults so the engine has everything it expects
+        lines.push(`      stddev_rps: ${w.arrival.stddev_rps ?? 0}`);
+        lines.push(`      burst_rate_rps: ${w.arrival.burst_rate_rps ?? 0}`);
+        lines.push(
+          `      burst_duration_seconds: ${w.arrival.burst_duration_seconds ?? 0}`
+        );
+        lines.push(
+          `      quiet_duration_seconds: ${w.arrival.quiet_duration_seconds ?? 0}`
+        );
+      }
+    }
+  }
+
+  // policies (optional, passed through)
+  lines.push("", "policies:");
+  if (!scenario.policies || Object.keys(scenario.policies).length === 0) {
+    lines.push("  {}");
+  } else {
+    // For now, keep this minimal – backend treats it as pass-through.
+    lines.push("  # policies editing not yet implemented");
+  }
+
+  return lines.join("\n");
 }
 
 export default function ProjectNewSimulationPage() {
@@ -179,6 +291,8 @@ workload:
   });
 
   const arrivalTypes: ArrivalType[] = ["poisson", "uniform", "normal", "bursty", "constant"];
+
+  const scenarioYaml = useMemo(() => scenarioToYaml(scenario), [scenario]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -932,6 +1046,20 @@ workload:
                 required
               />
             </div>
+          </div>
+
+          {/* Scenario YAML preview (based on editor) */}
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4">Scenario YAML (preview)</h2>
+            <p className="text-xs text-white/60 mb-2">
+              This is the YAML that will be generated from the editor and sent to the simulation
+              engine in the new flow. In sample mode it should mirror the predefined scenario file.
+            </p>
+            <textarea
+              readOnly
+              value={scenarioYaml}
+              className="w-full h-56 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
+            />
           </div>
 
           {/* Simulation Settings */}
