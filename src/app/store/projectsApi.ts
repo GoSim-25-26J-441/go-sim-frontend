@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
+import { env } from "@/lib/env";
 
 export type Project = {
   id: string;
@@ -47,7 +48,11 @@ export const projectsApi = createApi({
   tagTypes: ["Projects"],
   endpoints: (b) => ({
     getProjects: b.query<Project[], void>({
-      query: () => ({ url: "/api/projects", method: "GET" }),
+      query: () => ({
+        // Call backend directly instead of Next.js proxy
+        url: `${env.BACKEND_BASE}/api/v1/projects`,
+        method: "GET",
+      }),
       transformResponse: (res: unknown): Project[] => {
         const data = res as any;
         console.log("Raw projects API response:", data);
@@ -121,7 +126,7 @@ export const projectsApi = createApi({
 
     createProject: b.mutation<Project, CreateProjectArg>({
       query: (body) => ({
-        url: "/api/projects",
+        url: `${env.BACKEND_BASE}/api/v1/projects`,
         method: "POST",
         headers: { "content-type": "application/json" },
         body: {
@@ -158,7 +163,7 @@ export const projectsApi = createApi({
 
     updateProject: b.mutation<Project, UpdateProjectArg>({
       query: ({ id, name }) => ({
-        url: `/api/projects/${id}`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${id}`,
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: { name },
@@ -177,7 +182,7 @@ export const projectsApi = createApi({
 
     deleteProject: b.mutation<void, string>({
       query: (id) => ({
-        url: `/api/projects/${id}`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${id}`,
         method: "DELETE",
       }),
       invalidatesTags: ["Projects"],
@@ -202,7 +207,7 @@ export const projectsApi = createApi({
       string
     >({
       query: (projectId) => ({
-        url: `/api/projects/${projectId}/summary`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/summary`,
         method: "GET",
       }),
       transformResponse: (res: unknown) => {
@@ -221,7 +226,7 @@ export const projectsApi = createApi({
       { projectId: string; diagram: unknown }
     >({
       query: ({ projectId, diagram }) => ({
-        url: `/api/projects/${projectId}/diagram`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram`,
         method: "POST",
         headers: { "content-type": "application/json" },
         body: diagram,
