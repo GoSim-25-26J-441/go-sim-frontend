@@ -1,6 +1,8 @@
 // src/modules/di/api.ts
 // keep your existing HistoryMsg + getHistory in chatClient.ts
 
+import { diFetchClient } from "./clientFetch";
+
 export type ChatReply = {
   ok: boolean;
   answer: string;
@@ -20,11 +22,11 @@ export async function send(
   message: string,
   opts?: { mode?: string; forceLLM?: boolean },
 ): Promise<ChatReply> {
-  const body: Record<string, unknown> = { message }; 
+  const body: Record<string, unknown> = { message };
   if (opts?.mode) body.mode = opts.mode;
   if (opts?.forceLLM) body.force_llm = true;
 
-  const res = await fetch(`/api/di/jobs/${jobId}/chat`, {
+  const res = await diFetchClient(`/api/di/jobs/${jobId}/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
