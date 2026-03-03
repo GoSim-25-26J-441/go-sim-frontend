@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
@@ -20,10 +20,115 @@ interface SimulationFormData {
   scenario: string;
 }
 
+// Scenario editor state mirroring simulation-core YAML schema
+interface ScenarioHost {
+  id: string;
+  cores: number;
+}
+
+interface ScenarioDownstreamCallLatency {
+  mean: number;
+  sigma: number;
+}
+
+interface ScenarioDownstreamCall {
+  to: string;
+  call_count_mean: number;
+  call_latency_ms: ScenarioDownstreamCallLatency;
+  downstream_fraction_cpu: number;
+}
+
+interface ScenarioNetLatency {
+  mean: number;
+  sigma: number;
+}
+
+interface ScenarioEndpoint {
+  path: string;
+  mean_cpu_ms: number;
+  cpu_sigma_ms: number;
+  default_memory_mb?: number;
+  downstream: ScenarioDownstreamCall[];
+  net_latency_ms: ScenarioNetLatency;
+}
+
+interface ScenarioService {
+  id: string;
+  replicas: number;
+  model: string;
+  cpu_cores?: number;
+  memory_mb?: number;
+  endpoints: ScenarioEndpoint[];
+}
+
+type ArrivalType = "poisson" | "uniform" | "normal" | "bursty" | "constant";
+
+interface ScenarioArrival {
+  type: ArrivalType;
+  rate_rps: number;
+  stddev_rps?: number;
+  burst_rate_rps?: number;
+  burst_duration_seconds?: number;
+  quiet_duration_seconds?: number;
+}
+
+interface ScenarioWorkloadPattern {
+  from: string;
+  to: string;
+  arrival: ScenarioArrival;
+}
+
+interface ScenarioPolicies {
+  // Passed through to simulation-core; keep as unknown for now
+  [key: string]: unknown;
+}
+
+interface ScenarioState {
+  hosts: ScenarioHost[];
+  services: ScenarioService[];
+  workload: ScenarioWorkloadPattern[];
+  policies?: ScenarioPolicies;
+}
+
 export default function ProjectNewSimulationPage() {
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
+  const searchParams = useSearchParams();
+  const version = searchParams.get("version");
+  const isSampleScenario = version === "sample";
+
+  const SAMPLE_SCENARIO_YAML = `hosts:
+  - id: host-1
+    cores: 4
+
+services:
+  - id: users
+    replicas: 2
+    model: cpu
+    cpu_cores: 1.0
+    memory_mb: 512
+    endpoints:
+      - path: /login
+        mean_cpu_ms: 10
+        cpu_sigma_ms: 2
+        default_memory_mb: 16
+        downstream: []
+        net_latency_ms:
+          mean: 5
+          sigma: 1
+
+workload:
+  - from: client
+    to: users:/login
+    arrival:
+      type: poisson
+      rate_rps: 10
+      stddev_rps: 0
+      burst_rate_rps: 0
+      burst_duration_seconds: 0
+      quiet_duration_seconds: 0
+`;
 
   const [formData, setFormData] = useState<SimulationFormData>({
     name: "",
@@ -39,6 +144,39 @@ export default function ProjectNewSimulationPage() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [scenario, setScenario] = useState<ScenarioState>({
+    hosts: [{ id: "host-1", cores: 4 }],
+    services: [
+      {
+        id: "svc1",
+        replicas: 1,
+        model: "cpu",
+        cpu_cores: 1,
+        memory_mb: 512,
+        endpoints: [
+          {
+            path: "/test",
+            mean_cpu_ms: 10,
+            cpu_sigma_ms: 2,
+            default_memory_mb: 16,
+            downstream: [],
+            net_latency_ms: { mean: 5, sigma: 1 },
+          },
+        ],
+      },
+    ],
+    workload: [
+      {
+        from: "client",
+        to: "svc1:/test",
+        arrival: {
+          type: "poisson",
+          rate_rps: 10,
+        },
+      },
+    ],
+    policies: undefined,
+  });
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -98,7 +236,7 @@ export default function ProjectNewSimulationPage() {
     setIsSubmitting(true);
 
     try {
-      const simulationRun = await createSimulationRun(projectId, {
+      const simulationRun = await createSimulationRun({
         name: formData.name,
         config: {
           nodes: formData.nodes,
@@ -148,7 +286,9 @@ export default function ProjectNewSimulationPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">New Simulation</h1>
           <p className="text-sm text-white/60 mt-1">
-            Configure and start a new simulation run for this project
+            {isSampleScenario
+              ? "Sample scenario: create a test simulation using a predefined YAML."
+              : "Configure and start a new simulation run for this project"}
           </p>
         </div>
       </div>
