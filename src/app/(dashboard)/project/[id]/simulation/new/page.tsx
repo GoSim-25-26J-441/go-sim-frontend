@@ -292,7 +292,10 @@ workload:
 
   const arrivalTypes: ArrivalType[] = ["poisson", "uniform", "normal", "bursty", "constant"];
 
-  const scenarioYaml = useMemo(() => scenarioToYaml(scenario), [scenario]);
+  const scenarioYaml = useMemo(
+    () => (isSampleScenario ? SAMPLE_SCENARIO_YAML : scenarioToYaml(scenario)),
+    [isSampleScenario, scenario]
+  );
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -366,7 +369,9 @@ workload:
             vcpu_per_node: formData.vcpu_per_node,
             memory_gb_per_node: formData.memory_gb_per_node,
           },
-          scenario: formData.scenario,
+          // In sample mode, send the hardcoded sample YAML; otherwise keep using
+          // the legacy scenario selector string for now.
+          scenario: isSampleScenario ? SAMPLE_SCENARIO_YAML : formData.scenario,
           description: formData.description || undefined,
         },
       });
