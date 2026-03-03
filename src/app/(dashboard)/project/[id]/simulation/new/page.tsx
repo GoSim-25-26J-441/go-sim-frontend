@@ -256,6 +256,7 @@ workload:
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [scenarioError, setScenarioError] = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioState>({
     hosts: [{ id: "host-1", cores: 4 }],
     services: [
@@ -321,6 +322,7 @@ workload:
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
+    setScenarioError(null);
 
     if (!formData.name.trim()) {
       newErrors.name = "Name is required";
@@ -339,6 +341,50 @@ workload:
     }
     if (formData.duration_seconds < 60) {
       newErrors.duration_seconds = "Duration must be at least 60 seconds";
+    }
+
+    // Basic scenario-level validation for the visual editor
+    let scenarioIssue: string | null = null;
+
+    if (scenario.hosts.length === 0) {
+      scenarioIssue = "At least one host is required.";
+    } else if (
+      scenario.hosts.some(
+        (h) => !h.id.trim() || !Number.isFinite(h.cores) || h.cores < 1
+      )
+    ) {
+      scenarioIssue = "Each host must have an ID and CPU cores of at least 1.";
+    } else if (scenario.services.length === 0) {
+      scenarioIssue = "At least one service is required.";
+    } else if (
+      scenario.services.some(
+        (s) =>
+          !s.id.trim() ||
+          !Number.isFinite(s.replicas) ||
+          s.replicas < 1 ||
+          !s.model.trim()
+      )
+    ) {
+      scenarioIssue =
+        "Each service must have an ID, model, and replicas of at least 1.";
+    } else if (scenario.workload.length === 0) {
+      scenarioIssue = "At least one workload pattern is required.";
+    } else if (
+      scenario.workload.some(
+        (w) =>
+          !w.from.trim() ||
+          !w.to.trim() ||
+          !Number.isFinite(w.arrival.rate_rps) ||
+          w.arrival.rate_rps < 0
+      )
+    ) {
+      scenarioIssue =
+        "Each workload pattern must have from/to and a non-negative base rate.";
+    }
+
+    if (scenarioIssue) {
+      newErrors.scenario = "invalid";
+      setScenarioError(scenarioIssue);
     }
 
     setErrors(newErrors);
@@ -476,6 +522,13 @@ workload:
               />
             </div>
           </div>
+
+          {/* Scenario validation message */}
+          {scenarioError && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-300">
+              {scenarioError}
+            </div>
+          )}
 
           {/* Hosts (from scenario YAML) */}
           <div>
