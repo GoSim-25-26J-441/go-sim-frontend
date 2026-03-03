@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { fetchDesignsList } from '@/app/api/asm/routes';
-import { useSession } from "@/modules/session/context";
+import { useAuth } from "@/providers/auth-context";
 import {
   BarChart3,
   Cpu,
@@ -51,18 +51,18 @@ interface ApiResponseRow {
   response: any[];
 }
 
-const PROJECT_ID = "default-project";
+const PROJECT_ID = "prodsdj-abc";
 
 export default function CostPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { userId } = useSession();
+  const { user, userId: firebaseUid } = useAuth();
 
   useEffect(() => {
-    if (!userId) return;
-    fetchRuns(userId);
-  }, [userId]);
+    if (!firebaseUid) return;
+    fetchRuns(firebaseUid);
+  }, [firebaseUid]);
 
   const fetchRuns = async (uid: string) => {
     try {
@@ -201,7 +201,9 @@ export default function CostPage() {
                           </span>
                         </div>
                         <h3 className="text-lg font-semibold transition-colors">
-                          {run.workload.toLocaleString()} Users Workload
+                          {run.workload != null
+                            ? `${run.workload.toLocaleString()} Users Workload`
+                            : "Workload not specified"}
                         </h3>
                       </div>
                       <div className="text-right">
