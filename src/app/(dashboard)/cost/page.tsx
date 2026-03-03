@@ -51,7 +51,7 @@ interface ApiResponseRow {
   response: any[];
 }
 
-const PROJECT_ID = "default-pssroject";
+const PROJECT_ID = "prodsdj-abc";
 
 export default function CostPage() {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -201,7 +201,9 @@ export default function CostPage() {
                           </span>
                         </div>
                         <h3 className="text-lg font-semibold transition-colors">
-                          {run.workload.toLocaleString()} Users Workload
+                          {run.workload != null
+                            ? `${run.workload.toLocaleString()} Users Workload`
+                            : "Workload not specified"}
                         </h3>
                       </div>
                       <div className="text-right">

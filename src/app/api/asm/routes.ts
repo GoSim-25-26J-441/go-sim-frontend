@@ -1,4 +1,8 @@
-const BASE_URL = process.env.API_BASE || "http://localhost:8080";
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE;
+
+interface SimulationRequirements {
+  nodes: number;
+}
 
 //Fetch designs list for a user
 export const fetchDesignsList = async (userId: string) => {
@@ -65,12 +69,36 @@ export const fetchRegions = async (provider: string) => {
   }
 };
 
+interface DesignRequirementsDTO {
+  preferred_vcpu: number;
+  preferred_memory_gb: number;
+  workload: { concurrent_users: number };
+  budget: number;
+}
+
+interface CandidateDTO {
+  id: string;
+  spec: {
+    vcpu: number;
+    memory_gb: number;
+    label: string;
+  };
+  metrics: {
+    cpu_util_pct: number;
+    mem_util_pct: number;
+  };
+  sim_workload: {
+    concurrent_users: number;
+  };
+  source: string;
+}
+
 // Fetch suggestions (project_id and run_id are required)
 export const fetchSuggestions = async (
   userId: string,
-  design: any,
+  design: DesignRequirementsDTO,
   simulation: SimulationRequirements,
-  candidates: any[],
+  candidates: CandidateDTO[],
   projectId: string,
   runId: string,
 ) => {
@@ -105,7 +133,42 @@ export const fetchSuggestions = async (
   }
 };
 
-// Fetch stored metrics analysis by id 
+export const createDesignRequest = async (
+  userId: string,
+  projectId: string,
+  runId: string,
+  design: DesignRequirementsDTO,
+) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/design`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          project_id: projectId,
+          run_id: runId,
+          design,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create design request: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Fetch stored metrics analysis by id
 export const fetchMetricsAnalysisById = async (id: string) => {
   try {
     const response = await fetch(
@@ -115,6 +178,35 @@ export const fetchMetricsAnalysisById = async (id: string) => {
     if (!response.ok) {
       throw new Error(
         `Failed to fetch metrics analysis: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Fetch the latest stored details
+export const fetchDesignByProjectRun = async (
+  userId: string,
+  projectId: string,
+  runId: string,
+) => {
+  try {
+    const query = new URLSearchParams({
+      user_id: userId,
+      project_id: projectId,
+      run_id: runId,
+    });
+
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/requests/by-project-run?${query.toString()}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch design by project/run: ${response.status} ${response.statusText}`,
       );
     }
 

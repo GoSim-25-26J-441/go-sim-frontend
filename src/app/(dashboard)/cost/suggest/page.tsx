@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { fetchSuggestions } from '@/app/api/asm/routes';
-import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { fetchSuggestions, fetchDesignByProjectRun } from '@/app/api/asm/routes';
+import { Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -54,83 +54,12 @@ export default function SuggestPage() {
     const [loading, setLoading] = useState(false);
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [design, setDesign] = useState<DesignRequirements | null>(null);
+    const [simulation, setSimulation] = useState<SimulationRequirements | null>(null);
+    const [, setCandidates] = useState<Candidate[]>([]);
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { user, userId: firebaseUid } = useAuth();
-    const design: DesignRequirements = {
-        preferred_vcpu: 8,
-        preferred_memory_gb: 16,
-        workload: { concurrent_users: 2000 },
-        budget: 2000
-    };
-    const simulation: SimulationRequirements = {
-        nodes: 5
-    };
-
-    const candidates: Candidate[] = [
-        {
-            id: "c1",
-            spec: { vcpu: 8, memory_gb: 16, label: "a" },
-            metrics: { cpu_util_pct: 72, mem_util_pct: 61 },
-            sim_workload: { concurrent_users: 1400 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "c2",
-            spec: { vcpu: 6, memory_gb: 8, label: "b" },
-            metrics: { cpu_util_pct: 65, mem_util_pct: 55 },
-            sim_workload: { concurrent_users: 1300 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "c3",
-            spec: { vcpu: 5, memory_gb: 8, label: "c" },
-            metrics: { cpu_util_pct: 80, mem_util_pct: 75 },
-            sim_workload: { concurrent_users: 1800 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "c4",
-            spec: { vcpu: 10, memory_gb: 32, label: "d" },
-            metrics: { cpu_util_pct: 40, mem_util_pct: 50 },
-            sim_workload: { concurrent_users: 1500 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "c5",
-            spec: { vcpu: 8, memory_gb: 16, label: "e" },
-            metrics: { cpu_util_pct: 72, mem_util_pct: 61 },
-            sim_workload: { concurrent_users: 1400 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "m1",
-            spec: { vcpu: 4, memory_gb: 16, label: "m1" },
-            metrics: { cpu_util_pct: 78, mem_util_pct: 70 },
-            sim_workload: { concurrent_users: 1150 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "m2",
-            spec: { vcpu: 6, memory_gb: 8, label: "m2" },
-            metrics: { cpu_util_pct: 85, mem_util_pct: 80 },
-            sim_workload: { concurrent_users: 1400 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "m3",
-            spec: { vcpu: 40, memory_gb: 8, label: "m3" },
-            metrics: { cpu_util_pct: 100, mem_util_pct: 60 },
-            sim_workload: { concurrent_users: 1200 },
-            source: "sim-run-2025-10-27"
-        },
-        {
-            id: "m4",
-            spec: { vcpu: 4, memory_gb: 8, label: "m4" },
-            metrics: { cpu_util_pct: 60, mem_util_pct: 50 },
-            sim_workload: { concurrent_users: 1900 },
-            source: "sim-run-2025-10-27"
-        }
-    ];
 
     const hasFetchedRef = useRef(false);
 
@@ -144,42 +73,57 @@ export default function SuggestPage() {
             setError(null);
 
             try {
-                const PROJECT_ID = "default-pssroject";
-                const runId = `run-${Date.now()}`;
-                const data = await fetchSuggestions(firebaseUid, design, simulation, candidates, PROJECT_ID, runId);
+                const projectId = searchParams.get('projectId') || '';
+                const runId = searchParams.get('runId') || '';
+                const candidatesParam = searchParams.get('candidates');
+
+                if (!projectId || !runId || !candidatesParam) {
+                    throw new Error('Missing projectId, runId, or candidates in URL');
+                }
+
+                const decodedCandidates = JSON.parse(
+                    decodeURIComponent(candidatesParam),
+                ) as Candidate[];
+                setCandidates(decodedCandidates);
+
+                const stored = await fetchDesignByProjectRun(
+                    firebaseUid,
+                    projectId,
+                    runId,
+                );
+
+                const storedRequest = stored.request as {
+                    design: DesignRequirements;
+                    simulation?: SimulationRequirements;
+                };
+
+                const resolvedDesign = storedRequest.design;
+                const resolvedSimulation =
+                    storedRequest.simulation || { nodes: 0 };
+
+                setDesign(resolvedDesign);
+                setSimulation(resolvedSimulation);
+
+                const data = await fetchSuggestions(
+                    firebaseUid,
+                    resolvedDesign,
+                    resolvedSimulation,
+                    decodedCandidates,
+                    projectId,
+                    runId,
+                );
                 setSuggestionData(data);
             } catch (err) {
                 console.error('Error fetching suggestions:', err);
                 setError(err instanceof Error ? err.message : 'An error occurred');
-                setSuggestionData({
-                    best: {
-                        candidate: candidates.find(c => c.id === "m4")!,
-                        passed_all_required: false,
-                        workload_distance: 100,
-                        suggestions: [
-                            "Decrease vCPU from 8 to 4",
-                            "Decrease memory from 16 GB to 8 GB"
-                        ]
-                    },
-                    all_scores: candidates.map(candidate => ({
-                        candidate,
-                        passed_all_required: false,
-                        workload_distance: Math.abs(design.workload.concurrent_users - candidate.sim_workload.concurrent_users),
-                        suggestions: [
-                            `Keep vCPU at ${candidate.spec.vcpu}`,
-                            `Keep memory at ${candidate.spec.memory_gb} GB`,
-                            `Shortfall of ${Math.abs(design.workload.concurrent_users - candidate.sim_workload.concurrent_users)} users`
-                        ]
-                    })).sort((a, b) => a.workload_distance - b.workload_distance),
-                    storage_id: "demo-" + Date.now().toString()
-                });
+                setSuggestionData(null);
             } finally {
                 setLoading(false);
             }
         };
 
         loadSuggestions();
-    }, [firebaseUid]);
+    }, [firebaseUid, searchParams]);
 
     const formatPercentage = (value: number) => {
         return `${value.toFixed(1)}%`;
@@ -198,7 +142,7 @@ export default function SuggestPage() {
         }
     };
 
-    if (loading) {
+    if (loading || !design || !simulation) {
         return (
             <div className="flex items-center justify-center min-h-[60vh] p-6">
                 <div className="text-xl opacity-70">Analyzing infrastructure candidates...</div>

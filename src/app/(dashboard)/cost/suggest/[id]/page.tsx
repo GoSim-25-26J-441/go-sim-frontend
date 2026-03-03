@@ -358,10 +358,10 @@ export default function ViewMetricsAnalysisPage() {
                           <span className="text-xs opacity-50">CPU:</span>
                           <span
                             className={`text-sm font-medium ${(score.candidate.metrics?.cpu_util_pct ?? 0) > 80
-                                ? "text-red-500"
-                                : (score.candidate.metrics?.cpu_util_pct ?? 0) > 60
-                                  ? "text-yellow-500"
-                                  : "text-green-500"
+                              ? "text-red-500"
+                              : (score.candidate.metrics?.cpu_util_pct ?? 0) > 60
+                                ? "text-yellow-500"
+                                : "text-green-500"
                               }`}
                           >
                             {formatPercentage(score.candidate.metrics?.cpu_util_pct ?? 0)}
@@ -371,10 +371,10 @@ export default function ViewMetricsAnalysisPage() {
                           <span className="text-xs opacity-50">MEM:</span>
                           <span
                             className={`text-sm font-medium ${(score.candidate.metrics?.mem_util_pct ?? 0) > 80
-                                ? "text-red-500"
-                                : (score.candidate.metrics?.mem_util_pct ?? 0) > 60
-                                  ? "text-yellow-500"
-                                  : "text-green-500"
+                              ? "text-red-500"
+                              : (score.candidate.metrics?.mem_util_pct ?? 0) > 60
+                                ? "text-yellow-500"
+                                : "text-green-500"
                               }`}
                           >
                             {formatPercentage(score.candidate.metrics?.mem_util_pct ?? 0)}
@@ -428,8 +428,8 @@ export default function ViewMetricsAnalysisPage() {
                       </h4>
                       <span
                         className={`px-2 py-1 text-xs rounded-full border ${score.passed_all_required
-                            ? "bg-card text-green-400 border-border"
-                            : "bg-card text-yellow-400 border-border"
+                          ? "bg-card text-green-400 border-border"
+                          : "bg-card text-yellow-400 border-border"
                           }`}
                       >
                         Shortfall: {score.workload_distance} users
