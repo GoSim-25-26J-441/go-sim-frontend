@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { SimulationRun } from "@/types/simulation";
-import { updateWorkloadRate } from "@/lib/api-client/simulation";
+import { updateWorkloadRate, DEFAULT_WORKLOAD_PATTERN_KEY } from "@/lib/api-client/simulation";
 import { Sliders, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface DynamicConfigControlProps {
@@ -25,21 +25,9 @@ export function DynamicConfigControl({ run, onUpdate }: DynamicConfigControlProp
     setRpsRate(initialRate);
   }, [initialRate]);
 
-  // Generate pattern key from config
-  // Pattern key format: "{from}:{to}" (e.g., "client:svc1:/test")
-  // For our simplified config, we'll construct it based on available data
-  // TODO: This should come from the simulation config's workload patterns when available
-  const getPatternKey = (): string => {
-    // If the config has scenario info, use it; otherwise use a default pattern
-    if (run.config.scenario) {
-      // Try to infer service name from scenario or use a generic one
-      return `client:${run.config.scenario}:default`;
-    }
-    // Default pattern key format
-    return `client:default:/api`;
-  };
-
-  const patternKey = getPatternKey();
+  // Pattern key must match workload in scenario YAML. Our buildMinimalScenarioYaml uses
+  // from: client, to: svc1:/test, so the key is "client:svc1:/test" (format: "{from}:{to}").
+  const patternKey = DEFAULT_WORKLOAD_PATTERN_KEY;
 
   const isRunning = run.status === "running";
 

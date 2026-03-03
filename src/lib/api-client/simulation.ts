@@ -36,6 +36,9 @@ function defaultConfig(): SimulationConfig {
   };
 }
 
+/** Default workload pattern key for minimal scenario (from: client, to: svc1:/test) */
+export const DEFAULT_WORKLOAD_PATTERN_KEY = "client:svc1:/test";
+
 /**
  * Build a minimal scenario YAML for simulation-core from form-like config.
  * Used when backend expects scenario_yaml and we only have high-level form fields.
@@ -204,6 +207,79 @@ export async function updateWorkloadRate(
     run_id: data.run_id ?? runId,
     pattern_key: data.pattern_key ?? patternKey,
   };
+}
+
+/**
+ * Run configuration types for PATCH /configuration (mirrors go-sim-backend UpdateRunConfigurationRequest).
+ */
+export interface RunConfigurationService {
+  id: string;
+  replicas: number;
+  cpu_cores?: number | null;
+  memory_mb?: number | null;
+}
+
+export interface RunConfigurationWorkloadEntry {
+  pattern_key: string;
+  rate_rps: number;
+}
+
+export interface RunConfigurationPoliciesAutoscaling {
+  enabled: boolean;
+  target_cpu_util: number;
+  scale_step: number;
+}
+
+export interface RunConfigurationPolicies {
+  autoscaling?: RunConfigurationPoliciesAutoscaling;
+}
+
+export interface RunConfiguration {
+  services: RunConfigurationService[];
+  workload: RunConfigurationWorkloadEntry[];
+  hosts?: unknown[];
+  policies?: RunConfigurationPolicies;
+}
+
+export interface UpdateRunConfigurationRequest {
+  services?: RunConfigurationService[];
+  workload?: RunConfigurationWorkloadEntry[];
+  policies?: RunConfigurationPolicies;
+}
+
+/**
+ * Get run configuration (GET /api/v1/simulation/runs/:id/configuration).
+ */
+export async function getRunConfiguration(id: string): Promise<RunConfiguration | null> {
+  const response = await authenticatedFetch(`${BASE_URL}/runs/${encodeURIComponent(id)}/configuration`, {
+    method: "GET",
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to fetch run configuration");
+  }
+  const data = (await response.json()) as { configuration?: RunConfiguration };
+  return data.configuration ?? null;
+}
+
+/**
+ * Update run configuration (PATCH /api/v1/simulation/runs/:id/configuration).
+ * Supports updating services (replicas/resources), workload pattern rates, and autoscaling policy.
+ */
+export async function updateRunConfiguration(
+  id: string,
+  cfg: UpdateRunConfigurationRequest
+): Promise<void> {
+  const response = await authenticatedFetch(`${BASE_URL}/runs/${encodeURIComponent(id)}/configuration`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to update run configuration");
+  }
 }
 
 /**
