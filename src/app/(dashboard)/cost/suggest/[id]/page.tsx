@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchMetricsAnalysisById } from "@/app/api/asm/routes";
 import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft } from "lucide-react";
+import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
   id: string;
@@ -63,6 +64,8 @@ function getWorkloadPerformanceColor(distance: number, target: number) {
 export default function ViewMetricsAnalysisPage() {
   const params = useParams();
   const id = params.id as string;
+
+  const { user } = useAuth();
 
   const [data, setData] = useState<StoredRequest | null>(null);
   const [loading, setLoading] = useState(true);
@@ -149,8 +152,10 @@ export default function ViewMetricsAnalysisPage() {
           <h2 className="text-xl font-semibold mb-4">Design Requirements</h2>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="bg-card border border-border p-4 rounded-lg">
-              <p className="text-sm opacity-60">User ID</p>
-              <p className="text-lg font-semibold">{data.user_id}</p>
+              <p className="text-sm opacity-60">User</p>
+              <p className="text-lg font-semibold">
+                {user?.displayName || user?.email || "Unnamed user"}
+              </p>
             </div>
             <div className="bg-card border border-border p-4 rounded-lg">
               <p className="text-sm opacity-60">Refined vCPU</p>

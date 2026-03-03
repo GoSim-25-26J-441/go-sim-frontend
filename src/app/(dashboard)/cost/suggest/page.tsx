@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchSuggestions } from '@/app/api/asm/routes';
 import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
-import { useSession } from "@/modules/session/context";
+import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
     id: string;
@@ -55,7 +55,7 @@ export default function SuggestPage() {
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const router = useRouter();
-    const { userId } = useSession();
+    const { user, userId: firebaseUid } = useAuth();
     const design: DesignRequirements = {
         preferred_vcpu: 8,
         preferred_memory_gb: 16,
@@ -135,7 +135,7 @@ export default function SuggestPage() {
     const hasFetchedRef = useRef(false);
 
     useEffect(() => {
-        if (!userId) return;
+        if (!firebaseUid) return;
         if (hasFetchedRef.current) return;
         hasFetchedRef.current = true;
 
@@ -144,9 +144,9 @@ export default function SuggestPage() {
             setError(null);
 
             try {
-                const PROJECT_ID = "default-project";
+                const PROJECT_ID = "default-pssroject";
                 const runId = `run-${Date.now()}`;
-                const data = await fetchSuggestions(userId, design, simulation, candidates, PROJECT_ID, runId);
+                const data = await fetchSuggestions(firebaseUid, design, simulation, candidates, PROJECT_ID, runId);
                 setSuggestionData(data);
             } catch (err) {
                 console.error('Error fetching suggestions:', err);
@@ -179,7 +179,7 @@ export default function SuggestPage() {
         };
 
         loadSuggestions();
-    }, [userId]);
+    }, [firebaseUid]);
 
     const formatPercentage = (value: number) => {
         return `${value.toFixed(1)}%`;
@@ -211,7 +211,17 @@ export default function SuggestPage() {
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
                 <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold">Metrices Analysis</h1>
+                    <div>
+                        <h1 className="text-3xl font-bold">Metrices Analysis</h1>
+                        {user && (
+                            <p className="text-sm opacity-60 mt-1">
+                                Signed in as{" "}
+                                <span className="font-medium">
+                                    {user.displayName || user.email || "Unnamed user"}
+                                </span>
+                            </p>
+                        )}
+                    </div>
                     {suggestionData && (
                         <button
                             onClick={handleViewCostAnalysis}
@@ -227,8 +237,16 @@ export default function SuggestPage() {
                     <h2 className="text-xl font-semibold mb-4">Design Requirements</h2>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                         <div className="bg-card border border-border p-4 rounded-lg">
-                            <p className="text-sm opacity-60">User ID</p>
-                                        <p className="text-lg font-semibold break-all">{userId}</p>
+                            <p className="text-sm opacity-60">User (Firebase)</p>
+                            {user ? (
+                                <>
+                                    <p className="text-sm font-medium">
+                                        {user.displayName || user.email || "Unnamed user"}
+                                    </p>
+                                </>
+                            ) : (
+                                <p className="text-sm opacity-70">Not signed in</p>
+                            )}
                         </div>
                         <div className="bg-card border border-border p-4 rounded-lg">
                             <p className="text-sm opacity-60">Preferred vCPU</p>

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { fetchDesignsList } from '@/app/api/asm/routes';
-import { useSession } from "@/modules/session/context";
+import { useAuth } from "@/providers/auth-context";
 import {
   BarChart3,
   Cpu,
@@ -51,18 +51,18 @@ interface ApiResponseRow {
   response: any[];
 }
 
-const PROJECT_ID = "default-project";
+const PROJECT_ID = "default-pssroject";
 
 export default function CostPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { userId } = useSession();
+  const { user, userId: firebaseUid } = useAuth();
 
   useEffect(() => {
-    if (!userId) return;
-    fetchRuns(userId);
-  }, [userId]);
+    if (!firebaseUid) return;
+    fetchRuns(firebaseUid);
+  }, [firebaseUid]);
 
   const fetchRuns = async (uid: string) => {
     try {
