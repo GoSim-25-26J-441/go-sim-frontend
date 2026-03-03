@@ -57,7 +57,6 @@ export function useCyTooltip({
     };
 
     const getAnchorXY = (node: cytoscape.NodeSingular) => {
-      // Always available; rendered pixels relative to container
       const rp = node.renderedPosition();
       return { x: rp.x, y: rp.y };
     };
@@ -112,7 +111,6 @@ export function useCyTooltip({
       hide();
     };
 
-    // Keep tooltip following node while panning/zooming or while layout animates
     const onRender = () => {
       const id = activeNodeIdRef.current;
       if (!id) return;
@@ -126,12 +124,10 @@ export function useCyTooltip({
 
     cy.on("pan zoom resize render", onRender);
 
-    // Hide if mouse leaves the whole canvas area
     const dom = cy.container();
     const onLeave = () => hide();
     dom?.addEventListener("mouseleave", onLeave);
 
-    // Hide on drag/tap start (optional)
     cy.on("tapstart", hide);
     cy.on("drag", "node", hide);
 

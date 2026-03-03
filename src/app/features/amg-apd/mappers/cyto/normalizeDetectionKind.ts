@@ -2,7 +2,6 @@ import type { DetectionKind } from "@/app/features/amg-apd/types";
 import { DETECTION_KIND_COLOR } from "@/app/features/amg-apd/utils/colors";
 
 const ALIASES: Record<string, DetectionKind> = {
-  // common backend variations → frontend keys
   chatty_call: "chatty_calls",
   chatty_calls: "chatty_calls",
   chattycall: "chatty_calls",
@@ -37,7 +36,7 @@ export function normalizeDetectionKind(raw: unknown): DetectionKind | null {
   const cleaned = raw
     .trim()
     .toLowerCase()
-    .replace(/[ -]+/g, "_") // spaces/dashes → underscores
+    .replace(/[ -]+/g, "_")
     .replace(/__+/g, "_");
 
   const mapped = ALIASES[cleaned] ?? cleaned;

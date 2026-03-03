@@ -1,4 +1,3 @@
-// features/amg-apd/mappers/cyto/styles.ts
 import type { DetectionKind, Severity } from "@/app/features/amg-apd/types";
 import {
   NODE_KIND_COLOR,
@@ -23,9 +22,8 @@ function borderWidthForSeverity(sev: Severity | null) {
 
 function borderColorForNode(ele: any) {
   const kinds = (ele.data("detectionKinds") as DetectionKind[]) ?? [];
-  if (!kinds.length) return "#334155"; // slate-700 default
+  if (!kinds.length) return "#334155";
 
-  // If multiple kinds, pick based on phase (we’ll animate phase in GraphCanvas)
   const phase = (ele.data("phase") as number) ?? 0;
   const pick = kinds[phase % kinds.length];
 
@@ -54,7 +52,6 @@ export const cyStyles: StylesheetLike = [
       height: "label",
       padding: "12px",
 
-      // ✅ Border now depends on detections (+ phase for multi-kind)
       "border-width": (ele: any) => {
         const sev = (ele.data("severity") as Severity | null) ?? null;
         const kinds = (ele.data("detectionKinds") as DetectionKind[]) ?? [];
@@ -62,7 +59,6 @@ export const cyStyles: StylesheetLike = [
       },
       "border-color": (ele: any) => borderColorForNode(ele),
 
-      // Optional: make multi-kind visually “more obvious” even if animation is missed
       "border-style": (ele: any) => {
         const kinds = (ele.data("detectionKinds") as DetectionKind[]) ?? [];
         return kinds.length > 1 ? "double" : "solid";

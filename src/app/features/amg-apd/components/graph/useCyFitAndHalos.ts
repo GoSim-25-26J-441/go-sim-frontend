@@ -41,7 +41,6 @@ export function useCyFitAndHalos({
       const sw = haloStrokeWidth(sev);
       const pad = sw + 12;
 
-      // outerWidth/Height is safer than boundingBox (avoids isHeadless crash)
       const w = node.outerWidth();
       const h = node.outerHeight();
 
@@ -99,7 +98,6 @@ export function useCyFitAndHalos({
     c.on("position", "node", onNodePos);
     c.on("data", "node", onNodeData);
 
-    // initial sync
     setTimeout(() => syncAllHalos(), 0);
 
     return () => {

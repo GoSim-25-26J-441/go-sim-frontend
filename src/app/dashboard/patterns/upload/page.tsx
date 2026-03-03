@@ -28,10 +28,8 @@ export default function UploadPage() {
   const regenTitleRaw = searchParams.get("title") ?? "Edited architecture";
   const regenTitle = decodeSafe(regenTitleRaw);
 
-  // ✅ Prevent double-run in Next dev (React strict mode)
   const ranRef = useRef(false);
 
-  // ✅ Auto-run analysis when coming from Generate Graph
   useEffect(() => {
     if (!regen) return;
     if (ranRef.current) return;
@@ -74,7 +72,6 @@ export default function UploadPage() {
 
         setLast(data);
 
-        // ✅ Back to visualization (fresh render)
         router.replace("/dashboard/patterns");
       } catch (err: any) {
         console.error(err);

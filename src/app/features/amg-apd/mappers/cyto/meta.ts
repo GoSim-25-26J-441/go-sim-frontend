@@ -31,7 +31,6 @@ function upsertMeta(
 }
 
 function stripPrefix(s: string) {
-  // supports "SERVICE:billing-service" → "billing-service"
   const idx = s.lastIndexOf(":");
   return idx >= 0 ? s.slice(idx + 1) : s;
 }
@@ -65,14 +64,11 @@ function resolveNodeId(
 ) {
   if (typeof ref !== "string") return null;
 
-  // exact key
   if (nodesObj[ref]) return ref;
 
-  // stripped prefix
   const stripped = stripPrefix(ref);
   if (nodesObj[stripped]) return stripped;
 
-  // name match
   const hit =
     nameToId.get(ref) ??
     nameToId.get(ref.toLowerCase()) ??
@@ -93,10 +89,7 @@ export function buildMetaMaps(data?: AnalysisResult) {
   for (const det of detections) {
     const kind = normalizeDetectionKind(det.kind);
 
-    // If kind is unknown, don't color it; but keep the UI usable
     if (!kind) {
-      // optional: you can console.warn to confirm mismatches
-      // console.warn("[amg-apd] Unknown detection kind from backend:", det.kind);
       continue;
     }
 
