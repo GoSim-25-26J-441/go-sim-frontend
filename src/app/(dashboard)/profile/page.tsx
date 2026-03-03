@@ -316,12 +316,12 @@ export default function ProfilePage() {
               <div>
                 <p className="font-medium">Google</p>
                 <p className="text-sm text-white/60">
-                  {linkedProviders.includes("google.com") ? "Connected" : "Not connected"}
+                  {linkedProviders.some((p) => p === "google.com") ? "Connected" : "Not connected"}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {linkedProviders.includes("google.com") ? (
+              {linkedProviders.some((p) => p === "google.com") ? (
                 <span className="px-3 py-1 text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30 rounded">
                   Connected
                 </span>
