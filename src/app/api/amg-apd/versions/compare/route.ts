@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendAmgApdHeaders } from "../../headers";
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_BASE ?? "http://localhost:8080";
+const BASE =
+  process.env.BACKEND_BASE ??
+  process.env.NEXT_PUBLIC_BACKEND_BASE ??
+  "http://localhost:8080";
 
 /** GET /api/amg-apd/versions/compare?left=id&right=id */
 export async function GET(req: NextRequest) {
@@ -20,7 +23,9 @@ export async function GET(req: NextRequest) {
     const backendHeaders = getBackendAmgApdHeaders(req);
 
     const res = await fetch(
-      `${BASE}/api/v1/amg-apd/versions/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`,
+      `${BASE}/api/v1/amg-apd/versions/compare?left=${encodeURIComponent(
+        left
+      )}&right=${encodeURIComponent(right)}`,
       { method: "GET", headers: backendHeaders }
     );
 
