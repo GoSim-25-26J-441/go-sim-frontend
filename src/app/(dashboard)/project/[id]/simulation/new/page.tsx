@@ -178,6 +178,8 @@ workload:
     policies: undefined,
   });
 
+  const arrivalTypes: ArrivalType[] = ["poisson", "uniform", "normal", "bursty", "constant"];
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
@@ -334,7 +336,6 @@ workload:
                 onChange={handleChange}
                 error={errors.nodes}
                 required
-                min={1}
               />
               <InputField
                 name="vcpu_per_node"
@@ -344,7 +345,6 @@ workload:
                 onChange={handleChange}
                 error={errors.vcpu_per_node}
                 required
-                min={1}
               />
               <InputField
                 name="memory_gb_per_node"
@@ -354,14 +354,565 @@ workload:
                 onChange={handleChange}
                 error={errors.memory_gb_per_node}
                 required
-                min={1}
               />
             </div>
           </div>
 
-          {/* Workload Configuration */}
+          {/* Hosts (from scenario YAML) */}
           <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Workload</h2>
+            <h2 className="text-lg font-semibold text-white mb-4">Hosts</h2>
+            <div className="space-y-3">
+              {scenario.hosts.map((host, index) => (
+                <div
+                  key={host.id || index}
+                  className="flex flex-col md:flex-row md:items-center gap-3 bg-white/5 border border-white/10 rounded-lg p-3"
+                >
+                  <div className="flex-1 flex flex-col md:flex-row md:items-center gap-3">
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-white/70 mb-1">
+                        Host ID
+                      </label>
+                      <input
+                        type="text"
+                        value={host.id}
+                        onChange={(e) =>
+                          setScenario((prev) => {
+                            const next = { ...prev, hosts: [...prev.hosts] };
+                            next.hosts[index] = { ...next.hosts[index], id: e.target.value };
+                            return next;
+                          })
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                    <div className="w-32">
+                      <label className="block text-xs font-medium text-white/70 mb-1">
+                        CPU cores
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={host.cores}
+                        onChange={(e) =>
+                          setScenario((prev) => {
+                            const cores = Number(e.target.value) || 1;
+                            const next = { ...prev, hosts: [...prev.hosts] };
+                            next.hosts[index] = { ...next.hosts[index], cores };
+                            return next;
+                          })
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={scenario.hosts.length === 1}
+                    onClick={() =>
+                      setScenario((prev) => ({
+                        ...prev,
+                        hosts: prev.hosts.filter((_, i) => i !== index),
+                      }))
+                    }
+                    className="self-start px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setScenario((prev) => ({
+                    ...prev,
+                    hosts: [
+                      ...prev.hosts,
+                      { id: `host-${prev.hosts.length + 1}`, cores: 4 },
+                    ],
+                  }))
+                }
+                className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20"
+              >
+                Add host
+              </button>
+            </div>
+          </div>
+
+          {/* Services (from scenario YAML) */}
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4">Services & Endpoints</h2>
+            <div className="space-y-4">
+              {scenario.services.map((svc, svcIndex) => (
+                <div
+                  key={svc.id || svcIndex}
+                  className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-3"
+                >
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Service ID
+                        </label>
+                        <input
+                          type="text"
+                          value={svc.id}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const services = [...prev.services];
+                              services[svcIndex] = { ...services[svcIndex], id: e.target.value };
+                              return { ...prev, services };
+                            })
+                          }
+                          className="px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Replicas
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={svc.replicas}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const services = [...prev.services];
+                              services[svcIndex] = {
+                                ...services[svcIndex],
+                                replicas: Number(e.target.value) || 1,
+                              };
+                              return { ...prev, services };
+                            })
+                          }
+                          className="w-20 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Model
+                        </label>
+                        <select
+                          value={svc.model}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const services = [...prev.services];
+                              services[svcIndex] = { ...services[svcIndex], model: e.target.value };
+                              return { ...prev, services };
+                            })
+                          }
+                          className="px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        >
+                          <option value="cpu">cpu</option>
+                          <option value="mixed">mixed</option>
+                          <option value="db_latency">db_latency</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          CPU cores
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={svc.cpu_cores ?? 1}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const services = [...prev.services];
+                              services[svcIndex] = {
+                                ...services[svcIndex],
+                                cpu_cores: Number(e.target.value) || 0,
+                              };
+                              return { ...prev, services };
+                            })
+                          }
+                          className="w-24 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Memory (MB)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={svc.memory_mb ?? 512}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const services = [...prev.services];
+                              services[svcIndex] = {
+                                ...services[svcIndex],
+                                memory_mb: Number(e.target.value) || 0,
+                              };
+                              return { ...prev, services };
+                            })
+                          }
+                          className="w-28 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={scenario.services.length === 1}
+                      onClick={() =>
+                        setScenario((prev) => ({
+                          ...prev,
+                          services: prev.services.filter((_, i) => i !== svcIndex),
+                        }))
+                      }
+                      className="self-start px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Remove service
+                    </button>
+                  </div>
+
+                  {/* Endpoints (read-only/minimal editing) */}
+                  <div className="mt-3 border-t border-white/10 pt-3 space-y-2">
+                    <p className="text-xs font-medium text-white/70">Endpoints</p>
+                    {svc.endpoints.map((ep, epIndex) => (
+                      <div
+                        key={`${svc.id}-${ep.path}-${epIndex}`}
+                        className="flex flex-col md:flex-row md:items-center gap-3 bg-black/40 border border-white/10 rounded px-3 py-2"
+                      >
+                        <div className="flex-1">
+                          <span className="text-xs text-white/50">Path</span>
+                          <span className="ml-2 text-sm text-white font-mono">{ep.path}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-white/50">Mean CPU</span>
+                          <span className="text-sm text-white">
+                            {ep.mean_cpu_ms}
+                            <span className="text-xs text-white/50 ml-1">ms</span>
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {svc.endpoints.length === 0 && (
+                      <p className="text-xs text-white/40">
+                        Endpoints are defined in the scenario file and will be populated from it.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={() =>
+                  setScenario((prev) => ({
+                    ...prev,
+                    services: [
+                      ...prev.services,
+                      {
+                        id: `svc${prev.services.length + 1}`,
+                        replicas: 1,
+                        model: "cpu",
+                        cpu_cores: 1,
+                        memory_mb: 512,
+                        endpoints: [],
+                      },
+                    ],
+                  }))
+                }
+                className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20"
+              >
+                Add service
+              </button>
+            </div>
+          </div>
+
+          {/* Scenario Workload Editor */}
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4">Workload Patterns</h2>
+            <p className="text-xs text-white/60 mb-3">
+              Define how traffic flows from clients to service endpoints. Services and endpoints come
+              from the upstream scenario file; here you configure arrival patterns (RPS, bursts, etc.).
+            </p>
+            <div className="space-y-4">
+              {scenario.workload.map((pattern, index) => {
+                const endpointOptions =
+                  scenario.services.flatMap((svc) =>
+                    svc.endpoints.map((ep) => ({
+                      value: `${svc.id}:${ep.path}`,
+                      label: `${svc.id}${ep.path}`,
+                    }))
+                  ) ?? [];
+
+                return (
+                  <div
+                    key={index}
+                    className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-white">
+                        Pattern {index + 1}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={scenario.workload.length === 1}
+                        onClick={() =>
+                          setScenario((prev) => ({
+                            ...prev,
+                            workload: prev.workload.filter((_, i) => i !== index),
+                          }))
+                        }
+                        className="px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Remove pattern
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          From
+                        </label>
+                        <input
+                          type="text"
+                          value={pattern.from}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const workload = [...prev.workload];
+                              workload[index] = { ...workload[index], from: e.target.value };
+                              return { ...prev, workload };
+                            })
+                          }
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          placeholder="e.g. client"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          To (service:endpoint)
+                        </label>
+                        <select
+                          value={pattern.to}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const workload = [...prev.workload];
+                              workload[index] = { ...workload[index], to: e.target.value };
+                              return { ...prev, workload };
+                            })
+                          }
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        >
+                          {endpointOptions.length === 0 && (
+                            <option value={pattern.to || ""}>
+                              {pattern.to || "No endpoints available"}
+                            </option>
+                          )}
+                          {endpointOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Arrival type
+                        </label>
+                        <select
+                          value={pattern.arrival.type}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const workload = [...prev.workload];
+                              const current = workload[index];
+                              workload[index] = {
+                                ...current,
+                                arrival: {
+                                  ...current.arrival,
+                                  type: e.target.value as ArrivalType,
+                                },
+                              };
+                              return { ...prev, workload };
+                            })
+                          }
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        >
+                          {arrivalTypes.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Base rate (RPS)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={pattern.arrival.rate_rps}
+                          onChange={(e) =>
+                            setScenario((prev) => {
+                              const workload = [...prev.workload];
+                              const current = workload[index];
+                              workload[index] = {
+                                ...current,
+                                arrival: {
+                                  ...current.arrival,
+                                  rate_rps: Number(e.target.value) || 0,
+                                },
+                              };
+                              return { ...prev, workload };
+                            })
+                          }
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+
+                      {pattern.arrival.type === "normal" && (
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Std dev (RPS)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={pattern.arrival.stddev_rps ?? 0}
+                            onChange={(e) =>
+                              setScenario((prev) => {
+                                const workload = [...prev.workload];
+                                const current = workload[index];
+                                workload[index] = {
+                                  ...current,
+                                  arrival: {
+                                    ...current.arrival,
+                                    stddev_rps: Number(e.target.value) || 0,
+                                  },
+                                };
+                                return { ...prev, workload };
+                              })
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                        </div>
+                      )}
+
+                      {pattern.arrival.type === "bursty" && (
+                        <>
+                          <div>
+                            <label className="block text-xs font-medium text-white/70 mb-1">
+                              Burst rate (RPS)
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={pattern.arrival.burst_rate_rps ?? 0}
+                              onChange={(e) =>
+                                setScenario((prev) => {
+                                  const workload = [...prev.workload];
+                                  const current = workload[index];
+                                  workload[index] = {
+                                    ...current,
+                                    arrival: {
+                                      ...current.arrival,
+                                      burst_rate_rps: Number(e.target.value) || 0,
+                                    },
+                                  };
+                                  return { ...prev, workload };
+                                })
+                              }
+                              className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-white/70 mb-1">
+                              Burst duration (s)
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={pattern.arrival.burst_duration_seconds ?? 0}
+                              onChange={(e) =>
+                                setScenario((prev) => {
+                                  const workload = [...prev.workload];
+                                  const current = workload[index];
+                                  workload[index] = {
+                                    ...current,
+                                    arrival: {
+                                      ...current.arrival,
+                                      burst_duration_seconds: Number(e.target.value) || 0,
+                                    },
+                                  };
+                                  return { ...prev, workload };
+                                })
+                              }
+                              className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-white/70 mb-1">
+                              Quiet duration (s)
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={pattern.arrival.quiet_duration_seconds ?? 0}
+                              onChange={(e) =>
+                                setScenario((prev) => {
+                                  const workload = [...prev.workload];
+                                  const current = workload[index];
+                                  workload[index] = {
+                                    ...current,
+                                    arrival: {
+                                      ...current.arrival,
+                                      quiet_duration_seconds: Number(e.target.value) || 0,
+                                    },
+                                  };
+                                  return { ...prev, workload };
+                                })
+                              }
+                              className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() =>
+                  setScenario((prev) => {
+                    const defaultTo =
+                      prev.services[0]?.endpoints[0]
+                        ? `${prev.services[0].id}:${prev.services[0].endpoints[0].path}`
+                        : "svc1:/test";
+                    return {
+                      ...prev,
+                      workload: [
+                        ...prev.workload,
+                        {
+                          from: "client",
+                          to: defaultTo,
+                          arrival: {
+                            type: "poisson",
+                            rate_rps: 10,
+                          },
+                        },
+                      ],
+                    };
+                  })
+                }
+                className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg:white/20"
+              >
+                Add workload pattern
+              </button>
+            </div>
+          </div>
+
+          {/* Legacy high-level workload knobs (still used by current create API) */}
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4">Overall Workload (legacy)</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <InputField
                 name="concurrent_users"
@@ -371,7 +922,6 @@ workload:
                 onChange={handleChange}
                 error={errors.concurrent_users}
                 required
-                min={1}
               />
               <InputField
                 name="rps_target"
@@ -380,7 +930,6 @@ workload:
                 value={formData.rps_target.toString()}
                 onChange={handleChange}
                 required
-                min={1}
               />
             </div>
           </div>
@@ -397,7 +946,6 @@ workload:
                 onChange={handleChange}
                 error={errors.duration_seconds}
                 required
-                min={60}
               />
               <InputField
                 name="ramp_up_seconds"
@@ -406,7 +954,6 @@ workload:
                 value={formData.ramp_up_seconds.toString()}
                 onChange={handleChange}
                 required
-                min={0}
               />
               <div>
                 <label className="block text-sm font-medium text-white mb-2">
