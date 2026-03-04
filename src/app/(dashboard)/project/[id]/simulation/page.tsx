@@ -8,13 +8,29 @@ import { authenticatedFetch } from "@/lib/api-client/http";
 import { env } from "@/lib/env";
 
 type BackendRunSummary = {
-  run_id: string;
+  // Backend may return either `run_id` or `id`
+  run_id?: string;
+  id?: string;
   status?: string;
   created_at?: string;
+  metadata?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
-type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+// Normalise the ID regardless of which field the backend returns
+function getRunId(run: BackendRunSummary): string {
+  return (run.run_id ?? run.id ?? "") as string;
+}
+
+// Show the simulation name from metadata, or fall back to a truncated run ID
+function getRunLabel(run: BackendRunSummary): string {
+  const name = run.metadata?.name;
+  if (typeof name === "string" && name.trim()) return name.trim();
+  const id = getRunId(run);
+  return id ? id : "Unnamed run";
+}
+
+type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "stopping";
 
 const statusConfig: Record<SimulationStatus, { label: string; icon: React.ReactNode; color: string; bgColor: string }> = {
   pending: {
@@ -46,6 +62,18 @@ const statusConfig: Record<SimulationStatus, { label: string; icon: React.ReactN
     icon: <AlertCircle className="w-4 h-4" />,
     color: "text-gray-400",
     bgColor: "bg-gray-400/10",
+  },
+  stopped: {
+    label: "Stopped",
+    icon: <AlertCircle className="w-4 h-4" />,
+    color: "text-gray-400",
+    bgColor: "bg-gray-400/10",
+  },
+  stopping: {
+    label: "Stopping",
+    icon: <Loader2 className="w-4 h-4 animate-spin" />,
+    color: "text-orange-400",
+    bgColor: "bg-orange-400/10",
   },
 };
 
@@ -124,6 +152,13 @@ export default function ProjectSimulationPage() {
             </p>
           </div>
         </div>
+        <Link
+          href={`/project/${projectId}/simulation/new`}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition-colors"
+        >
+          <Play className="w-4 h-4" />
+          New simulation
+        </Link>
       </div>
 
       {error && (
@@ -154,25 +189,28 @@ export default function ProjectSimulationPage() {
         {runs.length > 0 && (
           <ul className="space-y-3">
             {runs.map((run) => {
-              const statusKey =
-                (typeof run.status === "string" && run.status.toLowerCase().replace("run_status_", "") as SimulationStatus) ||
-                "pending";
-              const status = statusConfig[statusKey] ?? statusConfig.pending;
+              const runId = getRunId(run);
+              const label = getRunLabel(run);
+              const rawStatus = typeof run.status === "string"
+                ? run.status.toLowerCase().replace(/^run_status_/, "")
+                : "pending";
+              const statusKey = (rawStatus in statusConfig ? rawStatus : "pending") as SimulationStatus;
+              const status = statusConfig[statusKey];
               return (
                 <li
-                  key={run.run_id}
-                  className="bg-card rounded-lg border border-border p-4 flex items-center justify-between"
+                  key={runId || JSON.stringify(run)}
+                  className="bg-card rounded-lg border border-border p-4 flex items-center justify-between gap-4"
                 >
-                  <div>
-                    <p className="text-sm text-white/60">Run ID</p>
-                    <p className="font-mono text-sm text-white">{run.run_id}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-white truncate">{label}</p>
+                    <p className="font-mono text-xs text-white/40 truncate mt-0.5">{runId}</p>
                     {run.created_at && (
-                      <p className="text-xs text-white/40 mt-1">
-                        Created at {new Date(run.created_at).toLocaleString()}
+                      <p className="text-xs text-white/30 mt-1">
+                        {new Date(run.created_at).toLocaleString()}
                       </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 shrink-0">
                     <span
                       className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.color} ${status.bgColor}`}
                     >
@@ -180,7 +218,7 @@ export default function ProjectSimulationPage() {
                       {status.label}
                     </span>
                     <Link
-                      href={`/simulator/${encodeURIComponent(run.run_id)}`}
+                      href={`/project/${projectId}/simulation/${encodeURIComponent(runId)}`}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-white/90 transition-colors"
                     >
                       <Play className="w-3 h-3" />
