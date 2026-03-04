@@ -85,9 +85,6 @@ export default function ProjectSimulationPage() {
   const [runs, setRuns] = useState<BackendRunSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [rawResponse, setRawResponse] = useState<any>(null);
-  const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -109,9 +106,11 @@ export default function ProjectSimulationPage() {
           throw new Error(raw || `Failed to load simulation runs (HTTP ${res.status})`);
         }
         const data = await res.json();
-        console.log("[SimulationPage] raw API response:", data);
-        setRawResponse(data);
-        const list: BackendRunSummary[] = Array.isArray(data)
+
+        // Normalise all supported shapes into BackendRunSummary[]
+        // The backend currently returns { runs: ["id1", "id2", ...] }
+        // but may evolve to return full objects — handle both.
+        const rawList: unknown[] = Array.isArray(data)
           ? data
           : Array.isArray(data.runs)
           ? data.runs
@@ -120,6 +119,12 @@ export default function ProjectSimulationPage() {
           : data.run
           ? [data.run]
           : [];
+
+        const list: BackendRunSummary[] = rawList.map((item) =>
+          typeof item === "string"
+            ? { run_id: item }          // plain ID string → wrap into object
+            : (item as BackendRunSummary)
+        );
         setRuns(list);
       } catch (e) {
         console.error("Failed to load simulation runs:", e);
@@ -180,23 +185,6 @@ export default function ProjectSimulationPage() {
         </div>
       )}
 
-      {/* Debug panel — remove once backend response shape is confirmed */}
-      {rawResponse !== null && (
-        <div className="rounded-lg border border-white/10 bg-white/5">
-          <button
-            onClick={() => setShowRaw((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-white/50 hover:text-white/70"
-          >
-            <span>Raw API response (debug)</span>
-            <span>{showRaw ? "▲ hide" : "▼ show"}</span>
-          </button>
-          {showRaw && (
-            <pre className="px-4 pb-4 text-[11px] font-mono text-white/60 whitespace-pre-wrap break-all">
-              {JSON.stringify(rawResponse, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
 
       <div className="space-y-3">
         {runs.length === 0 && !error ? (
