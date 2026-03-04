@@ -55,7 +55,8 @@ function stripCr(line: string) {
 }
 
 // Pretty-print a string if it looks like JSON, otherwise return as-is.
-function formatData(raw: string): string {
+function formatData(raw: string | undefined | null): string {
+  if (!raw) return "";
   const trimmed = raw.trim();
   if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length < 4000) {
     try {
