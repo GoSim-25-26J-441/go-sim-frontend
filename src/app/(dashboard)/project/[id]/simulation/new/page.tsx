@@ -78,8 +78,23 @@ interface ScenarioWorkloadPattern {
   arrival: ScenarioArrival;
 }
 
+interface ScenarioAutoscalingServicePolicy {
+  service_id: string;
+  min_replicas: number;
+  max_replicas: number;
+  target_p95_latency_ms: number;
+  target_cpu_utilization: number;
+  scale_up_step: number;
+  scale_down_step: number;
+}
+
+interface ScenarioAutoscalingPolicies {
+  services: ScenarioAutoscalingServicePolicy[];
+}
+
 interface ScenarioPolicies {
-  // Passed through to simulation-core; keep as unknown for now
+  autoscaling?: ScenarioAutoscalingPolicies;
+  // Other policy groups are passed through to simulation-core
   [key: string]: unknown;
 }
 
@@ -192,11 +207,25 @@ function scenarioToYaml(scenario: ScenarioState): string {
 
   // policies (optional, passed through)
   lines.push("", "policies:");
-  if (!scenario.policies || Object.keys(scenario.policies).length === 0) {
+  const autoscaling = (scenario.policies as ScenarioPolicies | undefined)?.autoscaling;
+  if (!autoscaling || !autoscaling.services || autoscaling.services.length === 0) {
     lines.push("  {}");
   } else {
-    // For now, keep this minimal – backend treats it as pass-through.
-    lines.push("  # policies editing not yet implemented");
+    lines.push("  autoscaling:");
+    lines.push("    services:");
+    for (const svcPol of autoscaling.services) {
+      lines.push("      - service_id: " + (svcPol.service_id || "service"));
+      lines.push("        min_replicas: " + (svcPol.min_replicas ?? 1));
+      lines.push("        max_replicas: " + (svcPol.max_replicas ?? 1));
+      lines.push(
+        "        target_p95_latency_ms: " + (svcPol.target_p95_latency_ms ?? 0)
+      );
+      lines.push(
+        "        target_cpu_utilization: " + (svcPol.target_cpu_utilization ?? 0)
+      );
+      lines.push("        scale_up_step: " + (svcPol.scale_up_step ?? 1));
+      lines.push("        scale_down_step: " + (svcPol.scale_down_step ?? 1));
+    }
   }
 
   return lines.join("\n");
@@ -293,10 +322,34 @@ workload:
 
   const arrivalTypes: ArrivalType[] = ["poisson", "uniform", "normal", "bursty", "constant"];
 
-  const scenarioYaml = useMemo(
-    () => (isSampleScenario ? SAMPLE_SCENARIO_YAML : scenarioToYaml(scenario)),
-    [isSampleScenario, scenario]
-  );
+  const { yaml: scenarioYaml, error: scenarioYamlError } = useMemo(() => {
+    try {
+      return { yaml: scenarioToYaml(scenario), error: null as string | null };
+    } catch (err) {
+      return {
+        yaml: "",
+        error: err instanceof Error ? err.message : "Invalid scenario (YAML generation failed).",
+      };
+    }
+  }, [scenario]);
+
+  const endpointPathErrors = useMemo(() => {
+    const out: Record<string, string> = {};
+    scenario.services.forEach((svc, svcIndex) => {
+      const pathCounts: Record<string, number> = {};
+      svc.endpoints.forEach((ep) => {
+        const p = (ep.path || "").trim();
+        pathCounts[p] = (pathCounts[p] ?? 0) + 1;
+      });
+      svc.endpoints.forEach((ep, epIndex) => {
+        const p = (ep.path || "").trim();
+        if (pathCounts[p] > 1) {
+          out[`${svcIndex}-${epIndex}`] = "Duplicate path in this service. Each endpoint path must be unique.";
+        }
+      });
+    });
+    return out;
+  }, [scenario]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -380,6 +433,23 @@ workload:
     ) {
       scenarioIssue =
         "Each workload pattern must have from/to and a non-negative base rate.";
+    } else if (
+      scenario.services.some((svc) => {
+        const paths = svc.endpoints.map((e) => (e.path || "").trim());
+        const seen = new Set<string>();
+        return paths.some((p) => {
+          if (seen.has(p)) return true;
+          seen.add(p);
+          return false;
+        });
+      })
+    ) {
+      scenarioIssue =
+        "Duplicate endpoint path in a service. Each path must be unique per service.";
+    }
+
+    if (scenarioYamlError) {
+      scenarioIssue = scenarioYamlError;
     }
 
     if (scenarioIssue) {
@@ -737,32 +807,424 @@ workload:
                     </button>
                   </div>
 
-                  {/* Endpoints (read-only/minimal editing) */}
+                  {/* Endpoints (editable basics, with downstream topology) */}
                   <div className="mt-3 border-t border-white/10 pt-3 space-y-2">
                     <p className="text-xs font-medium text-white/70">Endpoints</p>
                     {svc.endpoints.map((ep, epIndex) => (
                       <div
-                        key={`${svc.id}-${ep.path}-${epIndex}`}
-                        className="flex flex-col md:flex-row md:items-center gap-3 bg-black/40 border border-white/10 rounded px-3 py-2"
+                        key={`${svc.id}-endpoint-${epIndex}`}
+                        className="flex flex-col gap-2 bg-black/40 border border-white/10 rounded px-3 py-2"
                       >
-                        <div className="flex-1">
-                          <span className="text-xs text-white/50">Path</span>
-                          <span className="ml-2 text-sm text-white font-mono">{ep.path}</span>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex-1 min-w-[200px]">
+                            <label className="block text-[11px] font-medium text-white/70 mb-1">
+                              Path
+                            </label>
+                            <input
+                              type="text"
+                              value={ep.path}
+                              onChange={(e) =>
+                                setScenario((prev) => {
+                                  const services = [...prev.services];
+                                  const endpoints = [...services[svcIndex].endpoints];
+                                  endpoints[epIndex] = {
+                                    ...endpoints[epIndex],
+                                    path: e.target.value,
+                                  };
+                                  services[svcIndex] = { ...services[svcIndex], endpoints };
+                                  return { ...prev, services };
+                                })
+                              }
+                              className={`w-full px-3 py-1.5 bg-black/40 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 ${
+                                endpointPathErrors[`${svcIndex}-${epIndex}`]
+                                  ? "border border-red-500 ring-2 ring-red-500/50 focus:ring-red-500/50"
+                                  : "border border-white/20 focus:ring-white/30"
+                              }`}
+                            />
+                            {endpointPathErrors[`${svcIndex}-${epIndex}`] && (
+                              <p className="text-xs text-red-400 mt-1">
+                                {endpointPathErrors[`${svcIndex}-${epIndex}`]}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-white/70">
+                            <div>
+                              <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                Mean CPU (ms)
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={ep.mean_cpu_ms}
+                                onChange={(e) =>
+                                  setScenario((prev) => {
+                                    const services = [...prev.services];
+                                    const endpoints = [...services[svcIndex].endpoints];
+                                    endpoints[epIndex] = {
+                                      ...endpoints[epIndex],
+                                      mean_cpu_ms: Number(e.target.value) || 0,
+                                    };
+                                    services[svcIndex] = { ...services[svcIndex], endpoints };
+                                    return { ...prev, services };
+                                  })
+                                }
+                                className="w-24 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                CPU σ (ms)
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={ep.cpu_sigma_ms}
+                                onChange={(e) =>
+                                  setScenario((prev) => {
+                                    const services = [...prev.services];
+                                    const endpoints = [...services[svcIndex].endpoints];
+                                    endpoints[epIndex] = {
+                                      ...endpoints[epIndex],
+                                      cpu_sigma_ms: Number(e.target.value) || 0,
+                                    };
+                                    services[svcIndex] = { ...services[svcIndex], endpoints };
+                                    return { ...prev, services };
+                                  })
+                                }
+                                className="w-20 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                Default memory (MB)
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={ep.default_memory_mb ?? 10}
+                                onChange={(e) =>
+                                  setScenario((prev) => {
+                                    const services = [...prev.services];
+                                    const endpoints = [...services[svcIndex].endpoints];
+                                    endpoints[epIndex] = {
+                                      ...endpoints[epIndex],
+                                      default_memory_mb: Number(e.target.value) || 0,
+                                    };
+                                    services[svcIndex] = { ...services[svcIndex], endpoints };
+                                    return { ...prev, services };
+                                  })
+                                }
+                                className="w-28 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                              />
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={svc.endpoints.length === 1}
+                            onClick={() =>
+                              setScenario((prev) => {
+                                const services = [...prev.services];
+                                const endpoints = services[svcIndex].endpoints.filter(
+                                  (_e, i) => i !== epIndex
+                                );
+                                services[svcIndex] = { ...services[svcIndex], endpoints };
+                                return { ...prev, services };
+                              })
+                            }
+                            className="ml-auto px-2 py-1 text-[11px] rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Remove
+                          </button>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-white/50">Mean CPU</span>
-                          <span className="text-sm text-white">
-                            {ep.mean_cpu_ms}
-                            <span className="text-xs text-white/50 ml-1">ms</span>
-                          </span>
+                        <div className="border-t border-white/10 pt-2 mt-1 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[11px] text-white/60 mb-1">Downstream calls</p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setScenario((prev) => {
+                                  const services = [...prev.services];
+                                  const endpoints = [...services[svcIndex].endpoints];
+                                  const currentDownstream = endpoints[epIndex].downstream || [];
+                                  endpoints[epIndex] = {
+                                    ...endpoints[epIndex],
+                                    downstream: [
+                                      ...currentDownstream,
+                                      {
+                                        to:
+                                          scenario.services[0]?.endpoints[0]
+                                            ? `${scenario.services[0].id}:${scenario.services[0].endpoints[0].path}`
+                                            : "svc1:/test",
+                                        call_count_mean: 1,
+                                        call_latency_ms: { mean: 10, sigma: 5 },
+                                        downstream_fraction_cpu: 0.5,
+                                      },
+                                    ],
+                                  };
+                                  services[svcIndex] = { ...services[svcIndex], endpoints };
+                                  return { ...prev, services };
+                                })
+                              }
+                              className="px-2 py-1 text-[11px] rounded bg-white/10 text-white hover:bg-white/20"
+                            >
+                              Add downstream call
+                            </button>
+                          </div>
+                          {ep.downstream && ep.downstream.length > 0 ? (
+                            <div className="space-y-2">
+                              {ep.downstream.map((d, dIndex) => {
+                                const downstreamTargets =
+                                  scenario.services.flatMap((svcOpt) =>
+                                    svcOpt.endpoints.map((epOpt) => ({
+                                      value: `${svcOpt.id}:${epOpt.path}`,
+                                      label: `${svcOpt.id}${epOpt.path}`,
+                                    }))
+                                  ) ?? [];
+
+                                return (
+                                  <div
+                                    key={`${svc.id}-down-${dIndex}`}
+                                    className="flex flex-wrap items-center gap-3 text-[11px] text-white/70"
+                                  >
+                                    <div className="min-w-[180px]">
+                                      <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                        To (service:endpoint)
+                                      </label>
+                                      <select
+                                        value={d.to}
+                                        onChange={(e) =>
+                                          setScenario((prev) => {
+                                            const services = [...prev.services];
+                                            const endpoints = [...services[svcIndex].endpoints];
+                                            const downstream = [...endpoints[epIndex].downstream];
+                                            downstream[dIndex] = {
+                                              ...downstream[dIndex],
+                                              to: e.target.value,
+                                            };
+                                            endpoints[epIndex] = {
+                                              ...endpoints[epIndex],
+                                              downstream,
+                                            };
+                                            services[svcIndex] = {
+                                              ...services[svcIndex],
+                                              endpoints,
+                                            };
+                                            return { ...prev, services };
+                                          })
+                                        }
+                                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                                      >
+                                        {downstreamTargets.length === 0 && (
+                                          <option value={d.to || ""}>
+                                            {d.to || "No endpoints available"}
+                                          </option>
+                                        )}
+                                        {downstreamTargets.map((opt) => (
+                                          <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                        Call count (mean)
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={d.call_count_mean}
+                                        onChange={(e) =>
+                                          setScenario((prev) => {
+                                            const services = [...prev.services];
+                                            const endpoints = [...services[svcIndex].endpoints];
+                                            const downstream = [...endpoints[epIndex].downstream];
+                                            downstream[dIndex] = {
+                                              ...downstream[dIndex],
+                                              call_count_mean: Number(e.target.value) || 0,
+                                            };
+                                            endpoints[epIndex] = {
+                                              ...endpoints[epIndex],
+                                              downstream,
+                                            };
+                                            services[svcIndex] = {
+                                              ...services[svcIndex],
+                                              endpoints,
+                                            };
+                                            return { ...prev, services };
+                                          })
+                                        }
+                                        className="w-20 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                        Latency mean (ms)
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={d.call_latency_ms.mean}
+                                        onChange={(e) =>
+                                          setScenario((prev) => {
+                                            const services = [...prev.services];
+                                            const endpoints = [...services[svcIndex].endpoints];
+                                            const downstream = [...endpoints[epIndex].downstream];
+                                            downstream[dIndex] = {
+                                              ...downstream[dIndex],
+                                              call_latency_ms: {
+                                                ...downstream[dIndex].call_latency_ms,
+                                                mean: Number(e.target.value) || 0,
+                                              },
+                                            };
+                                            endpoints[epIndex] = {
+                                              ...endpoints[epIndex],
+                                              downstream,
+                                            };
+                                            services[svcIndex] = {
+                                              ...services[svcIndex],
+                                              endpoints,
+                                            };
+                                            return { ...prev, services };
+                                          })
+                                        }
+                                        className="w-24 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                        Latency σ (ms)
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={d.call_latency_ms.sigma}
+                                        onChange={(e) =>
+                                          setScenario((prev) => {
+                                            const services = [...prev.services];
+                                            const endpoints = [...services[svcIndex].endpoints];
+                                            const downstream = [...endpoints[epIndex].downstream];
+                                            downstream[dIndex] = {
+                                              ...downstream[dIndex],
+                                              call_latency_ms: {
+                                                ...downstream[dIndex].call_latency_ms,
+                                                sigma: Number(e.target.value) || 0,
+                                              },
+                                            };
+                                            endpoints[epIndex] = {
+                                              ...endpoints[epIndex],
+                                              downstream,
+                                            };
+                                            services[svcIndex] = {
+                                              ...services[svcIndex],
+                                              endpoints,
+                                            };
+                                            return { ...prev, services };
+                                          })
+                                        }
+                                        className="w-24 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-medium text-white/70 mb-1">
+                                        CPU fraction
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.05}
+                                        value={d.downstream_fraction_cpu}
+                                        onChange={(e) =>
+                                          setScenario((prev) => {
+                                            const services = [...prev.services];
+                                            const endpoints = [...services[svcIndex].endpoints];
+                                            const downstream = [...endpoints[epIndex].downstream];
+                                            downstream[dIndex] = {
+                                              ...downstream[dIndex],
+                                              downstream_fraction_cpu:
+                                                Number(e.target.value) || 0,
+                                            };
+                                            endpoints[epIndex] = {
+                                              ...endpoints[epIndex],
+                                              downstream,
+                                            };
+                                            services[svcIndex] = {
+                                              ...services[svcIndex],
+                                              endpoints,
+                                            };
+                                            return { ...prev, services };
+                                          })
+                                        }
+                                        className="w-20 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                                      />
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setScenario((prev) => {
+                                          const services = [...prev.services];
+                                          const endpoints = [...services[svcIndex].endpoints];
+                                          const downstream = endpoints[epIndex].downstream.filter(
+                                            (_d, i) => i !== dIndex
+                                          );
+                                          endpoints[epIndex] = {
+                                            ...endpoints[epIndex],
+                                            downstream,
+                                          };
+                                          services[svcIndex] = {
+                                            ...services[svcIndex],
+                                            endpoints,
+                                          };
+                                          return { ...prev, services };
+                                        })
+                                      }
+                                      className="px-2 py-1 text-[11px] rounded bg-red-500/20 text-red-300 hover:bg-red-500/30"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-white/40">
+                              No downstream calls yet. Use &quot;Add downstream call&quot; to model
+                              dependencies to other services.
+                            </p>
+                          )}
                         </div>
                       </div>
                     ))}
                     {svc.endpoints.length === 0 && (
                       <p className="text-xs text-white/40">
-                        Endpoints are defined in the scenario file and will be populated from it.
+                        No endpoints defined yet. Add endpoints to this service using the button below.
                       </p>
                     )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setScenario((prev) => {
+                          const services = [...prev.services];
+                          const endpoints = [
+                            ...services[svcIndex].endpoints,
+                            {
+                              path: "/new-endpoint",
+                              mean_cpu_ms: 10,
+                              cpu_sigma_ms: 2,
+                              default_memory_mb: 10,
+                              downstream: [],
+                              net_latency_ms: { mean: 1, sigma: 0.5 },
+                            },
+                          ];
+                          services[svcIndex] = { ...services[svcIndex], endpoints };
+                          return { ...prev, services };
+                        })
+                      }
+                      className="mt-2 px-3 py-1.5 text-[11px] rounded bg-white/10 text-white hover:bg-white/20"
+                    >
+                      Add endpoint
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1082,6 +1544,259 @@ workload:
             </div>
           </div>
 
+          {/* Policies (Autoscaling) */}
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-4">Policies (Autoscaling)</h2>
+            <p className="text-xs text-white/60 mb-3">
+              Configure autoscaling policies per service. These are emitted under
+              {' '}<span className="font-mono text-[11px]">policies.autoscaling.services</span>{' '}
+              in the generated YAML.
+            </p>
+            <div className="space-y-3">
+              {(
+                ((scenario.policies as ScenarioPolicies | undefined)?.autoscaling
+                  ?.services) || []
+              ).map((pol, polIndex) => (
+                <div
+                  key={`pol-${pol.service_id || polIndex}`}
+                  className="bg-white/5 border border-white/10 rounded-lg p-4 flex flex-wrap items-end gap-3"
+                >
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Service
+                    </label>
+                    <select
+                      value={pol.service_id}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            service_id: e.target.value,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    >
+                      {scenario.services.length === 0 && (
+                        <option value={pol.service_id || ""}>
+                          {pol.service_id || "No services defined"}
+                        </option>
+                      )}
+                      {scenario.services.map((svc) => (
+                        <option key={svc.id} value={svc.id}>
+                          {svc.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Min replicas
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={pol.min_replicas}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            min_replicas: Number(e.target.value) || 1,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="w-20 px-3 py-1.5 bg.black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Max replicas
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={pol.max_replicas}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            max_replicas: Number(e.target.value) || 1,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="w-20 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text.white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Target p95 latency (ms)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={pol.target_p95_latency_ms}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            target_p95_latency_ms: Number(e.target.value) || 0,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="w-28 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Target CPU util
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={pol.target_cpu_utilization}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            target_cpu_utilization: Number(e.target.value) || 0,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="w-24 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Scale up step
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={pol.scale_up_step}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            scale_up_step: Number(e.target.value) || 1,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="w-20 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-white/70 mb-1">
+                      Scale down step
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={pol.scale_down_step}
+                      onChange={(e) =>
+                        setScenario((prev) => {
+                          const policies = { ...(prev.policies as ScenarioPolicies) };
+                          const autoscaling: ScenarioAutoscalingPolicies = {
+                            services: [...(policies.autoscaling?.services || [])],
+                          };
+                          autoscaling.services[polIndex] = {
+                            ...autoscaling.services[polIndex],
+                            scale_down_step: Number(e.target.value) || 1,
+                          };
+                          policies.autoscaling = autoscaling;
+                          return { ...prev, policies };
+                        })
+                      }
+                      className="w-24 px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setScenario((prev) => {
+                        const policies = { ...(prev.policies as ScenarioPolicies) };
+                        const autoscaling: ScenarioAutoscalingPolicies = {
+                          services: [...(policies.autoscaling?.services || [])],
+                        };
+                        autoscaling.services = autoscaling.services.filter(
+                          (_p, i) => i !== polIndex
+                        );
+                        policies.autoscaling = autoscaling;
+                        return { ...prev, policies };
+                      })
+                    }
+                    className="ml-auto px-3 py-1.5 text-[11px] rounded bg-red-500/20 text-red-300 hover:bg-red-500/30"
+                  >
+                    Remove policy
+                  </button>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={() =>
+                  setScenario((prev) => {
+                    const policies = { ...(prev.policies as ScenarioPolicies) };
+                    const autoscaling: ScenarioAutoscalingPolicies = {
+                      services: [...(policies.autoscaling?.services || [])],
+                    };
+                    autoscaling.services.push({
+                      service_id: "",
+                      min_replicas: 1,
+                      max_replicas: 1,
+                      target_p95_latency_ms: 0,
+                      target_cpu_utilization: 0,
+                      scale_up_step: 1,
+                      scale_down_step: 1,
+                    });
+                    policies.autoscaling = autoscaling;
+                    return { ...prev, policies };
+                  })
+                }
+                className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20"
+              >
+                Add autoscaling policy
+              </button>
+            </div>
+          </div>
+
           {/* Legacy high-level workload knobs (still used by current create API) */}
           <div>
             <h2 className="text-lg font-semibold text-white mb-4">Overall Workload (legacy)</h2>
@@ -1113,6 +1828,11 @@ workload:
               This is the YAML that will be generated from the editor and sent to the simulation
               engine in the new flow. In sample mode it should mirror the predefined scenario file.
             </p>
+            {scenarioYamlError && (
+              <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
+                {scenarioYamlError}
+              </div>
+            )}
             <textarea
               readOnly
               value={scenarioYaml}
