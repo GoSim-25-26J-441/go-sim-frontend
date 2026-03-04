@@ -95,6 +95,8 @@ export default function ProjectSimulationPage() {
   const [runs, setRuns] = useState<BackendRunSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [rawResponse, setRawResponse] = useState<unknown>(null);
+  const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -116,6 +118,7 @@ export default function ProjectSimulationPage() {
           throw new Error(raw || `Failed to load simulation runs (HTTP ${res.status})`);
         }
         const data = await res.json();
+        setRawResponse(data);
 
         // Normalise into BackendRunSummary[]. Handles:
         //   { runs: [{...}, ...] }   ← current backend shape
@@ -190,6 +193,23 @@ export default function ProjectSimulationPage() {
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-sm text-red-300">
           {error}
+        </div>
+      )}
+
+      {rawResponse !== null && (
+        <div className="rounded-lg border border-white/10 bg-white/5 text-xs">
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2 text-white/40 hover:text-white/70 transition-colors"
+          >
+            <span className="font-mono">Raw API response</span>
+            <span>{showRaw ? "▲ hide" : "▼ show"}</span>
+          </button>
+          {showRaw && (
+            <pre className="px-4 pb-4 font-mono text-[11px] text-white/60 whitespace-pre-wrap break-all border-t border-white/10 pt-3">
+              {JSON.stringify(rawResponse, null, 2)}
+            </pre>
+          )}
         </div>
       )}
 
