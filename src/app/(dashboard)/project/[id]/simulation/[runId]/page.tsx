@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
@@ -26,6 +33,18 @@ interface SseEvent {
   timestamp: string;
 }
 
+export interface SsePanelHandle {
+  connect: () => void;
+  abort: () => void;
+}
+
+interface SsePanelProps {
+  title: string;
+  url: string;
+  onTerminalEvent?: () => void;
+  onStreamClose?: () => void;
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<string, string> = {
@@ -38,23 +57,22 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 const EVENT_TYPE_STYLES: Record<string, string> = {
-  metrics:  "bg-sky-500/20 text-sky-300",
-  error:    "bg-red-500/20 text-red-300",
-  done:     "bg-emerald-500/20 text-emerald-300",
-  completed:"bg-emerald-500/20 text-emerald-300",
-  stopped:  "bg-gray-500/20 text-gray-300",
-  best:     "bg-amber-500/20 text-amber-300",
-  status:   "bg-purple-500/20 text-purple-300",
+  metrics:   "bg-sky-500/20 text-sky-300",
+  metric_update: "bg-sky-500/20 text-sky-300",
+  error:     "bg-red-500/20 text-red-300",
+  done:      "bg-emerald-500/20 text-emerald-300",
+  completed: "bg-emerald-500/20 text-emerald-300",
+  stopped:   "bg-gray-500/20 text-gray-300",
+  best:      "bg-amber-500/20 text-amber-300",
+  status:    "bg-purple-500/20 text-purple-300",
 };
 
-// ── SSE parsing helper ───────────────────────────────────────────────────────
-// Strips trailing \r so the parser works correctly for both \n and \r\n
-// line endings (SSE spec allows either).
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 function stripCr(line: string) {
   return line.endsWith("\r") ? line.slice(0, -1) : line;
 }
 
-// Pretty-print a string if it looks like JSON, otherwise return as-is.
 function formatData(raw: string | undefined | null): string {
   if (!raw) return "";
   const trimmed = raw.trim();
@@ -68,124 +86,116 @@ function formatData(raw: string | undefined | null): string {
   return raw;
 }
 
-// ── Reusable SSE panel ───────────────────────────────────────────────────────
+// ── SsePanel — proper forwardRef component ───────────────────────────────────
 
-interface SsePanelProps {
-  title: string;
-  url: string;
-  /** Called when a terminal event type is received so the parent can refresh run info */
-  onTerminalEvent?: () => void;
-  /** Called when the stream closes naturally */
-  onStreamClose?: () => void;
-}
+const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
+  ({ title, url, onTerminalEvent, onStreamClose }, ref) => {
+    const [events, setEvents] = useState<SseEvent[]>([]);
+    const [connected, setConnected] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-function SsePanel({ title, url, onTerminalEvent, onStreamClose }: SsePanelProps) {
-  const [events, setEvents] = useState<SseEvent[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+    const logRef = useRef<HTMLDivElement>(null);
+    const abortRef = useRef<AbortController | null>(null);
+    // Use a module-level incrementing counter scoped to this instance so keys
+    // are always unique regardless of what id: the backend sends.
+    const seqRef = useRef(0);
 
-  const logRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const countRef = useRef(0);
+    const connect = useCallback(async () => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setError(null);
 
-  const connect = useCallback(async () => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setError(null);
+      try {
+        const token = await getFirebaseIdToken();
+        const res = await fetch(url, {
+          headers: {
+            Accept: "text/event-stream",
+            "Cache-Control": "no-cache",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          signal: controller.signal,
+        });
 
-    try {
-      const token = await getFirebaseIdToken();
-      const res = await fetch(url, {
-        headers: {
-          Accept: "text/event-stream",
-          "Cache-Control": "no-cache",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        signal: controller.signal,
-      });
+        if (!res.ok) {
+          setError(`HTTP ${res.status} — stream unavailable`);
+          setConnected(false);
+          return;
+        }
 
-      if (!res.ok) {
-        setError(`HTTP ${res.status} — stream unavailable`);
-        setConnected(false);
-        return;
-      }
+        setConnected(true);
 
-      setConnected(true);
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
 
-        buffer += decoder.decode(value, { stream: true });
-        // Split on \n; stripCr handles \r\n endings
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+          let pending: { type?: string; data?: string } = {};
 
-        let pending: { type?: string; data?: string; id?: string } = {};
+          for (const raw of lines) {
+            const line = stripCr(raw);
 
-        for (const raw of lines) {
-          const line = stripCr(raw);
+            if (line.startsWith("event:")) {
+              pending.type = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              pending.data = (pending.data ?? "") + line.slice(5).trimStart();
+            } else if (line === "") {
+              if (pending.data !== undefined) {
+                // Always generate our own unique key — never use the SSE id:
+                // field as a React key since the backend may reuse those values.
+                seqRef.current += 1;
+                const uid = `${Date.now()}-${seqRef.current}`;
+                const eventType = pending.type ?? "message";
 
-          if (line.startsWith("event:")) {
-            pending.type = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            pending.data = (pending.data ?? "") + line.slice(5).trimStart();
-          } else if (line.startsWith("id:")) {
-            pending.id = line.slice(3).trim();
-          } else if (line === "") {
-            // Blank line = end of SSE event
-            if (pending.data !== undefined) {
-              countRef.current += 1;
-              const eventType = pending.type ?? "message";
-              setEvents((prev) => [
-                ...prev.slice(-299),
-                {
-                  uid: pending.id ?? String(countRef.current),
-                  type: eventType,
-                  data: pending.data!,
-                  timestamp: new Date().toISOString(),
-                },
-              ]);
-              if (["done", "completed", "stopped", "failed"].includes(eventType)) {
-                onTerminalEvent?.();
+                setEvents((prev) => [
+                  ...prev.slice(-299),
+                  { uid, type: eventType, data: pending.data!, timestamp: new Date().toISOString() },
+                ]);
+
+                if (["done", "completed", "stopped", "failed"].includes(eventType)) {
+                  onTerminalEvent?.();
+                }
               }
+              pending = {};
             }
-            pending = {};
           }
         }
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") {
+          setError(`Stream error: ${(e as Error).message}`);
+        }
+      } finally {
+        setConnected(false);
+        if (!controller.signal.aborted) {
+          onStreamClose?.();
+        }
       }
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        setError(`Stream error: ${(e as Error).message}`);
+    }, [url, onTerminalEvent, onStreamClose]);
+
+    useImperativeHandle(ref, () => ({
+      connect,
+      abort: () => abortRef.current?.abort(),
+    }));
+
+    // Auto-scroll
+    useEffect(() => {
+      if (logRef.current) {
+        logRef.current.scrollTop = logRef.current.scrollHeight;
       }
-    } finally {
-      setConnected(false);
-      if (!controller.signal.aborted) {
-        onStreamClose?.();
-      }
-    }
-  }, [url, onTerminalEvent, onStreamClose]);
+    }, [events]);
 
-  // Auto-scroll
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [events]);
+    // Cleanup on unmount
+    useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  // Cleanup on unmount
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
-
-  return {
-    connect,
-    abort: () => abortRef.current?.abort(),
-    panel: (
+    return (
       <div className="bg-card border border-border rounded-lg flex flex-col min-h-[460px]">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
@@ -238,7 +248,7 @@ function SsePanel({ title, url, onTerminalEvent, onStreamClose }: SsePanelProps)
             events.map((ev) => (
               <div
                 key={ev.uid}
-                className="flex gap-2 items-start hover:bg-white/5 rounded px-2 py-1 group"
+                className="flex gap-2 items-start hover:bg-white/5 rounded px-2 py-1"
               >
                 <span className="text-white/25 shrink-0 tabular-nums select-none">
                   {ev.timestamp.slice(11, 23)}
@@ -258,9 +268,10 @@ function SsePanel({ title, url, onTerminalEvent, onStreamClose }: SsePanelProps)
           )}
         </div>
       </div>
-    ),
-  };
-}
+    );
+  }
+);
+SsePanel.displayName = "SsePanel";
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
@@ -275,6 +286,8 @@ export default function SimulationRunPage() {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
 
+  const simRef = useRef<SsePanelHandle>(null);
+  const backendRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
 
   // ── Run info fetch ──────────────────────────────────────────────────────────
@@ -299,42 +312,22 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
-  useEffect(() => {
-    fetchRunInfoRef.current = fetchRunInfo;
-  }, [fetchRunInfo]);
+  useEffect(() => { fetchRunInfoRef.current = fetchRunInfo; }, [fetchRunInfo]);
 
-  const refreshStatus = useCallback(() => {
-    fetchRunInfoRef.current();
-  }, []);
-
-  // ── SSE panels ─────────────────────────────────────────────────────────────
-
-  const simStream = SsePanel({
-    title: "Simulation event stream",
-    url: `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/events`,
-    onTerminalEvent: refreshStatus,
-    onStreamClose: refreshStatus,
-  });
-
-  const backendStream = SsePanel({
-    title: "Backend / Redis event stream",
-    url: `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/backend-events`,
-    onTerminalEvent: refreshStatus,
-    onStreamClose: refreshStatus,
-  });
+  const refreshStatus = useCallback(() => { fetchRunInfoRef.current(); }, []);
 
   // ── On mount ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     fetchRunInfo().then((run) => {
       if (run?.status === "running") {
-        simStream.connect();
-        backendStream.connect();
+        simRef.current?.connect();
+        backendRef.current?.connect();
       }
     });
     return () => {
-      simStream.abort();
-      backendStream.abort();
+      simRef.current?.abort();
+      backendRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -346,8 +339,8 @@ export default function SimulationRunPage() {
     try {
       await startSimulationRun(runId);
       await fetchRunInfo();
-      simStream.connect();
-      backendStream.connect();
+      simRef.current?.connect();
+      backendRef.current?.connect();
     } catch (e) {
       console.error("Failed to start run:", e);
     } finally {
@@ -370,8 +363,8 @@ export default function SimulationRunPage() {
           body: JSON.stringify({ status: "stopped" }),
         }
       );
-      simStream.abort();
-      backendStream.abort();
+      simRef.current?.abort();
+      backendRef.current?.abort();
       await fetchRunInfo();
     } catch (e) {
       console.error("Failed to stop run:", e);
@@ -505,8 +498,20 @@ export default function SimulationRunPage() {
 
       {/* Event stream panels */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {simStream.panel}
-        {backendStream.panel}
+        <SsePanel
+          ref={simRef}
+          title="Simulation event stream"
+          url={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/events`}
+          onTerminalEvent={refreshStatus}
+          onStreamClose={refreshStatus}
+        />
+        <SsePanel
+          ref={backendRef}
+          title="Backend / Redis event stream"
+          url={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/backend-events`}
+          onTerminalEvent={refreshStatus}
+          onStreamClose={refreshStatus}
+        />
       </div>
     </div>
   );
