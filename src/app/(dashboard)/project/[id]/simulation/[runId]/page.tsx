@@ -8,7 +8,7 @@ import { env } from "@/lib/env";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { startSimulationRun } from "@/lib/api-client/simulation";
 
-// ---- Types ----------------------------------------------------------------
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface RunInfo {
   run_id: string;
@@ -26,7 +26,7 @@ interface SseEvent {
   timestamp: string;
 }
 
-// ---- Helpers ---------------------------------------------------------------
+// ── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<string, string> = {
   pending:   "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
@@ -41,10 +41,227 @@ const EVENT_TYPE_STYLES: Record<string, string> = {
   metrics:  "bg-sky-500/20 text-sky-300",
   error:    "bg-red-500/20 text-red-300",
   done:     "bg-emerald-500/20 text-emerald-300",
+  completed:"bg-emerald-500/20 text-emerald-300",
+  stopped:  "bg-gray-500/20 text-gray-300",
   best:     "bg-amber-500/20 text-amber-300",
+  status:   "bg-purple-500/20 text-purple-300",
 };
 
-// ---- Page ------------------------------------------------------------------
+// ── SSE parsing helper ───────────────────────────────────────────────────────
+// Strips trailing \r so the parser works correctly for both \n and \r\n
+// line endings (SSE spec allows either).
+function stripCr(line: string) {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+// Pretty-print a string if it looks like JSON, otherwise return as-is.
+function formatData(raw: string): string {
+  const trimmed = raw.trim();
+  if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length < 4000) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      /* not valid JSON */
+    }
+  }
+  return raw;
+}
+
+// ── Reusable SSE panel ───────────────────────────────────────────────────────
+
+interface SsePanelProps {
+  title: string;
+  url: string;
+  /** Called when a terminal event type is received so the parent can refresh run info */
+  onTerminalEvent?: () => void;
+  /** Called when the stream closes naturally */
+  onStreamClose?: () => void;
+}
+
+function SsePanel({ title, url, onTerminalEvent, onStreamClose }: SsePanelProps) {
+  const [events, setEvents] = useState<SseEvent[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const logRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const countRef = useRef(0);
+
+  const connect = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setError(null);
+
+    try {
+      const token = await getFirebaseIdToken();
+      const res = await fetch(url, {
+        headers: {
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        setError(`HTTP ${res.status} — stream unavailable`);
+        setConnected(false);
+        return;
+      }
+
+      setConnected(true);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        // Split on \n; stripCr handles \r\n endings
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        let pending: { type?: string; data?: string; id?: string } = {};
+
+        for (const raw of lines) {
+          const line = stripCr(raw);
+
+          if (line.startsWith("event:")) {
+            pending.type = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            pending.data = (pending.data ?? "") + line.slice(5).trimStart();
+          } else if (line.startsWith("id:")) {
+            pending.id = line.slice(3).trim();
+          } else if (line === "") {
+            // Blank line = end of SSE event
+            if (pending.data !== undefined) {
+              countRef.current += 1;
+              const eventType = pending.type ?? "message";
+              setEvents((prev) => [
+                ...prev.slice(-299),
+                {
+                  uid: pending.id ?? String(countRef.current),
+                  type: eventType,
+                  data: pending.data!,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
+              if (["done", "completed", "stopped", "failed"].includes(eventType)) {
+                onTerminalEvent?.();
+              }
+            }
+            pending = {};
+          }
+        }
+      }
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") {
+        setError(`Stream error: ${(e as Error).message}`);
+      }
+    } finally {
+      setConnected(false);
+      if (!controller.signal.aborted) {
+        onStreamClose?.();
+      }
+    }
+  }, [url, onTerminalEvent, onStreamClose]);
+
+  // Auto-scroll
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [events]);
+
+  // Cleanup on unmount
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+
+  return {
+    connect,
+    abort: () => abortRef.current?.abort(),
+    panel: (
+      <div className="bg-card border border-border rounded-lg flex flex-col min-h-[460px]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+          <h2 className="text-sm font-semibold text-white">{title}</h2>
+          <div className="flex items-center gap-3">
+            {connected ? (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+                <Wifi className="w-3.5 h-3.5" />
+                Connected
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-xs text-white/30">
+                <WifiOff className="w-3.5 h-3.5" />
+                Disconnected
+              </span>
+            )}
+            <span className="text-xs text-white/30">{events.length} events</span>
+            <button
+              onClick={() => setEvents([])}
+              className="text-xs text-white/30 hover:text-white/60 transition-colors"
+            >
+              Clear
+            </button>
+            {!connected && (
+              <button
+                onClick={connect}
+                className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                Reconnect
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+            {error}
+          </div>
+        )}
+
+        {/* Event log */}
+        <div ref={logRef} className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-0.5">
+          {events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-white/20 select-none gap-2">
+              <Wifi className="w-7 h-7 opacity-30" />
+              <p>{connected ? "Waiting for events…" : "Not connected."}</p>
+            </div>
+          ) : (
+            events.map((ev) => (
+              <div
+                key={ev.uid}
+                className="flex gap-2 items-start hover:bg-white/5 rounded px-2 py-1 group"
+              >
+                <span className="text-white/25 shrink-0 tabular-nums select-none">
+                  {ev.timestamp.slice(11, 23)}
+                </span>
+                <span
+                  className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium self-start ${
+                    EVENT_TYPE_STYLES[ev.type] ?? "bg-white/10 text-white/50"
+                  }`}
+                >
+                  {ev.type}
+                </span>
+                <pre className="break-all whitespace-pre-wrap text-white/70 leading-relaxed min-w-0">
+                  {formatData(ev.data)}
+                </pre>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    ),
+  };
+}
+
+// ── Main page ────────────────────────────────────────────────────────────────
 
 export default function SimulationRunPage() {
   const params = useParams();
@@ -54,22 +271,12 @@ export default function SimulationRunPage() {
   const [runInfo, setRunInfo] = useState<RunInfo | null>(null);
   const [runLoading, setRunLoading] = useState(true);
   const [runError, setRunError] = useState<string | null>(null);
-
-  const [events, setEvents] = useState<SseEvent[]>([]);
-  const [sseConnected, setSseConnected] = useState(false);
-  const [sseError, setSseError] = useState<string | null>(null);
-
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
 
-  const eventLogRef = useRef<HTMLDivElement>(null);
-  const sseAbortRef = useRef<AbortController | null>(null);
-  const eventCountRef = useRef(0);
-  // Keep a stable ref to fetchRunInfo so connectSse can call it without being
-  // listed as a dep (avoids reconnect loops)
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
 
-  // ---- Data fetching --------------------------------------------------------
+  // ── Run info fetch ──────────────────────────────────────────────────────────
 
   const fetchRunInfo = useCallback(async (): Promise<RunInfo | null> => {
     try {
@@ -91,132 +298,55 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
-  // Keep ref in sync
   useEffect(() => {
     fetchRunInfoRef.current = fetchRunInfo;
   }, [fetchRunInfo]);
 
-  // ---- SSE stream -----------------------------------------------------------
-
-  const connectSse = useCallback(async (id: string) => {
-    // Cancel any existing connection
-    sseAbortRef.current?.abort();
-    const controller = new AbortController();
-    sseAbortRef.current = controller;
-
-    setSseError(null);
-
-    try {
-      const token = await getFirebaseIdToken();
-      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(id)}/events`;
-
-      const res = await fetch(url, {
-        headers: {
-          Accept: "text/event-stream",
-          "Cache-Control": "no-cache",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        setSseError(`Stream unavailable (HTTP ${res.status})`);
-        setSseConnected(false);
-        return;
-      }
-
-      setSseConnected(true);
-
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        let pending: { type?: string; data?: string; id?: string } = {};
-
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            pending.type = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            pending.data = (pending.data ?? "") + line.slice(5).trim();
-          } else if (line.startsWith("id:")) {
-            pending.id = line.slice(3).trim();
-          } else if (line === "") {
-            if (pending.data !== undefined) {
-              eventCountRef.current += 1;
-              const uid = pending.id ?? String(eventCountRef.current);
-              const eventType = pending.type ?? "message";
-
-              setEvents((prev) => [
-                ...prev.slice(-299), // keep last 300 events
-                {
-                  uid,
-                  type: eventType,
-                  data: pending.data!,
-                  timestamp: new Date().toISOString(),
-                },
-              ]);
-
-              // If the backend signals completion via a `done` event, refresh
-              // the run status immediately so the UI reflects the final state
-              // without waiting for the connection to fully close.
-              if (eventType === "done" || eventType === "completed" || eventType === "stopped") {
-                fetchRunInfoRef.current();
-              }
-            }
-            pending = {};
-          }
-        }
-      }
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        setSseError(`Stream error: ${(e as Error).message}`);
-      }
-    } finally {
-      setSseConnected(false);
-      // Stream closed naturally (not aborted by us) — refresh run status so
-      // the UI picks up the final status written by the backend after the run ends.
-      if (!controller.signal.aborted) {
-        fetchRunInfoRef.current();
-      }
-    }
+  const refreshStatus = useCallback(() => {
+    fetchRunInfoRef.current();
   }, []);
 
-  // Auto-scroll event log to bottom
-  useEffect(() => {
-    if (eventLogRef.current) {
-      eventLogRef.current.scrollTop = eventLogRef.current.scrollHeight;
-    }
-  }, [events]);
+  // ── SSE panels ─────────────────────────────────────────────────────────────
 
-  // On mount: fetch run, then auto-connect SSE if already running
+  const simStream = SsePanel({
+    title: "Simulation event stream",
+    url: `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/events`,
+    onTerminalEvent: refreshStatus,
+    onStreamClose: refreshStatus,
+  });
+
+  const backendStream = SsePanel({
+    title: "Backend / Redis event stream",
+    url: `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/backend-events`,
+    onTerminalEvent: refreshStatus,
+    onStreamClose: refreshStatus,
+  });
+
+  // ── On mount ────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     fetchRunInfo().then((run) => {
       if (run?.status === "running") {
-        connectSse(run.run_id);
+        simStream.connect();
+        backendStream.connect();
       }
     });
     return () => {
-      sseAbortRef.current?.abort();
+      simStream.abort();
+      backendStream.abort();
     };
-  }, [fetchRunInfo, connectSse]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ---- Controls -------------------------------------------------------------
+  // ── Controls ────────────────────────────────────────────────────────────────
 
   const handleStart = async () => {
     setIsStarting(true);
     try {
       await startSimulationRun(runId);
-      const run = await fetchRunInfo();
-      if (run) connectSse(run.run_id);
+      await fetchRunInfo();
+      simStream.connect();
+      backendStream.connect();
     } catch (e) {
       console.error("Failed to start run:", e);
     } finally {
@@ -239,7 +369,8 @@ export default function SimulationRunPage() {
           body: JSON.stringify({ status: "stopped" }),
         }
       );
-      sseAbortRef.current?.abort();
+      simStream.abort();
+      backendStream.abort();
       await fetchRunInfo();
     } catch (e) {
       console.error("Failed to stop run:", e);
@@ -248,18 +379,18 @@ export default function SimulationRunPage() {
     }
   };
 
-  // ---- Derived values -------------------------------------------------------
+  // ── Derived ──────────────────────────────────────────────────────────────────
 
   const status = runInfo?.status ?? "pending";
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
 
-  // ---- Render ---------------------------------------------------------------
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-6 space-y-5">
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="flex items-center gap-4">
         <Link
           href={`/project/${projectId}/simulation`}
@@ -269,18 +400,16 @@ export default function SimulationRunPage() {
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-white truncate">{runName}</h1>
-          <p className="text-xs text-white/40 font-mono mt-0.5 truncate">run/{runId}</p>
+          <p className="text-xs text-white/40 font-mono mt-0.5 truncate">run / {runId}</p>
         </div>
         {runInfo && (
-          <span
-            className={`px-2.5 py-1 rounded-full text-xs font-medium border ${statusStyle}`}
-          >
+          <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${statusStyle}`}>
             {status}
           </span>
         )}
       </div>
 
-      {/* ── Action bar ─────────────────────────────────────────────────────── */}
+      {/* Action bar */}
       <div className="flex items-center gap-2 flex-wrap">
         {status === "pending" && (
           <button
@@ -288,11 +417,7 @@ export default function SimulationRunPage() {
             disabled={isStarting}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isStarting ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4" />
-            )}
+            {isStarting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             Start Run
           </button>
         )}
@@ -303,177 +428,84 @@ export default function SimulationRunPage() {
             disabled={isStopping}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isStopping ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Square className="w-4 h-4" />
-            )}
+            {isStopping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
             Stop Run
           </button>
         )}
 
         <button
-          onClick={() => fetchRunInfo()}
+          onClick={fetchRunInfo}
           className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           Refresh
         </button>
+      </div>
 
-        {status === "running" && !sseConnected && (
-          <button
-            onClick={() => connectSse(runId)}
-            className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 transition-colors"
-          >
-            <Wifi className="w-3.5 h-3.5" />
-            Reconnect stream
-          </button>
+      {/* Run details */}
+      <div className="bg-card border border-border rounded-lg p-4">
+        <h2 className="text-sm font-semibold text-white mb-3">Run details</h2>
+        {runLoading ? (
+          <div className="flex items-center gap-2 text-xs text-white/50">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
+          </div>
+        ) : runError ? (
+          <p className="text-xs text-red-400">{runError}</p>
+        ) : runInfo ? (
+          <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+            <div>
+              <dt className="text-white/40 mb-0.5">Run ID</dt>
+              <dd className="font-mono text-white/80 break-all">{runInfo.run_id}</dd>
+            </div>
+            {runInfo.engine_run_id && (
+              <div>
+                <dt className="text-white/40 mb-0.5">Engine Run ID</dt>
+                <dd className="font-mono text-white/80 break-all">{runInfo.engine_run_id}</dd>
+              </div>
+            )}
+            <div>
+              <dt className="text-white/40 mb-0.5">Status</dt>
+              <dd>
+                <span className={`px-2 py-0.5 rounded-full text-xs border ${statusStyle}`}>
+                  {runInfo.status}
+                </span>
+              </dd>
+            </div>
+            {runInfo.created_at && (
+              <div>
+                <dt className="text-white/40 mb-0.5">Created</dt>
+                <dd className="text-white/80">{new Date(runInfo.created_at).toLocaleString()}</dd>
+              </div>
+            )}
+            {runInfo.updated_at && (
+              <div>
+                <dt className="text-white/40 mb-0.5">Last updated</dt>
+                <dd className="text-white/80">{new Date(runInfo.updated_at).toLocaleString()}</dd>
+              </div>
+            )}
+            {runInfo.metadata && Object.keys(runInfo.metadata).length > 0 && (
+              <div className="col-span-2 md:col-span-4">
+                <dt className="text-white/40 mb-1">Metadata</dt>
+                <dd>
+                  <pre className="text-white/60 font-mono text-[11px] whitespace-pre-wrap break-all bg-black/30 rounded p-2 leading-relaxed">
+                    {JSON.stringify(runInfo.metadata, null, 2)}
+                  </pre>
+                </dd>
+              </div>
+            )}
+          </dl>
+        ) : null}
+        {isTerminal && (
+          <p className="text-xs text-white/30 italic mt-3 pt-3 border-t border-border">
+            Run has finished. Saved metrics will appear here once the metrics API is available.
+          </p>
         )}
       </div>
 
-      {/* ── Main grid ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-        {/* ── Run details panel ───────────────────────────────────────────── */}
-        <div className="bg-card border border-border rounded-lg p-4 space-y-3 self-start">
-          <h2 className="text-sm font-semibold text-white mb-1">Run details</h2>
-
-          {runLoading ? (
-            <div className="flex items-center gap-2 text-xs text-white/50">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              Loading…
-            </div>
-          ) : runError ? (
-            <p className="text-xs text-red-400">{runError}</p>
-          ) : runInfo ? (
-            <dl className="space-y-3 text-xs">
-              <div>
-                <dt className="text-white/40 mb-0.5">Run ID</dt>
-                <dd className="font-mono text-white/80 break-all">{runInfo.run_id}</dd>
-              </div>
-
-              {runInfo.engine_run_id && (
-                <div>
-                  <dt className="text-white/40 mb-0.5">Engine Run ID</dt>
-                  <dd className="font-mono text-white/80 break-all">{runInfo.engine_run_id}</dd>
-                </div>
-              )}
-
-              <div>
-                <dt className="text-white/40 mb-0.5">Status</dt>
-                <dd>
-                  <span className={`px-2 py-0.5 rounded-full text-xs border ${statusStyle}`}>
-                    {runInfo.status}
-                  </span>
-                </dd>
-              </div>
-
-              {runInfo.created_at && (
-                <div>
-                  <dt className="text-white/40 mb-0.5">Created</dt>
-                  <dd className="text-white/80">{new Date(runInfo.created_at).toLocaleString()}</dd>
-                </div>
-              )}
-
-              {runInfo.updated_at && (
-                <div>
-                  <dt className="text-white/40 mb-0.5">Last updated</dt>
-                  <dd className="text-white/80">{new Date(runInfo.updated_at).toLocaleString()}</dd>
-                </div>
-              )}
-
-              {runInfo.metadata && Object.keys(runInfo.metadata).length > 0 && (
-                <div>
-                  <dt className="text-white/40 mb-1">Metadata</dt>
-                  <dd>
-                    <pre className="text-white/60 font-mono text-[11px] whitespace-pre-wrap break-all bg-black/30 rounded p-2 leading-relaxed">
-                      {JSON.stringify(runInfo.metadata, null, 2)}
-                    </pre>
-                  </dd>
-                </div>
-              )}
-            </dl>
-          ) : null}
-
-          {isTerminal && (
-            <div className="pt-2 border-t border-border">
-              <p className="text-xs text-white/40 italic">
-                Run has finished. Saved metrics will appear here once the metrics API is available.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* ── SSE event stream panel ──────────────────────────────────────── */}
-        <div className="lg:col-span-2 bg-card border border-border rounded-lg flex flex-col min-h-[480px]">
-          {/* Panel header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-            <h2 className="text-sm font-semibold text-white">Live event stream</h2>
-            <div className="flex items-center gap-3">
-              {sseConnected ? (
-                <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-                  <Wifi className="w-3.5 h-3.5" />
-                  Connected
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-xs text-white/30">
-                  <WifiOff className="w-3.5 h-3.5" />
-                  Disconnected
-                </span>
-              )}
-              <span className="text-xs text-white/30">{events.length} events</span>
-              <button
-                onClick={() => setEvents([])}
-                className="text-xs text-white/30 hover:text-white/60 transition-colors"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          {/* SSE error banner */}
-          {sseError && (
-            <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
-              {sseError}
-            </div>
-          )}
-
-          {/* Event log */}
-          <div
-            ref={eventLogRef}
-            className="flex-1 overflow-y-auto p-3 space-y-0.5 font-mono text-xs"
-          >
-            {events.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-white/25 select-none">
-                <Wifi className="w-8 h-8 mb-3 opacity-30" />
-                <p>
-                  {status === "running"
-                    ? "Stream connected — waiting for events…"
-                    : "Start the run to see live events here."}
-                </p>
-              </div>
-            ) : (
-              events.map((ev) => (
-                <div
-                  key={ev.uid}
-                  className="flex gap-2 items-start hover:bg-white/5 rounded px-2 py-0.5 group"
-                >
-                  <span className="text-white/25 shrink-0 tabular-nums">
-                    {ev.timestamp.slice(11, 23)}
-                  </span>
-                  <span
-                    className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                      EVENT_TYPE_STYLES[ev.type] ?? "bg-white/10 text-white/50"
-                    }`}
-                  >
-                    {ev.type}
-                  </span>
-                  <span className="break-all text-white/70 leading-relaxed">{ev.data}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+      {/* Event stream panels */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {simStream.panel}
+        {backendStream.panel}
       </div>
     </div>
   );
