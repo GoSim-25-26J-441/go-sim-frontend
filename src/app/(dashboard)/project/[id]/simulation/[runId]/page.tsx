@@ -65,6 +65,9 @@ export default function SimulationRunPage() {
   const eventLogRef = useRef<HTMLDivElement>(null);
   const sseAbortRef = useRef<AbortController | null>(null);
   const eventCountRef = useRef(0);
+  // Keep a stable ref to fetchRunInfo so connectSse can call it without being
+  // listed as a dep (avoids reconnect loops)
+  const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
 
   // ---- Data fetching --------------------------------------------------------
 
@@ -87,6 +90,11 @@ export default function SimulationRunPage() {
       setRunLoading(false);
     }
   }, [runId]);
+
+  // Keep ref in sync
+  useEffect(() => {
+    fetchRunInfoRef.current = fetchRunInfo;
+  }, [fetchRunInfo]);
 
   // ---- SSE stream -----------------------------------------------------------
 
@@ -145,15 +153,24 @@ export default function SimulationRunPage() {
             if (pending.data !== undefined) {
               eventCountRef.current += 1;
               const uid = pending.id ?? String(eventCountRef.current);
+              const eventType = pending.type ?? "message";
+
               setEvents((prev) => [
                 ...prev.slice(-299), // keep last 300 events
                 {
                   uid,
-                  type: pending.type ?? "message",
+                  type: eventType,
                   data: pending.data!,
                   timestamp: new Date().toISOString(),
                 },
               ]);
+
+              // If the backend signals completion via a `done` event, refresh
+              // the run status immediately so the UI reflects the final state
+              // without waiting for the connection to fully close.
+              if (eventType === "done" || eventType === "completed" || eventType === "stopped") {
+                fetchRunInfoRef.current();
+              }
             }
             pending = {};
           }
@@ -165,6 +182,11 @@ export default function SimulationRunPage() {
       }
     } finally {
       setSseConnected(false);
+      // Stream closed naturally (not aborted by us) — refresh run status so
+      // the UI picks up the final status written by the backend after the run ends.
+      if (!controller.signal.aborted) {
+        fetchRunInfoRef.current();
+      }
     }
   }, []);
 
