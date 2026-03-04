@@ -1,11 +1,50 @@
 // Simulation API client for backend integration
-// Currently uses dummy data, but structured for easy backend integration
+// Backend: go-sim-backend simulation API (source of truth for create/start/stop/events)
 
 import { env } from "@/lib/env";
 import { authenticatedFetch } from "./http";
 import { SimulationRun } from "@/types/simulation";
 
 const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
+
+// --- Backend create run (project-level) ---
+
+export interface CreateProjectRunOptimization {
+  objective?: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost";
+  max_iterations?: number;
+  step_size?: number;
+  evaluation_duration_ms?: number;
+  online?: boolean;
+  target_p95_latency_ms?: number;
+  control_interval_ms?: number;
+  min_hosts?: number;
+  max_hosts?: number;
+}
+
+export interface CreateProjectRunRequest {
+  scenario_yaml: string;
+  duration_ms: number;
+  real_time_mode?: boolean;
+  config_yaml?: string;
+  seed?: number;
+  optimization?: CreateProjectRunOptimization;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateProjectRunResponseRun {
+  run_id: string;
+  engine_run_id?: string;
+  status: string;
+  user_id?: string;
+  project_id?: string;
+  created_at: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateProjectRunResponse {
+  run: CreateProjectRunResponseRun;
+}
 
 /**
  * Get all simulation runs
@@ -59,29 +98,35 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
 }
 
 /**
- * Create a new simulation run
- * TODO: Replace with actual backend call when endpoint is available
+ * Create a new simulation run (project-level).
+ * Backend: POST /api/v1/simulation/projects/:project_id/runs
+ * Use returned run.run_id for start, SSE, stop, best-candidate.
+ */
+export async function createProjectSimulationRun(
+  projectId: string,
+  body: CreateProjectRunRequest
+): Promise<CreateProjectRunResponse> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/runs`;
+  const response = await authenticatedFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Failed to create simulation run" }));
+    throw new Error((err as { error?: string }).error ?? `Create run failed (${response.status})`);
+  }
+  const data = (await response.json()) as CreateProjectRunResponse;
+  return data;
+}
+
+/**
+ * Create a new simulation run (legacy shape; prefer createProjectSimulationRun for new flows)
  */
 export async function createSimulationRun(
   config: Omit<SimulationRun, "id" | "status" | "created_at" | "started_at" | "completed_at" | "duration_seconds" | "results" | "error">
 ): Promise<SimulationRun> {
   try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs`, {
-    //   method: "POST",
-    //   headers: {
-    //     "Content-Type": "application/json",
-    //   },
-    //   body: JSON.stringify(config),
-    // });
-    // if (!response.ok) {
-    //   const error = await response.json().catch(() => ({ error: "Failed to create simulation" }));
-    //   throw new Error(error.error || "Failed to create simulation");
-    // }
-    // const data = await response.json();
-    // return data.run as SimulationRun;
-
-    // For now, simulate API call
     const newRun: SimulationRun = {
       id: `sim-run-${Date.now()}`,
       status: "pending",
@@ -96,34 +141,24 @@ export async function createSimulationRun(
 }
 
 /**
- * Start a simulation run
- * TODO: Replace with actual backend call when endpoint is available
+ * Start a simulation run.
+ * Backend: PUT /api/v1/simulation/runs/:id with body { status: "running" }
  */
-export async function startSimulationRun(id: string): Promise<SimulationRun> {
-  try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs/${id}/start`, {
-    //   method: "POST",
-    // });
-    // if (!response.ok) {
-    //   throw new Error("Failed to start simulation");
-    // }
-    // const data = await response.json();
-    // return data.run as SimulationRun;
-
-    // For now, simulate API call
-    const run = await getSimulationRun(id);
-    if (!run) throw new Error("Simulation run not found");
-    
-    return {
-      ...run,
-      status: "running",
-      started_at: new Date().toISOString(),
-    };
-  } catch (error) {
-    console.error("Error starting simulation run:", error);
-    throw error;
+export async function startSimulationRun(id: string): Promise<{ run_id: string; status: string }> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(id)}`;
+  const response = await authenticatedFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "running" }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Failed to start simulation run" }));
+    throw new Error((err as { error?: string }).error ?? `Start run failed (${response.status})`);
   }
+  const data = (await response.json()) as { run?: { run_id: string; status: string } };
+  const run = data.run;
+  if (run) return { run_id: run.run_id, status: run.status };
+  return { run_id: id, status: "running" };
 }
 
 /**
