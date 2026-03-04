@@ -1,11 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Play } from "lucide-react";
+import { ArrowLeft, FileCode2, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
-import { createSimulationRun } from "@/lib/api-client/simulation";
+import { createProjectSimulationRun, CreateProjectRunRequest } from "@/lib/api-client/simulation";
+
+interface DiagramVersion {
+  id: string;
+  label: string;
+  description?: string;
+  yaml?: string;
+}
 
 interface SimulationFormData {
   name: string;
@@ -18,6 +25,7 @@ interface SimulationFormData {
   duration_seconds: number;
   ramp_up_seconds: number;
   scenario: string;
+  real_time_mode: boolean;
 }
 
 // Scenario editor state mirroring simulation-core YAML schema
@@ -104,6 +112,8 @@ interface ScenarioState {
   workload: ScenarioWorkloadPattern[];
   policies?: ScenarioPolicies;
 }
+
+type RunMode = "standard" | "batch_optimization" | "online_optimization";
 
 function scenarioToYaml(scenario: ScenarioState): string {
   const lines: string[] = [];
@@ -237,7 +247,6 @@ export default function ProjectNewSimulationPage() {
   const projectId = params.id as string;
   const searchParams = useSearchParams();
   const version = searchParams.get("version");
-  const isSampleScenario = version === "sample";
 
   const SAMPLE_SCENARIO_YAML = `hosts:
   - id: host-1
@@ -271,6 +280,40 @@ workload:
       quiet_duration_seconds: 0
 `;
 
+  // Version/diagram selector phase (shown before the multi-step form)
+  const [versionPhase, setVersionPhase] = useState(true);
+  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([
+    { id: "sample", label: "Sample scenario", description: "A pre-built sample scenario to get started quickly." },
+  ]);
+  const [versionsLoading, setVersionsLoading] = useState(true);
+  const [selectedVersionId, setSelectedVersionId] = useState("sample");
+  const isSampleScenario = selectedVersionId === "sample" || version === "sample";
+
+  useEffect(() => {
+    // Attempt to fetch project diagram versions from the backend.
+    // The endpoint is not yet built; on failure we fall back to the sample option.
+    const controller = new AbortController();
+    setVersionsLoading(true);
+    fetch(`/api/v1/projects/${projectId}/diagram-versions`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("not available");
+        const data = (await res.json()) as { versions?: DiagramVersion[] };
+        if (data.versions && data.versions.length > 0) {
+          setAvailableVersions([
+            { id: "sample", label: "Sample scenario", description: "A pre-built sample scenario to get started quickly." },
+            ...data.versions,
+          ]);
+          setSelectedVersionId(data.versions[0].id);
+        }
+      })
+      .catch(() => {
+        // API not available yet — keep the default sample option
+      })
+      .finally(() => setVersionsLoading(false));
+    return () => controller.abort();
+  }, [projectId]);
+
+  const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<SimulationFormData>({
     name: "",
     description: "",
@@ -282,6 +325,29 @@ workload:
     duration_seconds: 600,
     ramp_up_seconds: 60,
     scenario: "baseline",
+    real_time_mode: false,
+  });
+  const [runMode, setRunMode] = useState<RunMode>("standard");
+  const [configYaml, setConfigYaml] = useState("");
+  const [seed, setSeed] = useState(0);
+  const [optimization, setOptimization] = useState<{
+    objective: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost";
+    max_iterations: number;
+    step_size: number;
+    evaluation_duration_ms: number;
+    target_p95_latency_ms: number;
+    control_interval_ms: number;
+    min_hosts: number;
+    max_hosts: number;
+  }>({
+    objective: "p95_latency_ms",
+    max_iterations: 10,
+    step_size: 1.0,
+    evaluation_duration_ms: 5000,
+    target_p95_latency_ms: 200.0,
+    control_interval_ms: 1000,
+    min_hosts: 1,
+    max_hosts: 3,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -373,30 +439,7 @@ workload:
     }
   };
 
-  const validate = (): boolean => {
-    const newErrors: Record<string, string> = {};
-    setScenarioError(null);
-
-    if (!formData.name.trim()) {
-      newErrors.name = "Name is required";
-    }
-    if (formData.nodes < 1) {
-      newErrors.nodes = "At least 1 node is required";
-    }
-    if (formData.vcpu_per_node < 1) {
-      newErrors.vcpu_per_node = "At least 1 vCPU is required";
-    }
-    if (formData.memory_gb_per_node < 1) {
-      newErrors.memory_gb_per_node = "At least 1 GB memory is required";
-    }
-    if (formData.concurrent_users < 1) {
-      newErrors.concurrent_users = "At least 1 concurrent user is required";
-    }
-    if (formData.duration_seconds < 60) {
-      newErrors.duration_seconds = "Duration must be at least 60 seconds";
-    }
-
-    // Basic scenario-level validation for the visual editor
+  const validateScenarioStep = (): boolean => {
     let scenarioIssue: string | null = null;
 
     if (scenario.hosts.length === 0) {
@@ -452,9 +495,39 @@ workload:
       scenarioIssue = scenarioYamlError;
     }
 
-    if (scenarioIssue) {
-      newErrors.scenario = "invalid";
-      setScenarioError(scenarioIssue);
+    setScenarioError(scenarioIssue);
+    return !scenarioIssue;
+  };
+
+  const validateConfigStep = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.name.trim()) {
+      newErrors.name = "Simulation name is required";
+    }
+
+    if (runMode !== "online_optimization") {
+      if (!formData.duration_seconds || formData.duration_seconds <= 0) {
+        newErrors.duration_seconds = "Duration must be greater than 0";
+      }
+    }
+
+    if (runMode === "batch_optimization") {
+      if (optimization.max_iterations < 1) {
+        newErrors.config = "Max iterations must be at least 1";
+      } else if (optimization.evaluation_duration_ms <= 0) {
+        newErrors.config = "Evaluation duration must be greater than 0";
+      }
+    }
+
+    if (runMode === "online_optimization") {
+      if (optimization.control_interval_ms <= 0) {
+        newErrors.config = "Control interval must be greater than 0";
+      } else if (optimization.min_hosts < 1) {
+        newErrors.config = "Min hosts must be at least 1";
+      } else if (optimization.max_hosts < optimization.min_hosts) {
+        newErrors.config = "Max hosts must be >= min hosts";
+      }
     }
 
     setErrors(newErrors);
@@ -464,39 +537,51 @@ workload:
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validate()) {
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
-      const simulationRun = await createSimulationRun({
-        name: formData.name,
-        config: {
-          nodes: formData.nodes,
-          workload: {
-            concurrent_users: formData.concurrent_users,
-            rps_target: formData.rps_target,
-            duration_seconds: formData.duration_seconds,
-            ramp_up_seconds: formData.ramp_up_seconds,
-          },
-          resources: {
-            vcpu_per_node: formData.vcpu_per_node,
-            memory_gb_per_node: formData.memory_gb_per_node,
-          },
-          // In sample mode, send the hardcoded sample YAML; otherwise keep using
-          // the legacy scenario selector string for now.
-          scenario: isSampleScenario ? SAMPLE_SCENARIO_YAML : formData.scenario,
+      const finalScenarioYaml = isSampleScenario ? SAMPLE_SCENARIO_YAML : scenarioYaml;
+      const durationMs = runMode === "online_optimization" ? 0 : Math.max(0, formData.duration_seconds * 1000);
+
+      // Build optimization payload based on run mode
+      let optimizationPayload: Record<string, unknown> | undefined;
+      if (runMode === "batch_optimization") {
+        optimizationPayload = {
+          objective: optimization.objective,
+          max_iterations: optimization.max_iterations,
+          step_size: optimization.step_size,
+          evaluation_duration_ms: optimization.evaluation_duration_ms,
+          online: false,
+        };
+      } else if (runMode === "online_optimization") {
+        optimizationPayload = {
+          objective: optimization.objective,
+          online: true,
+          target_p95_latency_ms: optimization.target_p95_latency_ms,
+          control_interval_ms: optimization.control_interval_ms,
+          min_hosts: optimization.min_hosts,
+          max_hosts: optimization.max_hosts,
+        };
+      }
+
+      const body: CreateProjectRunRequest = {
+        scenario_yaml: finalScenarioYaml,
+        duration_ms: durationMs,
+        real_time_mode: formData.real_time_mode,
+        metadata: {
+          name: formData.name,
           description: formData.description || undefined,
+          project_id: projectId,
+          source: "frontend-scenario-editor",
         },
-      });
+        ...(configYaml.trim() ? { config_yaml: configYaml.trim() } : {}),
+        ...(seed > 0 ? { seed } : {}),
+        ...(optimizationPayload ? { optimization: optimizationPayload } : {}),
+      };
 
-      // Optionally start the simulation immediately
-      // await startSimulationRun(simulationRun.id);
+      const { run } = await createProjectSimulationRun(projectId, body);
 
-      // Redirect to project simulation list or run detail
-      router.push(`/simulator/${simulationRun.id}`);
+      router.push(`/project/${projectId}/simulation/${run.run_id}`);
     } catch (error) {
       console.error("Error creating simulation:", error);
       setErrors({
@@ -523,165 +608,572 @@ workload:
         <div>
           <h1 className="text-2xl font-bold text-white">New Simulation</h1>
           <p className="text-sm text-white/60 mt-1">
-            {isSampleScenario
-              ? "Sample scenario: create a test simulation using a predefined YAML."
+            {versionPhase
+              ? "Select a scenario version to start with"
+              : isSampleScenario
+              ? "Sample scenario — configure and start a test simulation run"
               : "Configure and start a new simulation run for this project"}
           </p>
         </div>
       </div>
 
-      {/* Form */}
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="bg-card rounded-lg p-6 border border-border space-y-6">
-          {/* Basic Info */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Basic Information</h2>
-            <div className="space-y-4">
-              <InputField
-                name="name"
-                type="text"
-                label="Simulation Name"
-                placeholder="e.g., High Load Test - 2000 Users"
-                value={formData.name}
-                onChange={handleChange}
-                error={errors.name}
-                required
-              />
-              <TextAreaField
-                name="description"
-                label="Description (optional)"
-                placeholder="Describe the purpose of this simulation..."
-                value={formData.description}
-                onChange={handleChange}
-                rows={3}
-                required={false}
-              />
+      {/* Version selector phase */}
+      {versionPhase && (
+        <div className="bg-card rounded-lg p-8 border border-border max-w-lg space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-white/10">
+              <FileCode2 className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-white">Choose a scenario version</h2>
+              <p className="text-xs text-white/50 mt-0.5">
+                Select a saved diagram version or use the sample to get started.
+              </p>
             </div>
           </div>
 
-          {/* Infrastructure Configuration */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Infrastructure</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <InputField
-                name="nodes"
-                type="number"
-                label="Number of Nodes"
-                value={formData.nodes.toString()}
-                onChange={handleChange}
-                error={errors.nodes}
-                required
-              />
-              <InputField
-                name="vcpu_per_node"
-                type="number"
-                label="vCPU per Node"
-                value={formData.vcpu_per_node.toString()}
-                onChange={handleChange}
-                error={errors.vcpu_per_node}
-                required
-              />
-              <InputField
-                name="memory_gb_per_node"
-                type="number"
-                label="Memory (GB) per Node"
-                value={formData.memory_gb_per_node.toString()}
-                onChange={handleChange}
-                error={errors.memory_gb_per_node}
-                required
-              />
+          {versionsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-white/50">
+              <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+              Loading versions…
             </div>
-          </div>
-
-          {/* Scenario validation message */}
-          {scenarioError && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-300">
-              {scenarioError}
+          ) : (
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-white/70">
+                Scenario version
+              </label>
+              <select
+                value={selectedVersionId}
+                onChange={(e) => setSelectedVersionId(e.target.value)}
+                className="w-full px-3 py-2 bg-black/40 border border-white/20 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+              >
+                {availableVersions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              {availableVersions.find((v) => v.id === selectedVersionId)?.description && (
+                <p className="text-xs text-white/50 pt-1">
+                  {availableVersions.find((v) => v.id === selectedVersionId)!.description}
+                </p>
+              )}
+              {availableVersions.length === 1 && (
+                <p className="text-xs text-amber-400/80 pt-1">
+                  No saved diagram versions found for this project. Connect the diagram API to load
+                  project-specific versions.
+                </p>
+              )}
             </div>
           )}
 
-          {/* Hosts (from scenario YAML) */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Hosts</h2>
-            <div className="space-y-3">
-              {scenario.hosts.map((host, index) => (
+          <div className="flex items-center justify-between pt-2">
+            <Link
+              href={`/project/${projectId}/simulation`}
+              className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              Cancel
+            </Link>
+            <button
+              type="button"
+              disabled={versionsLoading}
+              onClick={() => setVersionPhase(false)}
+              className="px-5 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Load &amp; Configure →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-step form — shown only after a version is selected */}
+      {!versionPhase && (
+        <>
+      {/* Stepper */}
+      <div className="mt-4 flex items-center gap-4">
+        {[{ step: 1, label: "Scenario setup" }, { step: 2, label: "Configuration" }, { step: 3, label: "Review" }].map(
+          ({ step, label }, idx) => {
+            const isActive = currentStep === step;
+            const isCompleted = currentStep > step;
+            return (
+              <div key={step} className="flex items-center gap-2">
                 <div
-                  key={host.id || index}
-                  className="flex flex-col md:flex-row md:items-center gap-3 bg-white/5 border border-white/10 rounded-lg p-3"
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                    isActive
+                      ? "bg-white text-black"
+                      : isCompleted
+                      ? "bg-emerald-400 text-black"
+                      : "bg-white/10 text-white/70"
+                  }`}
                 >
-                  <div className="flex-1 flex flex-col md:flex-row md:items-center gap-3">
-                    <div className="flex-1">
+                  {step}
+                </div>
+                <span className={`text-xs ${isActive ? "text-white" : "text-white/60"}`}>{label}</span>
+                {idx < 2 && <div className="w-10 h-px bg-white/15 ml-2" />}
+              </div>
+            );
+          }
+        )}
+      </div>
+
+      {/* Form */}
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="bg-card rounded-lg p-6 border border-border space-y-6">
+          {/* Step 2: Configuration */}
+          {currentStep === 2 && (
+            <>
+              {/* Basic Info */}
+              <div>
+                <h2 className="text-lg font-semibold text-white mb-4">Basic Information</h2>
+                <div className="space-y-4">
+                  <InputField
+                    name="name"
+                    type="text"
+                    label="Simulation Name"
+                    placeholder="e.g., High Load Test - 2000 Users"
+                    value={formData.name}
+                    onChange={handleChange}
+                    error={errors.name}
+                    required
+                  />
+                  <TextAreaField
+                    name="description"
+                    label="Description (optional)"
+                    placeholder="Describe the purpose of this simulation..."
+                    value={formData.description}
+                    onChange={handleChange}
+                    rows={3}
+                    required={false}
+                  />
+                </div>
+              </div>
+
+              {/* Run mode selector */}
+              <div className="mt-4">
+                <h2 className="text-lg font-semibold text-white mb-3">Run mode</h2>
+                <p className="text-xs text-white/60 mb-3">
+                  Choose how this simulation should run. This controls which additional options are
+                  sent to the backend (standard, batch optimization, or online controller).
+                </p>
+                <div className="inline-flex rounded-lg border border-white/15 bg-white/5 p-1 text-xs text-white/80">
+                  {(
+                    [
+                      { id: "standard", label: "Standard" },
+                      { id: "batch_optimization", label: "Batch optimization" },
+                      { id: "online_optimization", label: "Online optimization" },
+                    ] as { id: RunMode; label: string }[]
+                  ).map((mode) => {
+                    const active = runMode === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setRunMode(mode.id)}
+                        className={`px-3 py-1 rounded-md transition-colors ${
+                          active
+                            ? "bg-white text-black font-medium shadow-sm"
+                            : "bg-transparent text-white/60 hover:bg-white/10 hover:text-white"
+                        }`}
+                      >
+                        {mode.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Duration — not shown for online optimization */}
+              {runMode !== "online_optimization" ? (
+                <div>
+                  <h2 className="text-lg font-semibold text-white mb-3">Duration</h2>
+                  <div className="flex items-end gap-4">
+                    <div className="w-40">
+                      <InputField
+                        name="duration_seconds"
+                        type="number"
+                        label="Duration (seconds)"
+                        value={formData.duration_seconds.toString()}
+                        onChange={handleChange}
+                        error={errors.duration_seconds}
+                        required
+                      />
+                    </div>
+                    <p className="text-xs text-white/50 pb-2">
+                      How long the simulation will run. Converted to milliseconds when submitted.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-300">
+                  <span className="font-semibold">Online mode:</span> Duration is not required — this
+                  run stays active until you stop it manually via the simulation detail page.
+                </div>
+              )}
+
+              {/* Real-time mode */}
+              <div>
+                <h2 className="text-lg font-semibold text-white mb-3">Options</h2>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <input
+                      id="real_time_mode"
+                      type="checkbox"
+                      checked={formData.real_time_mode}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, real_time_mode: e.target.checked }))
+                      }
+                      className="h-4 w-4 rounded border border-white/40 bg-black/40 text-white focus:ring-2 focus:ring-white/40"
+                    />
+                    <label
+                      htmlFor="real_time_mode"
+                      className="text-sm font-medium text-white/80 cursor-pointer select-none"
+                    >
+                      Run in real-time mode{" "}
+                      <span className="text-white/40 font-normal">(recommended for live dashboards)</span>
+                    </label>
+                  </div>
+
+                  {/* Seed */}
+                  <div className="flex items-end gap-4">
+                    <div className="w-40">
                       <label className="block text-xs font-medium text-white/70 mb-1">
-                        Host ID
+                        Seed <span className="text-white/40 font-normal">(0 = auto)</span>
                       </label>
                       <input
-                        type="text"
-                        value={host.id}
+                        type="number"
+                        min={0}
+                        value={seed}
+                        onChange={(e) => setSeed(Number(e.target.value) || 0)}
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                    <p className="text-xs text-white/50 pb-2">
+                      Set a fixed seed for reproducible results. Leave at 0 for a server-generated seed.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Config YAML (optional) */}
+              <div>
+                <label className="block text-sm font-medium text-white mb-1">
+                  Config YAML{" "}
+                  <span className="text-white/40 font-normal">(optional override)</span>
+                </label>
+                <textarea
+                  value={configYaml}
+                  onChange={(e) => setConfigYaml(e.target.value)}
+                  rows={4}
+                  placeholder="# Optional simulator config overrides..."
+                  className="w-full px-3 py-2 bg-black/40 border border-white/20 rounded-lg text-sm font-mono text-white focus:outline-none focus:ring-2 focus:ring-white/30 resize-y"
+                />
+              </div>
+
+              {/* Batch optimization settings */}
+              {runMode === "batch_optimization" && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-4">
+                  <h3 className="text-sm font-semibold text-amber-300 mb-2">
+                    Batch Optimization Settings
+                  </h3>
+                  <p className="text-xs text-white/50">
+                    The optimizer runs multiple short experiments to find a better configuration. Each
+                    candidate is evaluated for the duration below.
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Objective</label>
+                      <select
+                        value={optimization.objective}
                         onChange={(e) =>
-                          setScenario((prev) => {
-                            const next = { ...prev, hosts: [...prev.hosts] };
-                            next.hosts[index] = { ...next.hosts[index], id: e.target.value };
-                            return next;
-                          })
+                          setOptimization((prev) => ({
+                            ...prev,
+                            objective: e.target.value as typeof optimization.objective,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      >
+                        <option value="p95_latency_ms">p95 latency (ms)</option>
+                        <option value="p99_latency_ms">p99 latency (ms)</option>
+                        <option value="mean_latency_ms">Mean latency (ms)</option>
+                        <option value="throughput_rps">Throughput (rps)</option>
+                        <option value="error_rate">Error rate</option>
+                        <option value="cost">Cost</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Max iterations</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={optimization.max_iterations}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            max_iterations: Number(e.target.value) || 1,
+                          }))
                         }
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
                     </div>
-                    <div className="w-32">
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Step size</label>
+                      <input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={optimization.step_size}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            step_size: Number(e.target.value) || 0.1,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                    <div>
                       <label className="block text-xs font-medium text-white/70 mb-1">
-                        CPU cores
+                        Eval duration (ms)
                       </label>
                       <input
                         type="number"
-                        min={1}
-                        value={host.cores}
+                        min={100}
+                        step={100}
+                        value={optimization.evaluation_duration_ms}
                         onChange={(e) =>
-                          setScenario((prev) => {
-                            const cores = Number(e.target.value) || 1;
-                            const next = { ...prev, hosts: [...prev.hosts] };
-                            next.hosts[index] = { ...next.hosts[index], cores };
-                            return next;
-                          })
+                          setOptimization((prev) => ({
+                            ...prev,
+                            evaluation_duration_ms: Number(e.target.value) || 1000,
+                          }))
                         }
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Online optimization settings */}
+              {runMode === "online_optimization" && (
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-4 space-y-4">
+                  <h3 className="text-sm font-semibold text-sky-300 mb-2">
+                    Online Optimization Settings
+                  </h3>
+                  <p className="text-xs text-white/50">
+                    A controller loop reads live metrics and continuously adjusts the deployment. The
+                    run stays active until manually stopped.
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Objective</label>
+                      <select
+                        value={optimization.objective}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            objective: e.target.value as typeof optimization.objective,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      >
+                        <option value="p95_latency_ms">p95 latency (ms)</option>
+                        <option value="p99_latency_ms">p99 latency (ms)</option>
+                        <option value="mean_latency_ms">Mean latency (ms)</option>
+                        <option value="throughput_rps">Throughput (rps)</option>
+                        <option value="error_rate">Error rate</option>
+                        <option value="cost">Cost</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">
+                        Target p95 latency (ms)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={optimization.target_p95_latency_ms}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            target_p95_latency_ms: Number(e.target.value) || 1,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">
+                        Control interval (ms)
+                      </label>
+                      <input
+                        type="number"
+                        min={100}
+                        step={100}
+                        value={optimization.control_interval_ms}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            control_interval_ms: Number(e.target.value) || 100,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Min hosts</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={optimization.min_hosts}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            min_hosts: Number(e.target.value) || 1,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Max hosts</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={optimization.max_hosts}
+                        onChange={(e) =>
+                          setOptimization((prev) => ({
+                            ...prev,
+                            max_hosts: Number(e.target.value) || 1,
+                          }))
+                        }
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Config step errors */}
+              {errors.config && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-300">
+                  {errors.config}
+                </div>
+              )}
+
+              {/* Step 2 navigation */}
+              <div className="flex items-center justify-between pt-4 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(1)}
+                  className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (validateConfigStep()) setCurrentStep(3);
+                  }}
+                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90"
+                >
+                  Next: Review
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Step 1: Scenario setup */}
+          {currentStep === 1 && (
+            <>
+              {/* Scenario validation message */}
+              {scenarioError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-300">
+                  {scenarioError}
+                </div>
+              )}
+
+              {/* Hosts (from scenario YAML) */}
+              <div>
+                <h2 className="text-lg font-semibold text-white mb-4">Hosts</h2>
+                <div className="space-y-3">
+                  {scenario.hosts.map((host, index) => (
+                    <div
+                      key={host.id || index}
+                      className="flex flex-col md:flex-row md:items-center gap-3 bg-white/5 border border-white/10 rounded-lg p-3"
+                    >
+                      <div className="flex-1 flex flex-col md:flex-row md:items-center gap-3">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Host ID
+                          </label>
+                          <input
+                            type="text"
+                            value={host.id}
+                            onChange={(e) =>
+                              setScenario((prev) => {
+                                const next = { ...prev, hosts: [...prev.hosts] };
+                                next.hosts[index] = { ...next.hosts[index], id: e.target.value };
+                                return next;
+                              })
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                        </div>
+                        <div className="w-32">
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            CPU cores
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={host.cores}
+                            onChange={(e) =>
+                              setScenario((prev) => {
+                                const cores = Number(e.target.value) || 1;
+                                const next = { ...prev, hosts: [...prev.hosts] };
+                                next.hosts[index] = { ...next.hosts[index], cores };
+                                return next;
+                              })
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={scenario.hosts.length === 1}
+                        onClick={() =>
+                          setScenario((prev) => ({
+                            ...prev,
+                            hosts: prev.hosts.filter((_, i) => i !== index),
+                          }))
+                        }
+                        className="self-start px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
                   <button
                     type="button"
-                    disabled={scenario.hosts.length === 1}
                     onClick={() =>
                       setScenario((prev) => ({
                         ...prev,
-                        hosts: prev.hosts.filter((_, i) => i !== index),
+                        hosts: [
+                          ...prev.hosts,
+                          { id: `host-${prev.hosts.length + 1}`, cores: 4 },
+                        ],
                       }))
                     }
-                    className="self-start px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20"
                   >
-                    Remove
+                    Add host
                   </button>
                 </div>
-              ))}
-              <button
-                type="button"
-                onClick={() =>
-                  setScenario((prev) => ({
-                    ...prev,
-                    hosts: [
-                      ...prev.hosts,
-                      { id: `host-${prev.hosts.length + 1}`, cores: 4 },
-                    ],
-                  }))
-                }
-                className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20"
-              >
-                Add host
-              </button>
-            </div>
-          </div>
+              </div>
 
-          {/* Services (from scenario YAML) */}
-          <div>
+              {/* Services (from scenario YAML) */}
+              <div>
             <h2 className="text-lg font-semibold text-white mb-4">Services & Endpoints</h2>
             <div className="space-y-4">
               {scenario.services.map((svc, svcIndex) => (
@@ -1254,8 +1746,8 @@ workload:
             </div>
           </div>
 
-          {/* Scenario Workload Editor */}
-          <div>
+              {/* Scenario Workload Editor */}
+              <div>
             <h2 className="text-lg font-semibold text-white mb-4">Workload Patterns</h2>
             <p className="text-xs text-white/60 mb-3">
               Define how traffic flows from clients to service endpoints. Services and endpoints come
@@ -1544,8 +2036,8 @@ workload:
             </div>
           </div>
 
-          {/* Policies (Autoscaling) */}
-          <div>
+              {/* Policies (Autoscaling) */}
+              <div>
             <h2 className="text-lg font-semibold text-white mb-4">Policies (Autoscaling)</h2>
             <p className="text-xs text-white/60 mb-3">
               Configure autoscaling policies per service. These are emitted under
@@ -1797,89 +2289,40 @@ workload:
             </div>
           </div>
 
-          {/* Legacy high-level workload knobs (still used by current create API) */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Overall Workload (legacy)</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <InputField
-                name="concurrent_users"
-                type="number"
-                label="Concurrent Users"
-                value={formData.concurrent_users.toString()}
-                onChange={handleChange}
-                error={errors.concurrent_users}
-                required
-              />
-              <InputField
-                name="rps_target"
-                type="number"
-                label="Target RPS (Requests Per Second)"
-                value={formData.rps_target.toString()}
-                onChange={handleChange}
-                required
-              />
-            </div>
-          </div>
-
-          {/* Scenario YAML preview (based on editor) */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Scenario YAML (preview)</h2>
-            <p className="text-xs text-white/60 mb-2">
-              This is the YAML that will be generated from the editor and sent to the simulation
-              engine in the new flow. In sample mode it should mirror the predefined scenario file.
-            </p>
-            {scenarioYamlError && (
-              <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
-                {scenarioYamlError}
-              </div>
-            )}
-            <textarea
-              readOnly
-              value={scenarioYaml}
-              className="w-full h-56 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
-            />
-          </div>
-
-          {/* Simulation Settings */}
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Simulation Settings</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <InputField
-                name="duration_seconds"
-                type="number"
-                label="Duration (seconds)"
-                value={formData.duration_seconds.toString()}
-                onChange={handleChange}
-                error={errors.duration_seconds}
-                required
-              />
-              <InputField
-                name="ramp_up_seconds"
-                type="number"
-                label="Ramp Up (seconds)"
-                value={formData.ramp_up_seconds.toString()}
-                onChange={handleChange}
-                required
-              />
+              {/* Scenario YAML preview (based on editor) */}
               <div>
-                <label className="block text-sm font-medium text-white mb-2">
-                  Scenario
-                </label>
-                <select
-                  name="scenario"
-                  value={formData.scenario}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-white/20"
-                >
-                  <option value="baseline">Baseline</option>
-                  <option value="high_load">High Load</option>
-                  <option value="stress_test">Stress Test</option>
-                  <option value="spike_test">Spike Test</option>
-                  <option value="endurance">Endurance</option>
-                </select>
+                <h2 className="text-lg font-semibold text-white mb-4">Scenario YAML (preview)</h2>
+                <p className="text-xs text-white/60 mb-2">
+                  This is the YAML that will be generated from the editor and sent to the simulation
+                  engine in the new flow. In sample mode it should mirror the predefined scenario file.
+                </p>
+                {scenarioYamlError && (
+                  <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
+                    {scenarioYamlError}
+                  </div>
+                )}
+                <textarea
+                  readOnly
+                  value={scenarioYaml}
+                  className="w-full h-56 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
+                />
               </div>
-            </div>
-          </div>
+
+              <div className="flex justify-end pt-4 border-t border-border mt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (validateScenarioStep()) {
+                      setCurrentStep(2);
+                    }
+                  }}
+                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90"
+                >
+                  Next: Configuration
+                </button>
+              </div>
+            </>
+          )}
 
           {/* Error Message */}
           {errors.general && (
@@ -1888,34 +2331,157 @@ workload:
             </div>
           )}
 
-          {/* Submit Button */}
-          <div className="flex items-center justify-end gap-4 pt-4 border-t border-border">
-            <Link
-              href={`/project/${projectId}/simulation`}
-              className="px-4 py-2 text-white/80 hover:text-white transition-colors"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex items-center gap-2 px-6 py-2 bg.white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  Start Simulation
-                </>
+          {/* Step 3: Review & Submit */}
+          {currentStep === 3 && (
+            <>
+              <h2 className="text-lg font-semibold text-white mb-4">Review</h2>
+
+              {/* Run details summary */}
+              <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-white/80 mb-3">Run details</h3>
+                <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+                  <div>
+                    <dt className="text-xs text-white/50">Name</dt>
+                    <dd className="text-white font-medium">{formData.name || "—"}</dd>
+                  </div>
+                  {formData.description && (
+                    <div className="col-span-2">
+                      <dt className="text-xs text-white/50">Description</dt>
+                      <dd className="text-white">{formData.description}</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt className="text-xs text-white/50">Run mode</dt>
+                    <dd className="text-white capitalize">
+                      {runMode === "standard"
+                        ? "Standard"
+                        : runMode === "batch_optimization"
+                        ? "Batch optimization"
+                        : "Online optimization"}
+                    </dd>
+                  </div>
+                  {runMode !== "online_optimization" && (
+                    <div>
+                      <dt className="text-xs text-white/50">Duration</dt>
+                      <dd className="text-white">{formData.duration_seconds}s</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt className="text-xs text-white/50">Real-time mode</dt>
+                    <dd className="text-white">{formData.real_time_mode ? "Yes" : "No"}</dd>
+                  </div>
+                  {seed > 0 && (
+                    <div>
+                      <dt className="text-xs text-white/50">Seed</dt>
+                      <dd className="text-white">{seed}</dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+
+              {/* Batch optimization summary */}
+              {runMode === "batch_optimization" && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+                  <h3 className="text-sm font-semibold text-amber-300 mb-3">Batch optimization</h3>
+                  <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2 text-sm">
+                    <div>
+                      <dt className="text-xs text-white/50">Objective</dt>
+                      <dd className="text-white">{optimization.objective}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Max iterations</dt>
+                      <dd className="text-white">{optimization.max_iterations}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Step size</dt>
+                      <dd className="text-white">{optimization.step_size}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Eval duration</dt>
+                      <dd className="text-white">{optimization.evaluation_duration_ms}ms</dd>
+                    </div>
+                  </dl>
+                </div>
               )}
-            </button>
-          </div>
+
+              {/* Online optimization summary */}
+              {runMode === "online_optimization" && (
+                <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+                  <h3 className="text-sm font-semibold text-sky-300 mb-3">Online optimization</h3>
+                  <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+                    <div>
+                      <dt className="text-xs text-white/50">Objective</dt>
+                      <dd className="text-white">{optimization.objective}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Target p95 latency</dt>
+                      <dd className="text-white">{optimization.target_p95_latency_ms}ms</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Control interval</dt>
+                      <dd className="text-white">{optimization.control_interval_ms}ms</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Host range</dt>
+                      <dd className="text-white">
+                        {optimization.min_hosts} – {optimization.max_hosts}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              )}
+
+              {/* Scenario YAML preview */}
+              <div>
+                <h3 className="text-sm font-semibold text-white/80 mb-2">Scenario YAML</h3>
+                <textarea
+                  readOnly
+                  value={isSampleScenario ? SAMPLE_SCENARIO_YAML : scenarioYaml}
+                  className="w-full h-48 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
+                />
+              </div>
+
+              {/* Step 3 navigation + submit */}
+              <div className="flex items-center justify-between pt-4 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(2)}
+                  className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                >
+                  Back
+                </button>
+                <div className="flex items-center gap-3">
+                  <Link
+                    href={`/project/${projectId}/simulation`}
+                    className="inline-flex items-center px-4 py-2 rounded-lg border border-white/20 bg-white/5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </Link>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4" />
+                        Create Simulation
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </form>
+        </>
+      )}
     </div>
   );
 }
