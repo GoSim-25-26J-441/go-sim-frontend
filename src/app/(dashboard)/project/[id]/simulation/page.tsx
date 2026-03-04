@@ -8,27 +8,37 @@ import { authenticatedFetch } from "@/lib/api-client/http";
 import { env } from "@/lib/env";
 
 type BackendRunSummary = {
-  // Backend may return either `run_id` or `id`
-  run_id?: string;
-  id?: string;
+  run_id: string;
+  user_id?: string;
+  project_id?: string;
+  engine_run_id?: string;
   status?: string;
   created_at?: string;
-  metadata?: Record<string, unknown>;
-  [key: string]: unknown;
+  updated_at?: string;
+  completed_at?: string | null;
+  metadata?: {
+    name?: string;
+    description?: string;
+    mode?: string;
+    objective?: string;
+    max_iterations?: number;
+    [key: string]: unknown;
+  };
 };
 
-// Normalise the ID regardless of which field the backend returns
-function getRunId(run: BackendRunSummary): string {
-  return (run.run_id ?? run.id ?? "") as string;
-}
-
-// Show the simulation name from metadata, or fall back to a truncated run ID
 function getRunLabel(run: BackendRunSummary): string {
   const name = run.metadata?.name;
   if (typeof name === "string" && name.trim()) return name.trim();
-  const id = getRunId(run);
-  return id ? id : "Unnamed run";
+  return run.run_id ?? "Unnamed run";
 }
+
+const MODE_LABELS: Record<string, string> = {
+  standard: "Standard",
+  batch: "Batch",
+  online: "Online",
+  batch_optimization: "Batch",
+  online_optimization: "Online",
+};
 
 type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "stopping";
 
@@ -107,23 +117,21 @@ export default function ProjectSimulationPage() {
         }
         const data = await res.json();
 
-        // Normalise all supported shapes into BackendRunSummary[]
-        // The backend currently returns { runs: ["id1", "id2", ...] }
-        // but may evolve to return full objects — handle both.
+        // Normalise into BackendRunSummary[]. Handles:
+        //   { runs: [{...}, ...] }   ← current backend shape
+        //   { run: {...} }           ← single-run responses
+        //   [{...}, ...]             ← bare array
+        //   { runs: ["id1", ...] }   ← legacy plain-ID list (kept for safety)
         const rawList: unknown[] = Array.isArray(data)
           ? data
           : Array.isArray(data.runs)
           ? data.runs
-          : Array.isArray(data.data)
-          ? data.data
           : data.run
           ? [data.run]
           : [];
 
         const list: BackendRunSummary[] = rawList.map((item) =>
-          typeof item === "string"
-            ? { run_id: item }          // plain ID string → wrap into object
-            : (item as BackendRunSummary)
+          typeof item === "string" ? { run_id: item } : (item as BackendRunSummary)
         );
         setRuns(list);
       } catch (e) {
@@ -208,28 +216,66 @@ export default function ProjectSimulationPage() {
         {runs.length > 0 && (
           <ul className="space-y-3">
             {runs.map((run) => {
-              const runId = getRunId(run);
               const label = getRunLabel(run);
               const rawStatus = typeof run.status === "string"
                 ? run.status.toLowerCase().replace(/^run_status_/, "")
                 : "pending";
               const statusKey = (rawStatus in statusConfig ? rawStatus : "pending") as SimulationStatus;
               const status = statusConfig[statusKey];
+              const mode = run.metadata?.mode;
+              const modeLabel = typeof mode === "string" ? (MODE_LABELS[mode] ?? mode) : null;
+              const isRunning = statusKey === "running";
               return (
                 <li
-                  key={runId || JSON.stringify(run)}
-                  className="bg-card rounded-lg border border-border p-4 flex items-center justify-between gap-4"
+                  key={run.run_id}
+                  className="bg-card rounded-lg border border-border p-4 flex items-start justify-between gap-4"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-white truncate">{label}</p>
-                    <p className="font-mono text-xs text-white/40 truncate mt-0.5">{runId}</p>
-                    {run.created_at && (
-                      <p className="text-xs text-white/30 mt-1">
-                        {new Date(run.created_at).toLocaleString()}
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {/* Name + mode badge */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium text-white truncate">{label}</p>
+                      {modeLabel && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/60">
+                          {modeLabel}
+                        </span>
+                      )}
+                      {run.metadata?.objective && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300">
+                          {String(run.metadata.objective)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Description */}
+                    {run.metadata?.description && (
+                      <p className="text-xs text-white/50 truncate">
+                        {String(run.metadata.description)}
                       </p>
                     )}
+
+                    {/* IDs */}
+                    <p className="font-mono text-xs text-white/30 truncate">
+                      {run.run_id}
+                      {run.engine_run_id && (
+                        <span className="ml-2 text-white/20">· engine: {run.engine_run_id}</span>
+                      )}
+                    </p>
+
+                    {/* Timestamps */}
+                    <div className="flex items-center gap-3 text-[11px] text-white/30">
+                      {run.created_at && (
+                        <span>Created {new Date(run.created_at).toLocaleString()}</span>
+                      )}
+                      {run.completed_at && (
+                        <span>· Completed {new Date(run.completed_at).toLocaleString()}</span>
+                      )}
+                      {!run.completed_at && run.updated_at && isRunning && (
+                        <span>· Updated {new Date(run.updated_at).toLocaleString()}</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+
+                  <div className="flex items-center gap-3 shrink-0 pt-0.5">
                     <span
                       className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.color} ${status.bgColor}`}
                     >
@@ -237,7 +283,7 @@ export default function ProjectSimulationPage() {
                       {status.label}
                     </span>
                     <Link
-                      href={`/project/${projectId}/simulation/${encodeURIComponent(runId)}`}
+                      href={`/project/${projectId}/simulation/${encodeURIComponent(run.run_id)}`}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-white/90 transition-colors"
                     >
                       <Play className="w-3 h-3" />
