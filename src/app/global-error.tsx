@@ -1,4 +1,3 @@
-// src/app/global-error.tsx
 "use client";
 
 export default function GlobalError({

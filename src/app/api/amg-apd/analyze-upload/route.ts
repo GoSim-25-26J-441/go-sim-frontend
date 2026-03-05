@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendAmgApdHeaders } from "../headers";
 
 const BASE = process.env.BACKEND_BASE ?? "http://localhost:8080";
 
@@ -12,18 +13,21 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const title = (form.get("title") as string) || "Uploaded";
-    const outDir = (form.get("out_dir") as string) || "/app/out";
 
     if (!file) {
       return NextResponse.json({ error: "file is required" }, { status: 400 });
     }
 
     const yamlText = await file.text();
+    const backendHeaders = getBackendAmgApdHeaders(req);
 
     const res = await fetch(`${BASE}/api/v1/amg-apd/analyze-raw`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ yaml: yamlText, title, out_dir: outDir }),
+      headers: {
+        "Content-Type": "application/json",
+        ...backendHeaders,
+      },
+      body: JSON.stringify({ yaml: yamlText, title }),
     });
 
     const text = await res.text();

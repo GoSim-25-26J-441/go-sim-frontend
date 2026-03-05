@@ -91,6 +91,30 @@ export function buildHaloSvgDataUrl(
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+/** SVG data URL for colored balls - fixed at bottom center, scales with node */
+export function buildBallsSvgDataUrl(colors: string[]): string | null {
+  const cols = colors.filter(Boolean);
+  if (!cols.length) return null;
+
+  const n = Math.min(8, cols.length);
+  const used = cols.slice(0, n);
+  const ballR = 14;
+  const gap = 6;
+  const totalW = n * ballR * 2 + (n - 1) * gap;
+  const startX = (100 - totalW) / 2 + ballR;
+  const cyPos = 88;
+
+  const circles = used
+    .map(
+      (c, i) =>
+        `<circle cx="${startX + i * (ballR * 2 + gap)}" cy="${cyPos}" r="${ballR}" fill="${c}" stroke="white" stroke-width="1.5"/>`
+    )
+    .join("");
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" preserveAspectRatio="xMidYMax meet">${circles}</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 export function gradientStops(colors: string[]) {
   const cols = colors.filter(Boolean);
   const n = cols.length;
