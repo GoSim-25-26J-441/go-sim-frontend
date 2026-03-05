@@ -50,10 +50,17 @@ export function useCyTooltip({
 
     const normalizeKind = (k: unknown): NodeKind => {
       if (typeof k !== "string") return "SERVICE";
-      const up = k.toUpperCase();
-      return (
-        up === "SERVICE" || up === "DATABASE" ? up : "SERVICE"
-      ) as NodeKind;
+      const up = (k as string).toUpperCase().replace(/-/g, "_");
+      const valid: NodeKind[] = [
+        "SERVICE",
+        "API_GATEWAY",
+        "DATABASE",
+        "EVENT_TOPIC",
+        "EXTERNAL_SYSTEM",
+        "CLIENT",
+        "USER_ACTOR",
+      ];
+      return (valid.includes(up as NodeKind) ? up : "SERVICE") as NodeKind;
     };
 
     const getAnchorXY = (node: cytoscape.NodeSingular) => {
@@ -63,7 +70,6 @@ export function useCyTooltip({
 
     const showForNode = (node: cytoscape.NodeSingular) => {
       const kind = normalizeKind(node.data("kind"));
-      if (kind !== "SERVICE" && kind !== "DATABASE") return;
 
       const nodeId = node.id();
       const fromGraph = data.graph.nodes?.[nodeId];

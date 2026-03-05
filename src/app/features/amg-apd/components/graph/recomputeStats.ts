@@ -10,8 +10,14 @@ export function recomputeStats(
   if (!cy) return;
 
   const nodes = cy.nodes();
-  const services = nodes.filter((n) => n.data("kind") === "SERVICE").length;
-  const databases = nodes.filter((n) => n.data("kind") === "DATABASE").length;
+  const serviceKinds = ["SERVICE", "API_GATEWAY", "CLIENT", "USER_ACTOR"];
+  const dbKinds = ["DATABASE", "EVENT_TOPIC", "EXTERNAL_SYSTEM"];
+  const services = nodes.filter((n) =>
+    serviceKinds.includes((n.data("kind") as string) ?? "")
+  ).length;
+  const databases = nodes.filter((n) =>
+    dbKinds.includes((n.data("kind") as string) ?? "")
+  ).length;
 
   const edges = cy.edges().filter((e) => !e.data("decorative")).length;
 
