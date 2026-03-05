@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
+import { env } from "@/lib/env";
 
 export type Project = {
   id: string;
@@ -32,6 +33,14 @@ export type TempChatResponse = {
   refs: unknown[];
 };
 
+export type ProjectDiagramImage = {
+  id: string;
+  title?: string;
+  image_object_key: string;
+  created_at?: string;
+  [key: string]: unknown;
+};
+
 export const projectsApi = createApi({
   reducerPath: "projectsApi",
   baseQuery: fetchBaseQuery({
@@ -47,7 +56,11 @@ export const projectsApi = createApi({
   tagTypes: ["Projects"],
   endpoints: (b) => ({
     getProjects: b.query<Project[], void>({
-      query: () => ({ url: "/api/projects", method: "GET" }),
+      query: () => ({
+        // Call backend directly instead of Next.js proxy
+        url: `${env.BACKEND_BASE}/api/v1/projects`,
+        method: "GET",
+      }),
       transformResponse: (res: unknown): Project[] => {
         const data = res as any;
         console.log("Raw projects API response:", data);
@@ -121,7 +134,7 @@ export const projectsApi = createApi({
 
     createProject: b.mutation<Project, CreateProjectArg>({
       query: (body) => ({
-        url: "/api/projects",
+        url: `${env.BACKEND_BASE}/api/v1/projects`,
         method: "POST",
         headers: { "content-type": "application/json" },
         body: {
@@ -158,7 +171,7 @@ export const projectsApi = createApi({
 
     updateProject: b.mutation<Project, UpdateProjectArg>({
       query: ({ id, name }) => ({
-        url: `/api/projects/${id}`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${id}`,
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: { name },
@@ -177,7 +190,7 @@ export const projectsApi = createApi({
 
     deleteProject: b.mutation<void, string>({
       query: (id) => ({
-        url: `/api/projects/${id}`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${id}`,
         method: "DELETE",
       }),
       invalidatesTags: ["Projects"],
@@ -202,7 +215,7 @@ export const projectsApi = createApi({
       string
     >({
       query: (projectId) => ({
-        url: `/api/projects/${projectId}/summary`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/summary`,
         method: "GET",
       }),
       transformResponse: (res: unknown) => {
@@ -221,10 +234,73 @@ export const projectsApi = createApi({
       { projectId: string; diagram: unknown }
     >({
       query: ({ projectId, diagram }) => ({
-        url: `/api/projects/${projectId}/diagram`,
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram`,
         method: "POST",
         headers: { "content-type": "application/json" },
         body: diagram,
+      }),
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        return {
+          ok: data?.ok ?? true,
+          ...data,
+        };
+      },
+    }),
+
+    uploadDiagramImage: b.mutation<
+      { ok?: boolean; image_object_key?: string; [key: string]: unknown },
+      { projectId: string; file: Blob }
+    >({
+      query: ({ projectId, file }) => {
+        const formData = new FormData();
+        formData.append("file", file, "diagram.png");
+
+        return {
+          url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/image`,
+          method: "POST",
+          body: formData,
+        };
+      },
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        return {
+          ok: data?.ok ?? true,
+          image_object_key: data?.image_object_key,
+          ...data,
+        };
+      },
+    }),
+
+    getProjectDiagramImages: b.query<
+      { ok: boolean; images: ProjectDiagramImage[] },
+      string
+    >({
+      query: (projectId) => ({
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/images`,
+        method: "GET",
+      }),
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        const images: ProjectDiagramImage[] = Array.isArray(data?.images)
+          ? data.images
+          : [];
+        return {
+          ok: data?.ok ?? true,
+          images,
+        };
+      },
+    }),
+
+    updateDiagramImageTitle: b.mutation<
+      { ok: boolean; [key: string]: unknown },
+      { projectId: string; diagramVersionId: string; title: string }
+    >({
+      query: ({ projectId, diagramVersionId, title }) => ({
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/${diagramVersionId}/title`,
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: { title },
       }),
       transformResponse: (res: unknown) => {
         const data = res as any;
@@ -265,5 +341,8 @@ export const {
   useDeleteProjectMutation,
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
+  useUploadDiagramImageMutation,
+  useGetProjectDiagramImagesQuery,
+  useUpdateDiagramImageTitleMutation,
   useTempChatMutation,
 } = projectsApi;

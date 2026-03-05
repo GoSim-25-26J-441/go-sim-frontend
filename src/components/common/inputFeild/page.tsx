@@ -64,8 +64,8 @@ export function InputField({
         onBlur={onBlur}
         placeholder={placeholder}
         disabled={disabled}
-        className={`px-2 py-1 bg-[#E5E7EB] rounded-lg text-black placeholder-[#7D7F86] focus:outline-none focus:ring-2 focus:ring-black/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-          error ? 'ring-1 ring-[#F58595]' : ''
+        className={`px-3 py-2 bg-black/40 border border-white/20 rounded-lg text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+          error ? 'border-[#F58595] ring-2 ring-[#F58595]/60' : ''
         }`}
       />
       {error && (
@@ -111,8 +111,8 @@ export function TextAreaField({
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
-        className={`px-2 py-1 bg-[#E5E7EB] rounded-lg text-black placeholder-[#7D7F86] focus:outline-none focus:ring-2 focus:ring-black/50 transition-all resize-none disabled:opacity-50 disabled:cursor-not-allowed ${
-          error ? 'ring-1 ring-[#F58595]' : ''
+        className={`px-3 py-2 bg-black/40 border border-white/20 rounded-lg text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/40 transition-all resize-none disabled:opacity-50 disabled:cursor-not-allowed ${
+          error ? 'border-[#F58595] ring-2 ring-[#F58595]/60' : ''
         }`}
       />
       {error && (

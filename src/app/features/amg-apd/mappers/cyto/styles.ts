@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { DetectionKind, Severity } from "@/app/features/amg-apd/types";
 import {
   NODE_KIND_COLOR,
