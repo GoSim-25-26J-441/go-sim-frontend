@@ -33,6 +33,14 @@ export type TempChatResponse = {
   refs: unknown[];
 };
 
+export type ProjectDiagramImage = {
+  id: string;
+  title?: string;
+  image_object_key: string;
+  created_at?: string;
+  [key: string]: unknown;
+};
+
 export const projectsApi = createApi({
   reducerPath: "projectsApi",
   baseQuery: fetchBaseQuery({
@@ -264,6 +272,45 @@ export const projectsApi = createApi({
       },
     }),
 
+    getProjectDiagramImages: b.query<
+      { ok: boolean; images: ProjectDiagramImage[] },
+      string
+    >({
+      query: (projectId) => ({
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/images`,
+        method: "GET",
+      }),
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        const images: ProjectDiagramImage[] = Array.isArray(data?.images)
+          ? data.images
+          : [];
+        return {
+          ok: data?.ok ?? true,
+          images,
+        };
+      },
+    }),
+
+    updateDiagramImageTitle: b.mutation<
+      { ok: boolean; [key: string]: unknown },
+      { projectId: string; diagramVersionId: string; title: string }
+    >({
+      query: ({ projectId, diagramVersionId, title }) => ({
+        url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/${diagramVersionId}/title`,
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: { title },
+      }),
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        return {
+          ok: data?.ok ?? true,
+          ...data,
+        };
+      },
+    }),
+
     tempChat: b.mutation<TempChatResponse, TempChatArg>({
       query: (body) => ({
         url: "/api/temp-chat",
@@ -295,5 +342,7 @@ export const {
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
   useUploadDiagramImageMutation,
+  useGetProjectDiagramImagesQuery,
+  useUpdateDiagramImageTitleMutation,
   useTempChatMutation,
 } = projectsApi;

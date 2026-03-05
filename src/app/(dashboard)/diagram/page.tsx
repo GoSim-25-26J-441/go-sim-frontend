@@ -877,6 +877,8 @@ export default function DrawDiagram() {
     if (opening || !projectId) return;
     setOpening(true);
     try {
+      let imageObjectKey: string | undefined;
+
       // First, render and upload the diagram image
       try {
         setLoadingMessage("Rendering diagram image...");
@@ -887,7 +889,8 @@ export default function DrawDiagram() {
           file: imageBlob,
         }).unwrap();
         if (uploadResult?.image_object_key) {
-          console.log("Diagram image uploaded with key:", uploadResult.image_object_key);
+          imageObjectKey = String(uploadResult.image_object_key);
+          console.log("Diagram image uploaded with key:", imageObjectKey);
         } else {
           console.log("Diagram image uploaded (no image_object_key in response).");
         }
@@ -902,7 +905,9 @@ export default function DrawDiagram() {
         setLoadingMessage("Saving diagram definition...");
         await saveDiagram({
           projectId,
-          diagram: backendFormat,
+          diagram: imageObjectKey
+            ? { ...backendFormat, image_object_key: imageObjectKey }
+            : backendFormat,
         }).unwrap();
         console.log("Diagram saved successfully");
       } catch (saveError) {
