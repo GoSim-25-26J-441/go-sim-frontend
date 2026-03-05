@@ -6,7 +6,12 @@ export type LayoutName = "dagre" | "cose-bilkent" | "cola" | "elk";
 
 export type GraphStats = {
   services: number;
+  gateways: number;
+  eventTopics: number;
   databases: number;
+  externalSystems: number;
+  clients: number;
+  userActors: number;
   edges: number;
   detections: number;
 };
@@ -39,7 +44,17 @@ export default function ControlPanel({
   isGenerating = false,
   readOnly = false,
 }: Props) {
-  const { services, databases, edges, detections } = stats;
+  const {
+    services,
+    gateways,
+    eventTopics,
+    databases,
+    externalSystems,
+    clients,
+    userActors,
+    edges,
+    detections,
+  } = stats;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
@@ -70,7 +85,22 @@ export default function ControlPanel({
             Services: <strong className="font-semibold text-white">{services}</strong>
           </span>
           <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Gateways: <strong className="font-semibold text-white">{gateways}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Topics: <strong className="font-semibold text-white">{eventTopics}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
             Databases: <strong className="font-semibold text-white">{databases}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            External: <strong className="font-semibold text-white">{externalSystems}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Clients: <strong className="font-semibold text-white">{clients}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Actors: <strong className="font-semibold text-white">{userActors}</strong>
           </span>
           <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
             Edges: <strong className="font-semibold text-white">{edges}</strong>

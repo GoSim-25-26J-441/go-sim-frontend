@@ -97,3 +97,6 @@ export type SelectedItem =
   | { type: "node"; data: any }
   | { type: "edge"; data: any }
   | null;
+
+/** Call protocol for CALLS edges (stored in edge attrs.kind / attrs.dep_kind) */
+export type CallProtocol = "rest" | "grpc" | "event";

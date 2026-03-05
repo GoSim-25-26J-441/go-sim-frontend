@@ -5,6 +5,7 @@ import type {
   SelectedItem,
   EdgeKind,
   NodeKind,
+  CallProtocol,
 } from "@/app/features/amg-apd/types";
 
 const ADD_NODE_TOOLS: EditTool[] = [
@@ -49,6 +50,8 @@ export function useCyInteractions({
   setPendingSource,
   setSelected,
   recomputeStats,
+  defaultCallProtocol = "rest",
+  defaultCallSync = true,
 }: {
   cy: cytoscape.Core | null;
   editMode: boolean;
@@ -57,6 +60,8 @@ export function useCyInteractions({
   setPendingSource: (v: string | null) => void;
   setSelected: (v: SelectedItem) => void;
   recomputeStats: () => void;
+  defaultCallProtocol?: CallProtocol;
+  defaultCallSync?: boolean;
 }) {
   useEffect(() => {
     if (!cy) return;
@@ -99,13 +104,26 @@ export function useCyInteractions({
           .toString(36)
           .slice(2, 8)}`;
 
+        const protocolDisplay =
+          defaultCallProtocol === "grpc"
+            ? "gRPC"
+            : defaultCallProtocol === "event"
+            ? "Event"
+            : "REST";
+        const syncLabel = defaultCallSync ? "sync" : "async";
+        const label = `CALLS [${protocolDisplay}] (${syncLabel})`;
+
         const edgeData: any = {
           id: edgeId,
           source: sourceId,
           target: targetId,
           kind: edgeKind,
-          label: "calls",
-          attrs: { kind: "rest", sync: true },
+          label,
+          attrs: {
+            kind: defaultCallProtocol,
+            dep_kind: defaultCallProtocol,
+            sync: defaultCallSync,
+          },
         };
 
         cy.add({ group: "edges", data: edgeData });
@@ -205,5 +223,7 @@ export function useCyInteractions({
     setPendingSource,
     setSelected,
     recomputeStats,
+    defaultCallProtocol,
+    defaultCallSync,
   ]);
 }

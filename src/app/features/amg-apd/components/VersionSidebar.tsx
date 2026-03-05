@@ -10,7 +10,11 @@ import type {
   AnalysisResult,
 } from "@/app/features/amg-apd/types";
 
-export default function VersionSidebar() {
+export default function VersionSidebar({
+  refreshTrigger = 0,
+}: {
+  refreshTrigger?: number;
+} = {}) {
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,6 +22,10 @@ export default function VersionSidebar() {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [savingTitleId, setSavingTitleId] = useState<string | null>(null);
 
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
@@ -81,6 +89,10 @@ export default function VersionSidebar() {
     fetchVersions();
   }, []);
 
+  useEffect(() => {
+    if (refreshTrigger > 0) fetchVersions();
+  }, [refreshTrigger]);
+
   async function handleMoveToVersion(id: string) {
     setOpen(false);
     setRegenerating(true);
@@ -132,6 +144,41 @@ export default function VersionSidebar() {
     } finally {
       setDeletingId(null);
     }
+  }
+
+  function startRename(v: AmgApdVersionSummary) {
+    setEditingId(v.id);
+    setEditingTitle(v.title || `Version ${String(v.version_number).padStart(2, "0")}`);
+  }
+
+  async function saveRename() {
+    if (!editingId || !editingTitle.trim()) {
+      setEditingId(null);
+      return;
+    }
+    setSavingTitleId(editingId);
+    try {
+      const res = await fetch(`/api/amg-apd/versions/${editingId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAmgApdHeaders(),
+        },
+        body: JSON.stringify({ title: editingTitle.trim() }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await fetchVersions();
+      setEditingId(null);
+    } catch (e: any) {
+      alert("Failed to rename: " + (e?.message ?? "Unknown error"));
+    } finally {
+      setSavingTitleId(null);
+    }
+  }
+
+  function cancelRename() {
+    setEditingId(null);
+    setEditingTitle("");
   }
 
   function formatDate(iso: string) {
@@ -212,37 +259,83 @@ export default function VersionSidebar() {
                     key={v.id}
                     className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs hover:bg-white/[0.07] transition-colors"
                   >
-                    <div
-                      className="font-medium text-white/90 truncate"
-                      title={v.title}
-                    >
-                      #{v.version_number} {v.title || "Untitled"}
-                    </div>
-                    <div className="text-[10px] text-white/50 mt-1">
-                      {formatDate(v.created_at)}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      <button
-                        type="button"
-                        onClick={() => handleMoveToVersion(v.id)}
-                        className="rounded-lg bg-[rgb(34,76,135)] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[rgb(8,38,150)]/90 transition-colors"
-                      >
-                        Move to this version
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(v.id)}
-                        disabled={deletingId === v.id}
-                        className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 disabled:opacity-50 transition-colors"
-                        title="Delete version"
-                      >
-                        {deletingId === v.id ? (
-                          <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          "Delete"
-                        )}
-                      </button>
-                    </div>
+                    {editingId === v.id ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editingTitle}
+                            onChange={(e) => setEditingTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void saveRename();
+                              if (e.key === "Escape") cancelRename();
+                            }}
+                            className="flex-1 rounded-lg border border-white/20 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                            placeholder="Version name"
+                            autoFocus
+                          />
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void saveRename()}
+                            disabled={savingTitleId === v.id || !editingTitle.trim()}
+                            className="rounded-lg bg-[#9AA4B2] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {savingTitleId === v.id ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelRename}
+                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-white/10"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          className="font-medium text-white/90 truncate"
+                          title={v.title}
+                        >
+                          #{v.version_number} {v.title || "Untitled"}
+                        </div>
+                        <div className="text-[10px] text-white/50 mt-1">
+                          {formatDate(v.created_at)}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveToVersion(v.id)}
+                            className="rounded-lg bg-[rgb(34,76,135)] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[rgb(8,38,150)]/90 transition-colors"
+                          >
+                            Move to this version
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startRename(v)}
+                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-white/10 hover:text-white/90 transition-colors"
+                            title="Rename version"
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(v.id)}
+                            disabled={deletingId === v.id}
+                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 disabled:opacity-50 transition-colors"
+                            title="Delete version"
+                          >
+                            {deletingId === v.id ? (
+                              <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              "Delete"
+                            )}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
