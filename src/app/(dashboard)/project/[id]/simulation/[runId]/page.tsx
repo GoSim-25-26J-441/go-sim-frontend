@@ -17,6 +17,27 @@ import { startSimulationRun, stopSimulationRun } from "@/lib/api-client/simulati
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+interface ServiceConfig {
+  id: string;
+  replicas?: number;
+  [key: string]: unknown;
+}
+
+interface OptimizationStepConfig {
+  services?: ServiceConfig[];
+  workload?: unknown[];
+  hosts?: unknown[];
+}
+
+interface OptimizationStep {
+  iteration_index: number;
+  target_p95_ms: number;
+  score_p95_ms: number;
+  reason: string;
+  previous_config?: OptimizationStepConfig;
+  current_config?: OptimizationStepConfig;
+}
+
 interface RunInfo {
   run_id: string;
   engine_run_id?: string;
@@ -29,11 +50,13 @@ interface RunInfo {
     description?: string;
     mode?: string;
     objective?: string;
-    // optimization summary (populated by engine callback)
+    // optimization summary (batch)
     best_run_id?: string;
     best_score?: number;
     iterations?: number;
     top_candidates?: string[];
+    // online optimization history
+    optimization_history?: OptimizationStep[];
     [key: string]: unknown;
   };
 }
@@ -54,6 +77,7 @@ interface SsePanelProps {
   title: string;
   url: string;
   onRunUpdate?: (run: RunInfo) => void;
+  onEvent?: (type: string, data: string) => void;
   onTerminalEvent?: () => void;
   onStreamClose?: () => void;
 }
@@ -70,17 +94,21 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 const EVENT_TYPE_STYLES: Record<string, string> = {
-  metrics:              "bg-sky-500/20 text-sky-300",
-  metric_update:        "bg-sky-500/20 text-sky-300",
-  error:                "bg-red-500/20 text-red-300",
-  done:                 "bg-emerald-500/20 text-emerald-300",
-  completed:            "bg-emerald-500/20 text-emerald-300",
-  stopped:              "bg-gray-500/20 text-gray-300",
-  best:                 "bg-amber-500/20 text-amber-300",
-  status:               "bg-purple-500/20 text-purple-300",
-  status_change:        "bg-purple-500/20 text-purple-300",
-  update:               "bg-indigo-500/20 text-indigo-300",
-  optimization_progress:"bg-amber-500/20 text-amber-300",
+  initial:               "bg-slate-500/20 text-slate-300",
+  metrics:               "bg-sky-500/20 text-sky-300",
+  metric_update:         "bg-sky-500/20 text-sky-300",
+  metrics_snapshot:      "bg-cyan-500/20 text-cyan-300",
+  error:                 "bg-red-500/20 text-red-300",
+  done:                  "bg-emerald-500/20 text-emerald-300",
+  complete:              "bg-emerald-500/20 text-emerald-300",
+  completed:             "bg-emerald-500/20 text-emerald-300",
+  stopped:               "bg-gray-500/20 text-gray-300",
+  best:                  "bg-amber-500/20 text-amber-300",
+  status:                "bg-purple-500/20 text-purple-300",
+  status_change:         "bg-purple-500/20 text-purple-300",
+  update:                "bg-indigo-500/20 text-indigo-300",
+  optimization_progress: "bg-amber-500/20 text-amber-300",
+  optimization_step:     "bg-orange-500/20 text-orange-300",
 };
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "stopped"]);
@@ -110,7 +138,7 @@ const MAX_EVENTS = 1000;
 const PAGE_SIZE  = 50;
 
 const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
-  ({ title, url, onRunUpdate, onTerminalEvent, onStreamClose }, ref) => {
+  ({ title, url, onRunUpdate, onEvent, onTerminalEvent, onStreamClose }, ref) => {
     const [events, setEvents]     = useState<SseEvent[]>([]);
     const [connected, setConnected] = useState(false);
     const [error, setError]       = useState<string | null>(null);
@@ -211,8 +239,8 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
                   timestamp: new Date().toISOString(),
                 });
 
-                // Handle "update" events that carry the run object
-                if (eventType === "update") {
+                // "initial" and "update" both carry { run: RunInfo }
+                if (eventType === "initial" || eventType === "update") {
                   try {
                     const parsed = JSON.parse(pending.data) as { run?: RunInfo };
                     if (parsed.run) {
@@ -224,8 +252,11 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
                   } catch { /* malformed JSON — ignore */ }
                 }
 
-                // Legacy terminal event types (engine-direct streams)
-                if (["done", "completed", "stopped", "failed"].includes(eventType)) {
+                // Fire generic event callback for caller-side handling
+                onEvent?.(eventType, pending.data);
+
+                // Legacy / direct terminal event types
+                if (["done", "complete", "completed", "stopped", "failed"].includes(eventType)) {
                   terminalSeen = true;
                 }
               }
@@ -252,7 +283,7 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
           onStreamClose?.();
         }
       }
-    }, [url, onRunUpdate, onTerminalEvent, onStreamClose]);
+    }, [url, onRunUpdate, onEvent, onTerminalEvent, onStreamClose]);
 
     useImperativeHandle(ref, () => ({
       connect,
@@ -412,6 +443,8 @@ export default function SimulationRunPage() {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
+  // Online optimization timeline — seeded from metadata on load, appended via SSE
+  const [optSteps, setOptSteps] = useState<OptimizationStep[]>([]);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -429,6 +462,9 @@ export default function SimulationRunPage() {
       const data = (await res.json()) as { run: RunInfo };
       setRunInfo(data.run);
       setRunError(null);
+      if (data.run.metadata?.optimization_history?.length) {
+        setOptSteps(data.run.metadata.optimization_history);
+      }
       return data.run;
     } catch (e) {
       setRunError((e as Error).message);
@@ -440,11 +476,33 @@ export default function SimulationRunPage() {
 
   useEffect(() => { fetchRunInfoRef.current = fetchRunInfo; }, [fetchRunInfo]);
 
-  // Apply run data received directly from an SSE "update" event — no HTTP needed
+  // Apply run data received directly from an SSE "initial" or "update" event
   const handleRunUpdate = useCallback((run: RunInfo) => {
     setRunInfo(run);
     setRunError(null);
     setRunLoading(false);
+    // Seed timeline from persisted optimization_history (present on load / reload)
+    if (run.metadata?.optimization_history?.length) {
+      setOptSteps(run.metadata.optimization_history);
+    }
+  }, []);
+
+  // Handle individual SSE events that need page-level processing
+  const handleSseEvent = useCallback((type: string, data: string) => {
+    if (type === "optimization_step") {
+      try {
+        // Payload shape: { event, run_id, data: OptimizationStep }
+        const payload = JSON.parse(data) as { data?: OptimizationStep };
+        const step = payload.data;
+        if (step && step.iteration_index != null) {
+          setOptSteps((prev) => {
+            // Avoid duplicates if the same step arrives twice
+            const exists = prev.some((s) => s.iteration_index === step.iteration_index);
+            return exists ? prev : [...prev, step];
+          });
+        }
+      } catch { /* malformed — ignore */ }
+    }
   }, []);
 
   // Fallback: re-fetch from API (used on stream close / legacy terminal events)
@@ -705,12 +763,92 @@ export default function SimulationRunPage() {
         ) : null}
       </div>
 
+      {/* Optimization timeline — online optimization runs only */}
+      {optSteps.length > 0 && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">
+              Optimization timeline
+              <span className="ml-2 text-xs font-normal text-white/40">
+                {optSteps.length} step{optSteps.length !== 1 ? "s" : ""}
+              </span>
+            </h2>
+            {status === "running" && (
+              <span className="flex items-center gap-1.5 text-xs text-orange-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+                Live
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {[...optSteps].reverse().map((step) => {
+              const overTarget = step.score_p95_ms > step.target_p95_ms;
+              return (
+                <div
+                  key={step.iteration_index}
+                  className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
+                >
+                  {/* Header row */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="font-mono text-white/40 shrink-0">
+                      #{step.iteration_index}
+                    </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded font-mono font-medium ${
+                        overTarget
+                          ? "bg-red-500/15 text-red-300"
+                          : "bg-emerald-500/15 text-emerald-300"
+                      }`}
+                    >
+                      p95 {step.score_p95_ms.toFixed(1)} ms
+                    </span>
+                    <span className="text-white/30">
+                      target {step.target_p95_ms.toFixed(0)} ms
+                    </span>
+                    <span className="text-white/50 italic flex-1">{step.reason}</span>
+                  </div>
+
+                  {/* Config diff — services replicas */}
+                  {step.previous_config && step.current_config && (() => {
+                    const prev = step.previous_config.services ?? [];
+                    const curr = step.current_config.services ?? [];
+                    const changes = curr.filter((cs) => {
+                      const ps = prev.find((s) => s.id === cs.id);
+                      return ps && ps.replicas !== cs.replicas;
+                    });
+                    if (changes.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-2 pt-1 border-t border-white/5">
+                        {changes.map((cs) => {
+                          const ps = prev.find((s) => s.id === cs.id)!;
+                          return (
+                            <span key={cs.id} className="font-mono text-[11px] text-white/60">
+                              {cs.id}:
+                              <span className="text-red-400 mx-1">{ps.replicas}</span>
+                              →
+                              <span className="text-emerald-400 ml-1">{cs.replicas}</span>
+                              <span className="text-white/30 ml-1">replicas</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Event stream */}
       <SsePanel
         ref={simRef}
         title="Event stream"
         url={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/events`}
         onRunUpdate={handleRunUpdate}
+        onEvent={handleSseEvent}
         onTerminalEvent={refreshStatus}
         onStreamClose={refreshStatus}
       />
