@@ -3,7 +3,8 @@ import type {
   AnalysisResult,
   DetectionKind,
 } from "@/app/features/amg-apd/types";
-import { buildMetaMaps } from "./meta";
+import { toDisplayName } from "@/app/features/amg-apd/utils/displayNames";
+import { buildMetaMaps, resolveNodeIdFromData } from "./meta";
 
 function normalizeKinds(kinds: DetectionKind[] | undefined): DetectionKind[] {
   if (!kinds || !kinds.length) return [];
@@ -27,12 +28,13 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     return {
       data: {
         id,
-        label: n?.name ?? id,
+        label: toDisplayName(n?.name ?? id.replace(/^[^:]+:/, "")),
         kind: n?.kind ?? "SERVICE",
         detectionKinds: kinds,
         severity,
         primaryDetectionKind: kinds[0] ?? null,
       },
+      grabbable: true,
       classes: [
         (n?.kind ?? "SERVICE").toLowerCase(),
         hasDetection ? "has-detection" : null,
@@ -42,10 +44,18 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     };
   });
 
-  const edges: ElementDefinition[] = (edgesArr as any[]).map((e, i) => {
+  const nodeIds = new Set(Object.keys(nodesObj));
+  const edges: ElementDefinition[] = (edgesArr as any[])
+    .map((e, i) => {
     const meta = edgeMeta[i];
     const kinds = normalizeKinds(meta?.kinds);
     const primaryDetectionKind = kinds[0] ?? null;
+
+    // For call edges: include source and target node problem colors for gradient
+    const sourceId = resolveNodeIdFromData(data, e?.from) ?? "";
+    const targetId = resolveNodeIdFromData(data, e?.to) ?? "";
+    const sourceNodeKinds = normalizeKinds(nodeMeta[sourceId]?.kinds);
+    const targetNodeKinds = normalizeKinds(nodeMeta[targetId]?.kinds);
 
     const attrs = e?.attrs ?? {};
     let label = e?.kind ?? "";
@@ -76,8 +86,8 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     return {
       data: {
         id: `e${i}`,
-        source: e?.from,
-        target: e?.to,
+        source: sourceId || e?.from,
+        target: targetId || e?.to,
         label,
         kind: e?.kind ?? "",
         edgeIndex: i,
@@ -85,6 +95,8 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
         severity: meta?.severity ?? null,
         primaryDetectionKind,
         detectionKinds: kinds,
+        sourceNodeKinds,
+        targetNodeKinds,
       },
       classes: [
         (e?.kind ?? "").toLowerCase(),
@@ -93,7 +105,12 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
         .filter(Boolean)
         .join(" "),
     };
-  });
+  })
+    .filter((edge) => {
+      const src = edge.data.source;
+      const tgt = edge.data.target;
+      return src && tgt && nodeIds.has(src) && nodeIds.has(tgt);
+    });
 
   return [...nodes, ...edges];
 }

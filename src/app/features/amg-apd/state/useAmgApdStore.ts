@@ -10,6 +10,11 @@ type State = {
 
   editedYaml?: string;
   setEditedYaml: (yaml?: string) => void;
+  clearEditedYaml: () => void;
+
+  /** True while loading a version (re-analyzing YAML); patterns page shows overlay */
+  regenerating: boolean;
+  setRegenerating: (v: boolean) => void;
 };
 
 export const useAmgApdStore = create<State>()(
@@ -19,12 +24,14 @@ export const useAmgApdStore = create<State>()(
       setLast: (r?: AnalysisResult) =>
         set({
           last: r,
-
-          editedYaml: undefined,
         }),
 
       editedYaml: undefined,
       setEditedYaml: (yaml?: string) => set({ editedYaml: yaml }),
+      clearEditedYaml: () => set({ editedYaml: undefined }),
+
+      regenerating: false,
+      setRegenerating: (v: boolean) => set({ regenerating: v }),
     }),
     {
       name: "amg_apd_store",

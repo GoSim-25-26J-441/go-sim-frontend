@@ -240,6 +240,30 @@ export const projectsApi = createApi({
       },
     }),
 
+    uploadDiagramImage: b.mutation<
+      { ok?: boolean; image_object_key?: string; [key: string]: unknown },
+      { projectId: string; file: Blob }
+    >({
+      query: ({ projectId, file }) => {
+        const formData = new FormData();
+        formData.append("file", file, "diagram.png");
+
+        return {
+          url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/image`,
+          method: "POST",
+          body: formData,
+        };
+      },
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        return {
+          ok: data?.ok ?? true,
+          image_object_key: data?.image_object_key,
+          ...data,
+        };
+      },
+    }),
+
     tempChat: b.mutation<TempChatResponse, TempChatArg>({
       query: (body) => ({
         url: "/api/temp-chat",
@@ -270,5 +294,6 @@ export const {
   useDeleteProjectMutation,
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
+  useUploadDiagramImageMutation,
   useTempChatMutation,
 } = projectsApi;

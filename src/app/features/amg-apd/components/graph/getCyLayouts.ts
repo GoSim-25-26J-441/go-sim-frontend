@@ -4,6 +4,7 @@ export function getCyLayout(layoutName: LayoutName) {
   if (layoutName === "dagre") {
     return {
       name: "dagre",
+      fit: false,
       padding: 80,
       rankDir: "LR",
       rankSep: 120,
@@ -15,6 +16,7 @@ export function getCyLayout(layoutName: LayoutName) {
   if (layoutName === "cose-bilkent") {
     return {
       name: "cose-bilkent",
+      fit: false,
       animate: false,
       nodeRepulsion: 4500,
       idealEdgeLength: 150,
@@ -24,7 +26,7 @@ export function getCyLayout(layoutName: LayoutName) {
   if (layoutName === "cola") {
     return {
       name: "cola",
-      fit: true,
+      fit: false,
       nodeSpacing: 40,
       edgeLengthVal: 120,
     };
@@ -32,6 +34,7 @@ export function getCyLayout(layoutName: LayoutName) {
 
   return {
     name: "elk",
+    fit: false,
     elk: {
       "elk.direction": "RIGHT",
       "elk.layered.spacing.nodeNodeBetweenLayers": 80,
