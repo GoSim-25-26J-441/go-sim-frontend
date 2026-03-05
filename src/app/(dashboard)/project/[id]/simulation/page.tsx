@@ -22,6 +22,11 @@ type BackendRunSummary = {
     mode?: string;
     objective?: string;
     max_iterations?: number;
+    // optimization summary populated by engine callback
+    best_run_id?: string;
+    best_score?: number;
+    iterations?: number;
+    top_candidates?: string[];
     [key: string]: unknown;
   };
 };
@@ -287,12 +292,34 @@ export default function ProjectSimulationPage() {
                         <span>Created {new Date(run.created_at).toLocaleString()}</span>
                       )}
                       {run.completed_at && (
-                        <span>· Completed {new Date(run.completed_at).toLocaleString()}</span>
+                        <span>· Ended {new Date(run.completed_at).toLocaleString()}</span>
                       )}
                       {!run.completed_at && run.updated_at && isRunning && (
                         <span>· Updated {new Date(run.updated_at).toLocaleString()}</span>
                       )}
                     </div>
+
+                    {/* Optimization summary */}
+                    {(run.metadata?.best_score != null || run.metadata?.iterations != null) && (
+                      <div className="flex items-center gap-3 text-[11px] flex-wrap pt-0.5">
+                        {run.metadata.iterations != null && (
+                          <span className="text-white/40">
+                            <span className="text-white/20">Iterations </span>
+                            <span className="font-mono text-amber-300/80">{String(run.metadata.iterations)}</span>
+                          </span>
+                        )}
+                        {run.metadata.best_score != null && (
+                          <span className="text-white/40">
+                            <span className="text-white/20">Best score </span>
+                            <span className="font-mono text-amber-300/80">
+                              {typeof run.metadata.best_score === "number"
+                                ? run.metadata.best_score.toFixed(4)
+                                : String(run.metadata.best_score)}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0 pt-0.5">

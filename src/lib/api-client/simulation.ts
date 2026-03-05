@@ -162,34 +162,37 @@ export async function startSimulationRun(id: string): Promise<{ run_id: string; 
 }
 
 /**
- * Stop a running simulation
- * TODO: Replace with actual backend call when endpoint is available
+ * Stop a running simulation.
+ * Backend: PUT /api/v1/simulation/runs/:id
+ *
+ * mode "completed" (default) – normal stop, e.g. user clicks "Stop" on an
+ *   online run. Engine is halted and the run is stored as completed.
+ * mode "cancelled" – abort/cancel. Engine is halted and run stored as cancelled.
  */
-export async function stopSimulationRun(id: string): Promise<SimulationRun> {
-  try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs/${id}/stop`, {
-    //   method: "POST",
-    // });
-    // if (!response.ok) {
-    //   throw new Error("Failed to stop simulation");
-    // }
-    // const data = await response.json();
-    // return data.run as SimulationRun;
-
-    // For now, simulate API call
-    const run = await getSimulationRun(id);
-    if (!run) throw new Error("Simulation run not found");
-    
-    return {
-      ...run,
-      status: "cancelled",
-      completed_at: new Date().toISOString(),
-    };
-  } catch (error) {
-    console.error("Error stopping simulation run:", error);
-    throw error;
+/**
+ * Terminal modes accepted by the backend:
+ *   "stopped"   – explicit stop, aligned with RUN_STATUS_STOPPED from engine (default)
+ *   "completed" – end an online run and treat it as successfully completed
+ *   "cancelled" – abort / user cancel
+ */
+export async function stopSimulationRun(
+  id: string,
+  mode: "stopped" | "completed" | "cancelled" = "stopped",
+): Promise<{ run_id: string; status: string }> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(id)}`;
+  const response = await authenticatedFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: mode }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Failed to stop simulation run" }));
+    throw new Error((err as { error?: string }).error ?? `Stop run failed (${response.status})`);
   }
+  const data = (await response.json()) as { run?: { run_id: string; status: string } };
+  const run = data.run;
+  if (run) return { run_id: run.run_id, status: run.status };
+  return { run_id: id, status: mode };
 }
 
 /**

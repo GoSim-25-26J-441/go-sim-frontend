@@ -13,7 +13,7 @@ import Link from "next/link";
 import { ArrowLeft, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
 import { env } from "@/lib/env";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
-import { startSimulationRun } from "@/lib/api-client/simulation";
+import { startSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,19 @@ interface RunInfo {
   status: string;
   created_at?: string;
   updated_at?: string;
-  metadata?: Record<string, unknown>;
+  completed_at?: string;
+  metadata?: {
+    name?: string;
+    description?: string;
+    mode?: string;
+    objective?: string;
+    // optimization summary (populated by engine callback)
+    best_run_id?: string;
+    best_score?: number;
+    iterations?: number;
+    top_candidates?: string[];
+    [key: string]: unknown;
+  };
 }
 
 interface SseEvent {
@@ -41,6 +53,7 @@ export interface SsePanelHandle {
 interface SsePanelProps {
   title: string;
   url: string;
+  onRunUpdate?: (run: RunInfo) => void;
   onTerminalEvent?: () => void;
   onStreamClose?: () => void;
 }
@@ -57,15 +70,20 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 const EVENT_TYPE_STYLES: Record<string, string> = {
-  metrics:   "bg-sky-500/20 text-sky-300",
-  metric_update: "bg-sky-500/20 text-sky-300",
-  error:     "bg-red-500/20 text-red-300",
-  done:      "bg-emerald-500/20 text-emerald-300",
-  completed: "bg-emerald-500/20 text-emerald-300",
-  stopped:   "bg-gray-500/20 text-gray-300",
-  best:      "bg-amber-500/20 text-amber-300",
-  status:    "bg-purple-500/20 text-purple-300",
+  metrics:              "bg-sky-500/20 text-sky-300",
+  metric_update:        "bg-sky-500/20 text-sky-300",
+  error:                "bg-red-500/20 text-red-300",
+  done:                 "bg-emerald-500/20 text-emerald-300",
+  completed:            "bg-emerald-500/20 text-emerald-300",
+  stopped:              "bg-gray-500/20 text-gray-300",
+  best:                 "bg-amber-500/20 text-amber-300",
+  status:               "bg-purple-500/20 text-purple-300",
+  status_change:        "bg-purple-500/20 text-purple-300",
+  update:               "bg-indigo-500/20 text-indigo-300",
+  optimization_progress:"bg-amber-500/20 text-amber-300",
 };
+
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "stopped"]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,17 +106,46 @@ function formatData(raw: string | undefined | null): string {
 
 // ── SsePanel — proper forwardRef component ───────────────────────────────────
 
-const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
-  ({ title, url, onTerminalEvent, onStreamClose }, ref) => {
-    const [events, setEvents] = useState<SseEvent[]>([]);
-    const [connected, setConnected] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+const MAX_EVENTS = 1000;
+const PAGE_SIZE  = 50;
 
-    const logRef = useRef<HTMLDivElement>(null);
+const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
+  ({ title, url, onRunUpdate, onTerminalEvent, onStreamClose }, ref) => {
+    const [events, setEvents]     = useState<SseEvent[]>([]);
+    const [connected, setConnected] = useState(false);
+    const [error, setError]       = useState<string | null>(null);
+    // page index (0-based); "following" auto-advances to the last page
+    const [page, setPage]         = useState(0);
+    const [following, setFollowing] = useState(true);
+
+    const logRef   = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
-    // Use a module-level incrementing counter scoped to this instance so keys
-    // are always unique regardless of what id: the backend sends.
-    const seqRef = useRef(0);
+    const seqRef   = useRef(0);
+
+    // Derived pager values
+    const totalPages = Math.max(1, Math.ceil(events.length / PAGE_SIZE));
+    const currentPage = Math.min(page, totalPages - 1);
+    const pageEvents  = events.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+    // When following, jump to the last page whenever the total grows
+    useEffect(() => {
+      if (following) setPage(Math.max(0, totalPages - 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [totalPages, following]);
+
+    // Scroll to top of the log whenever the displayed page changes
+    useEffect(() => {
+      if (logRef.current) logRef.current.scrollTop = 0;
+    }, [currentPage]);
+
+    const goFirst = () => { setFollowing(false); setPage(0); };
+    const goPrev  = () => { setFollowing(false); setPage((p) => Math.max(0, p - 1)); };
+    const goNext  = () => {
+      const next = Math.min(currentPage + 1, totalPages - 1);
+      setPage(next);
+      if (next === totalPages - 1) setFollowing(true);
+    };
+    const goLast  = () => { setPage(totalPages - 1); setFollowing(true); };
 
     const connect = useCallback(async () => {
       abortRef.current?.abort();
@@ -139,6 +186,10 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
           buffer = lines.pop() ?? "";
 
           let pending: { type?: string; data?: string } = {};
+          const batch: SseEvent[] = [];
+          let terminalSeen = false;
+          // Collect run-update payloads — apply after state flush
+          const runUpdates: RunInfo[] = [];
 
           for (const raw of lines) {
             const line = stripCr(raw);
@@ -149,24 +200,47 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
               pending.data = (pending.data ?? "") + line.slice(5).trimStart();
             } else if (line === "") {
               if (pending.data !== undefined) {
-                // Always generate our own unique key — never use the SSE id:
-                // field as a React key since the backend may reuse those values.
                 seqRef.current += 1;
-                const uid = `${Date.now()}-${seqRef.current}`;
+                const uid = `${seqRef.current}`;
                 const eventType = pending.type ?? "message";
 
-                setEvents((prev) => [
-                  ...prev.slice(-299),
-                  { uid, type: eventType, data: pending.data!, timestamp: new Date().toISOString() },
-                ]);
+                batch.push({
+                  uid,
+                  type: eventType,
+                  data: pending.data,
+                  timestamp: new Date().toISOString(),
+                });
 
+                // Handle "update" events that carry the run object
+                if (eventType === "update") {
+                  try {
+                    const parsed = JSON.parse(pending.data) as { run?: RunInfo };
+                    if (parsed.run) {
+                      runUpdates.push(parsed.run);
+                      if (TERMINAL_STATUSES.has(parsed.run.status)) {
+                        terminalSeen = true;
+                      }
+                    }
+                  } catch { /* malformed JSON — ignore */ }
+                }
+
+                // Legacy terminal event types (engine-direct streams)
                 if (["done", "completed", "stopped", "failed"].includes(eventType)) {
-                  onTerminalEvent?.();
+                  terminalSeen = true;
                 }
               }
               pending = {};
             }
           }
+
+          if (batch.length > 0) {
+            setEvents((prev) => [...prev, ...batch].slice(-MAX_EVENTS));
+          }
+          // Fire callbacks after state update is queued
+          for (const run of runUpdates) {
+            onRunUpdate?.(run);
+          }
+          if (terminalSeen) onTerminalEvent?.();
         }
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
@@ -178,19 +252,12 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
           onStreamClose?.();
         }
       }
-    }, [url, onTerminalEvent, onStreamClose]);
+    }, [url, onRunUpdate, onTerminalEvent, onStreamClose]);
 
     useImperativeHandle(ref, () => ({
       connect,
       abort: () => abortRef.current?.abort(),
     }));
-
-    // Auto-scroll
-    useEffect(() => {
-      if (logRef.current) {
-        logRef.current.scrollTop = logRef.current.scrollHeight;
-      }
-    }, [events]);
 
     // Cleanup on unmount
     useEffect(() => () => { abortRef.current?.abort(); }, []);
@@ -214,7 +281,7 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
             )}
             <span className="text-xs text-white/30">{events.length} events</span>
             <button
-              onClick={() => setEvents([])}
+              onClick={() => { setEvents([]); setPage(0); setFollowing(true); }}
               className="text-xs text-white/30 hover:text-white/60 transition-colors"
             >
               Clear
@@ -237,7 +304,7 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
           </div>
         )}
 
-        {/* Event log */}
+        {/* Event log — only renders PAGE_SIZE rows */}
         <div ref={logRef} className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-0.5">
           {events.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-white/20 select-none gap-2">
@@ -245,7 +312,7 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
               <p>{connected ? "Waiting for events…" : "Not connected."}</p>
             </div>
           ) : (
-            events.map((ev) => (
+            pageEvents.map((ev) => (
               <div
                 key={ev.uid}
                 className="flex gap-2 items-start hover:bg-white/5 rounded px-2 py-1"
@@ -260,13 +327,72 @@ const SsePanel = forwardRef<SsePanelHandle, SsePanelProps>(
                 >
                   {ev.type}
                 </span>
-                <pre className="break-all whitespace-pre-wrap text-white/70 leading-relaxed min-w-0">
-                  {formatData(ev.data)}
-                </pre>
+                {ev.data ? (
+                  <pre className="flex-1 min-w-0 break-all whitespace-pre-wrap text-white/70 leading-relaxed">
+                    {formatData(ev.data)}
+                  </pre>
+                ) : null}
               </div>
             ))
           )}
         </div>
+
+        {/* Pagination footer */}
+        {events.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border shrink-0 gap-2">
+            {/* Page navigation */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={goFirst}
+                disabled={currentPage === 0}
+                className="px-2 py-1 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+                title="First page"
+              >
+                «
+              </button>
+              <button
+                onClick={goPrev}
+                disabled={currentPage === 0}
+                className="px-2 py-1 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+                title="Previous page"
+              >
+                ‹
+              </button>
+              <span className="text-xs text-white/40 px-2 tabular-nums select-none">
+                {currentPage + 1} / {totalPages}
+              </span>
+              <button
+                onClick={goNext}
+                disabled={currentPage >= totalPages - 1}
+                className="px-2 py-1 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+                title="Next page"
+              >
+                ›
+              </button>
+              <button
+                onClick={goLast}
+                disabled={currentPage >= totalPages - 1}
+                className="px-2 py-1 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+                title="Last page"
+              >
+                »
+              </button>
+            </div>
+
+            {/* Follow toggle */}
+            <button
+              onClick={() => { setFollowing((f) => !f); if (!following) goLast(); }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
+                following
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                  : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"
+              }`}
+              title={following ? "Following latest events — click to lock view" : "Click to follow latest events"}
+            >
+              {following ? "● Following" : "○ Follow latest"}
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -285,9 +411,9 @@ export default function SimulationRunPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
-  const backendRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
 
   // ── Run info fetch ──────────────────────────────────────────────────────────
@@ -314,6 +440,14 @@ export default function SimulationRunPage() {
 
   useEffect(() => { fetchRunInfoRef.current = fetchRunInfo; }, [fetchRunInfo]);
 
+  // Apply run data received directly from an SSE "update" event — no HTTP needed
+  const handleRunUpdate = useCallback((run: RunInfo) => {
+    setRunInfo(run);
+    setRunError(null);
+    setRunLoading(false);
+  }, []);
+
+  // Fallback: re-fetch from API (used on stream close / legacy terminal events)
   const refreshStatus = useCallback(() => { fetchRunInfoRef.current(); }, []);
 
   // ── On mount ────────────────────────────────────────────────────────────────
@@ -322,12 +456,10 @@ export default function SimulationRunPage() {
     fetchRunInfo().then((run) => {
       if (run?.status === "running") {
         simRef.current?.connect();
-        backendRef.current?.connect();
       }
     });
     return () => {
       simRef.current?.abort();
-      backendRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -340,7 +472,6 @@ export default function SimulationRunPage() {
       await startSimulationRun(runId);
       await fetchRunInfo();
       simRef.current?.connect();
-      backendRef.current?.connect();
     } catch (e) {
       console.error("Failed to start run:", e);
     } finally {
@@ -348,25 +479,17 @@ export default function SimulationRunPage() {
     }
   };
 
-  const handleStop = async () => {
+  const handleStop = async (mode: "stopped" | "completed" | "cancelled" = "stopped") => {
     setIsStopping(true);
+    setStopError(null);
     try {
-      const token = await getFirebaseIdToken();
-      await fetch(
-        `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ status: "stopped" }),
-        }
-      );
+      await stopSimulationRun(runId, mode);
+      // Let the SSE "update" event drive the status change. Abort the stream
+      // only after the stop is confirmed so the terminal event can arrive first.
       simRef.current?.abort();
-      backendRef.current?.abort();
       await fetchRunInfo();
     } catch (e) {
+      setStopError((e as Error).message);
       console.error("Failed to stop run:", e);
     } finally {
       setIsStopping(false);
@@ -405,6 +528,11 @@ export default function SimulationRunPage() {
 
       {/* Action bar */}
       <div className="flex items-center gap-2 flex-wrap">
+        {stopError && (
+          <span className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            Stop failed: {stopError}
+          </span>
+        )}
         {status === "pending" && (
           <button
             onClick={handleStart}
@@ -417,14 +545,35 @@ export default function SimulationRunPage() {
         )}
 
         {status === "running" && (
-          <button
-            onClick={handleStop}
-            disabled={isStopping}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isStopping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
-            Stop Run
-          </button>
+          <>
+            <button
+              onClick={() => handleStop("stopped")}
+              disabled={isStopping}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white/10 text-white border border-white/20 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Stop the simulation (stored as stopped)"
+            >
+              {isStopping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+              Stop
+            </button>
+            <button
+              onClick={() => handleStop("completed")}
+              disabled={isStopping}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="End the online run and mark it as successfully completed"
+            >
+              {isStopping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+              Complete
+            </button>
+            <button
+              onClick={() => handleStop("cancelled")}
+              disabled={isStopping}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Abort and cancel the simulation"
+            >
+              {isStopping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+              Cancel
+            </button>
+          </>
         )}
 
         <button
@@ -437,8 +586,8 @@ export default function SimulationRunPage() {
       </div>
 
       {/* Run details */}
-      <div className="bg-card border border-border rounded-lg p-4">
-        <h2 className="text-sm font-semibold text-white mb-3">Run details</h2>
+      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <h2 className="text-sm font-semibold text-white">Run details</h2>
         {runLoading ? (
           <div className="flex items-center gap-2 text-xs text-white/50">
             <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
@@ -446,73 +595,125 @@ export default function SimulationRunPage() {
         ) : runError ? (
           <p className="text-xs text-red-400">{runError}</p>
         ) : runInfo ? (
-          <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
-            <div>
-              <dt className="text-white/40 mb-0.5">Run ID</dt>
-              <dd className="font-mono text-white/80 break-all">{runInfo.run_id}</dd>
-            </div>
-            {runInfo.engine_run_id && (
+          <>
+            {/* Core fields */}
+            <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
               <div>
-                <dt className="text-white/40 mb-0.5">Engine Run ID</dt>
-                <dd className="font-mono text-white/80 break-all">{runInfo.engine_run_id}</dd>
+                <dt className="text-white/40 mb-0.5">Run ID</dt>
+                <dd className="font-mono text-white/80 break-all">{runInfo.run_id}</dd>
               </div>
-            )}
-            <div>
-              <dt className="text-white/40 mb-0.5">Status</dt>
-              <dd>
-                <span className={`px-2 py-0.5 rounded-full text-xs border ${statusStyle}`}>
-                  {runInfo.status}
-                </span>
-              </dd>
-            </div>
-            {runInfo.created_at && (
+              {runInfo.engine_run_id && (
+                <div>
+                  <dt className="text-white/40 mb-0.5">Engine Run ID</dt>
+                  <dd className="font-mono text-white/80 break-all">{runInfo.engine_run_id}</dd>
+                </div>
+              )}
               <div>
-                <dt className="text-white/40 mb-0.5">Created</dt>
-                <dd className="text-white/80">{new Date(runInfo.created_at).toLocaleString()}</dd>
-              </div>
-            )}
-            {runInfo.updated_at && (
-              <div>
-                <dt className="text-white/40 mb-0.5">Last updated</dt>
-                <dd className="text-white/80">{new Date(runInfo.updated_at).toLocaleString()}</dd>
-              </div>
-            )}
-            {runInfo.metadata && Object.keys(runInfo.metadata).length > 0 && (
-              <div className="col-span-2 md:col-span-4">
-                <dt className="text-white/40 mb-1">Metadata</dt>
+                <dt className="text-white/40 mb-0.5">Status</dt>
                 <dd>
-                  <pre className="text-white/60 font-mono text-[11px] whitespace-pre-wrap break-all bg-black/30 rounded p-2 leading-relaxed">
-                    {JSON.stringify(runInfo.metadata, null, 2)}
-                  </pre>
+                  <span className={`px-2 py-0.5 rounded-full text-xs border ${statusStyle}`}>
+                    {runInfo.status}
+                  </span>
                 </dd>
               </div>
+              {runInfo.metadata?.mode && (
+                <div>
+                  <dt className="text-white/40 mb-0.5">Mode</dt>
+                  <dd className="text-white/80 capitalize">{runInfo.metadata.mode as string}</dd>
+                </div>
+              )}
+              {runInfo.created_at && (
+                <div>
+                  <dt className="text-white/40 mb-0.5">Created</dt>
+                  <dd className="text-white/80">{new Date(runInfo.created_at).toLocaleString()}</dd>
+                </div>
+              )}
+              {runInfo.updated_at && (
+                <div>
+                  <dt className="text-white/40 mb-0.5">Last updated</dt>
+                  <dd className="text-white/80">{new Date(runInfo.updated_at).toLocaleString()}</dd>
+                </div>
+              )}
+              {runInfo.completed_at && (
+                <div>
+                  <dt className="text-white/40 mb-0.5">Completed at</dt>
+                  <dd className="text-white/80">{new Date(runInfo.completed_at).toLocaleString()}</dd>
+                </div>
+              )}
+            </dl>
+
+            {/* Optimization summary (populated by engine callback) */}
+            {runInfo.metadata && (
+              runInfo.metadata.best_score != null ||
+              runInfo.metadata.iterations != null
+            ) && (
+              <div className="border-t border-border pt-4">
+                <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3">
+                  Optimization summary
+                </h3>
+                <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+                  {runInfo.metadata.iterations != null && (
+                    <div>
+                      <dt className="text-white/40 mb-0.5">Iterations</dt>
+                      <dd className="text-white/80 font-mono">{String(runInfo.metadata.iterations)}</dd>
+                    </div>
+                  )}
+                  {runInfo.metadata.best_score != null && (
+                    <div>
+                      <dt className="text-white/40 mb-0.5">Best score</dt>
+                      <dd className="text-white/80 font-mono">
+                        {typeof runInfo.metadata.best_score === "number"
+                          ? runInfo.metadata.best_score.toFixed(4)
+                          : String(runInfo.metadata.best_score)}
+                      </dd>
+                    </div>
+                  )}
+                  {runInfo.metadata.objective && (
+                    <div>
+                      <dt className="text-white/40 mb-0.5">Objective</dt>
+                      <dd className="text-white/80">{String(runInfo.metadata.objective)}</dd>
+                    </div>
+                  )}
+                  {runInfo.metadata.best_run_id && (
+                    <div>
+                      <dt className="text-white/40 mb-0.5">Best run ID</dt>
+                      <dd className="font-mono text-white/70 break-all text-[10px]">
+                        {String(runInfo.metadata.best_run_id)}
+                      </dd>
+                    </div>
+                  )}
+                  {runInfo.metadata.top_candidates && Array.isArray(runInfo.metadata.top_candidates) && runInfo.metadata.top_candidates.length > 0 && (
+                    <div className="col-span-2 md:col-span-4">
+                      <dt className="text-white/40 mb-1">Top candidates</dt>
+                      <dd className="flex flex-wrap gap-1.5">
+                        {(runInfo.metadata.top_candidates as string[]).map((id, i) => (
+                          <span
+                            key={id}
+                            className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                            title={id}
+                          >
+                            #{i + 1} {id.slice(0, 8)}…
+                          </span>
+                        ))}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
             )}
-          </dl>
+          </>
         ) : null}
-        {isTerminal && (
-          <p className="text-xs text-white/30 italic mt-3 pt-3 border-t border-border">
-            Run has finished. Saved metrics will appear here once the metrics API is available.
-          </p>
-        )}
       </div>
 
-      {/* Event stream panels */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <SsePanel
-          ref={simRef}
-          title="Simulation event stream"
-          url={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/events`}
-          onTerminalEvent={refreshStatus}
-          onStreamClose={refreshStatus}
-        />
-        <SsePanel
-          ref={backendRef}
-          title="Backend / Redis event stream"
-          url={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/backend-events`}
-          onTerminalEvent={refreshStatus}
-          onStreamClose={refreshStatus}
-        />
-      </div>
+      {/* Event stream */}
+      <SsePanel
+        ref={simRef}
+        title="Event stream"
+        url={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/events`}
+        onRunUpdate={handleRunUpdate}
+        onTerminalEvent={refreshStatus}
+        onStreamClose={refreshStatus}
+      />
     </div>
   );
 }
