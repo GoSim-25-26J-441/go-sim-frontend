@@ -678,20 +678,24 @@ export default function SimulationRunPage() {
 
     if (type === "metric_update") {
       try {
-        const payload = JSON.parse(data) as {
+        interface MetricPayload {
           metric?: string;
           value?: number;
           timestamp?: string;
-          labels?: { service?: string; endpoint?: string };
-        };
-        if (payload.metric === "request_count" && payload.labels?.service && payload.value != null) {
-          const svc = payload.labels.service;
-          const t = payload.timestamp ? new Date(payload.timestamp).getTime() : Date.now();
-          const pt: TimePoint = { t, v: payload.value };
+          labels?: { service?: string; endpoint?: string; [key: string]: unknown };
+        }
+        const outer = JSON.parse(data) as MetricPayload & { data?: MetricPayload };
+        // Backend wraps the metric inside a "data" field: { data: {...}, event, run_id }
+        // Fall back to flat format for older/direct payloads.
+        const m: MetricPayload = outer.data ?? outer;
+
+        if (m.metric === "request_count" && m.labels?.service && m.value != null) {
+          const svc = m.labels.service;
+          const t = m.timestamp ? new Date(m.timestamp).getTime() : Date.now();
+          const pt: TimePoint = { t, v: m.value };
           const buf = seriesBufferRef.current;
           if (!buf[svc]) buf[svc] = [];
           buf[svc].push(pt);
-          // Enforce rolling window in the buffer
           if (buf[svc].length > MAX_POINTS) buf[svc] = buf[svc].slice(-MAX_POINTS);
         }
       } catch { /* malformed — ignore */ }
