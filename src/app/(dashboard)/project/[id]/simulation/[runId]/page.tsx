@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   forwardRef,
   useCallback,
   useEffect,
@@ -36,6 +36,34 @@ interface OptimizationStep {
   reason: string;
   previous_config?: OptimizationStepConfig;
   current_config?: OptimizationStepConfig;
+}
+
+interface Candidate {
+  id: string;
+  spec?: {
+    vcpu?: number;
+    memory_gb?: number;
+    label?: string;
+    [key: string]: unknown;
+  };
+  metrics?: {
+    cpu_util_pct?: number;
+    mem_util_pct?: number;
+    [key: string]: unknown;
+  };
+  sim_workload?: {
+    concurrent_users?: number;
+    [key: string]: unknown;
+  };
+  source?: string;
+}
+
+interface CandidatesResponse {
+  run_id: string;
+  user_id?: string;
+  project_id?: string;
+  simulation?: { nodes?: number };
+  candidates: Candidate[];
 }
 
 interface RunInfo {
@@ -445,6 +473,11 @@ export default function SimulationRunPage() {
   const [stopError, setStopError] = useState<string | null>(null);
   // Online optimization timeline — seeded from metadata on load, appended via SSE
   const [optSteps, setOptSteps] = useState<OptimizationStep[]>([]);
+  // Candidates panel
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesError, setCandidatesError] = useState<string | null>(null);
+  const [expandedCandidate, setExpandedCandidate] = useState<string | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -507,6 +540,27 @@ export default function SimulationRunPage() {
 
   // Fallback: re-fetch from API (used on stream close / legacy terminal events)
   const refreshStatus = useCallback(() => { fetchRunInfoRef.current(); }, []);
+
+  // ── Candidates fetch ─────────────────────────────────────────────────────────
+
+  const fetchCandidates = useCallback(async () => {
+    setCandidatesLoading(true);
+    setCandidatesError(null);
+    try {
+      const token = await getFirebaseIdToken();
+      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/candidates`;
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as CandidatesResponse;
+      setCandidates(data.candidates ?? []);
+    } catch (e) {
+      setCandidatesError((e as Error).message);
+    } finally {
+      setCandidatesLoading(false);
+    }
+  }, [runId]);
 
   // ── On mount ────────────────────────────────────────────────────────────────
 
@@ -841,6 +895,143 @@ export default function SimulationRunPage() {
           </div>
         </div>
       )}
+
+      {/* Candidates panel */}
+      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white">
+            Candidates
+            {candidates !== null && (
+              <span className="ml-2 text-xs font-normal text-white/40">
+                {candidates.length} record{candidates.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </h2>
+          <button
+            onClick={fetchCandidates}
+            disabled={candidatesLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <RefreshCw className={`w-3 h-3 ${candidatesLoading ? "animate-spin" : ""}`} />
+            {candidates === null ? "Fetch candidates" : "Refresh"}
+          </button>
+        </div>
+
+        {candidatesError && (
+          <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            {candidatesError}
+          </p>
+        )}
+
+        {candidates === null && !candidatesLoading && !candidatesError && (
+          <p className="text-xs text-white/30 italic">
+            Click "Fetch candidates" to load candidates for this run.
+          </p>
+        )}
+
+        {candidatesLoading && (
+          <div className="flex items-center gap-2 text-xs text-white/50 py-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
+          </div>
+        )}
+
+        {candidates !== null && candidates.length === 0 && !candidatesLoading && (
+          <p className="text-xs text-white/30 italic">
+            No candidates recorded for this run.
+          </p>
+        )}
+
+        {candidates !== null && candidates.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-border bg-white/5 text-white/40 text-left">
+                  <th className="px-3 py-2 font-medium">ID</th>
+                  <th className="px-3 py-2 font-medium">vCPU</th>
+                  <th className="px-3 py-2 font-medium">Mem (GB)</th>
+                  <th className="px-3 py-2 font-medium">CPU util %</th>
+                  <th className="px-3 py-2 font-medium">Mem util %</th>
+                  <th className="px-3 py-2 font-medium">Conc. users</th>
+                  <th className="px-3 py-2 font-medium">Source</th>
+                  <th className="px-3 py-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {candidates.map((c) => {
+                  const isExpanded = expandedCandidate === c.id;
+                  return (
+                    <React.Fragment key={c.id}>
+                      <tr
+                        className="border-b border-border/50 hover:bg-white/5 transition-colors"
+                      >
+                        <td className="px-3 py-2 text-white/80">{c.id}</td>
+                        <td className="px-3 py-2 text-white/70">{c.spec?.vcpu ?? "—"}</td>
+                        <td className="px-3 py-2 text-white/70">{c.spec?.memory_gb ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {c.metrics?.cpu_util_pct != null ? (
+                            <span className={c.metrics.cpu_util_pct > 80 ? "text-red-400" : "text-white/70"}>
+                              {c.metrics.cpu_util_pct}%
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {c.metrics?.mem_util_pct != null ? (
+                            <span className={c.metrics.mem_util_pct > 80 ? "text-red-400" : "text-white/70"}>
+                              {c.metrics.mem_util_pct}%
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-white/70">
+                          {c.sim_workload?.concurrent_users ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 text-white/40 truncate max-w-[140px]" title={c.source}>
+                          {c.source ?? "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            onClick={() => setExpandedCandidate(isExpanded ? null : c.id)}
+                            className="text-white/30 hover:text-white/70 transition-colors"
+                            title={isExpanded ? "Collapse" : "Expand details"}
+                          >
+                            {isExpanded ? "▲" : "▼"}
+                          </button>
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="border-b border-border/50 bg-black/20">
+                          <td colSpan={8} className="px-4 py-3">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Spec</p>
+                                <pre className="text-[11px] text-white/60 whitespace-pre-wrap break-all leading-relaxed">
+                                  {JSON.stringify(c.spec ?? {}, null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Metrics</p>
+                                <pre className="text-[11px] text-white/60 whitespace-pre-wrap break-all leading-relaxed">
+                                  {JSON.stringify(c.metrics ?? {}, null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Sim workload</p>
+                                <pre className="text-[11px] text-white/60 whitespace-pre-wrap break-all leading-relaxed">
+                                  {JSON.stringify(c.sim_workload ?? {}, null, 2)}
+                                </pre>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Event stream */}
       <SsePanel
