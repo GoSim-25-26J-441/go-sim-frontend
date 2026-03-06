@@ -78,9 +78,9 @@ export function exportGraphToYaml(cy: Core): string {
     const attrs = (e.data("attrs") as any) || {};
 
     const depKind =
-      typeof attrs.kind === "string" && attrs.kind.trim()
-        ? attrs.kind.trim()
-        : "rest";
+      (typeof attrs.kind === "string" && attrs.kind.trim()) ||
+      (typeof attrs.dep_kind === "string" && attrs.dep_kind.trim()) ||
+      "rest";
 
     const sync = typeof attrs.sync === "boolean" ? attrs.sync : true;
 

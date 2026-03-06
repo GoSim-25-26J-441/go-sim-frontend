@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
+import { ViewPatternsForProjectButton } from "@/app/features/amg-apd/components/ViewPatternsForProjectButton";
 
 function decodeSafe(v: string) {
   try {
@@ -20,6 +20,10 @@ export default function UploadPage() {
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchingVersions, setSearchingVersions] = useState(false);
+  const [existingVersionsModalOpen, setExistingVersionsModalOpen] =
+    useState(false);
+  const [existingVersionsProjectId, setExistingVersionsProjectId] =
+    useState("");
 
   const setLast = useAmgApdStore((s) => s.setLast);
   const editedYaml = useAmgApdStore((s) => s.editedYaml);
@@ -27,6 +31,12 @@ export default function UploadPage() {
 
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  const projectPublicId =
+    searchParams.get("project_public_id") ??
+    searchParams.get("projectPublicId") ??
+    searchParams.get("public_id") ??
+    "";
 
   const regen = searchParams.get("regen") === "1";
   const regenTitleRaw = searchParams.get("title") ?? "Edited architecture";
@@ -59,7 +69,9 @@ export default function UploadPage() {
 
         const res = await fetch("/api/amg-apd/analyze-upload", {
           method: "POST",
-          headers: getAmgApdHeaders(),
+          headers: getAmgApdHeaders({
+            chatId: projectPublicId || undefined,
+          }),
           body: fd,
         });
 
@@ -73,9 +85,10 @@ export default function UploadPage() {
 
         setLast(data);
         router.replace("/dashboard/patterns");
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
         console.error(err);
-        alert("Analyze failed: " + (err?.message ?? "Unknown error"));
+        alert("Analyze failed: " + msg);
         setLoading(false);
       }
     })();
@@ -98,7 +111,9 @@ export default function UploadPage() {
 
       const res = await fetch("/api/amg-apd/analyze-upload", {
         method: "POST",
-        headers: getAmgApdHeaders(),
+        headers: getAmgApdHeaders({
+          chatId: projectPublicId || undefined,
+        }),
         body: fd,
       });
 
@@ -112,29 +127,51 @@ export default function UploadPage() {
 
       setLast(data);
       router.push("/dashboard/patterns");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
       console.error(err);
-      alert("Analyze failed: " + (err?.message ?? "Unknown error"));
+      alert("Analyze failed: " + msg);
       setLoading(false);
     }
   }
 
-  async function handleViewExistingVersions() {
+  function handleViewExistingVersions() {
+    setExistingVersionsProjectId(projectPublicId);
+    setExistingVersionsModalOpen(true);
+  }
+
+  async function runViewExistingVersions(projectIDRaw: string) {
     setSearchingVersions(true);
     try {
-      const res = await fetch("/api/amg-apd/versions", {
-        headers: getAmgApdHeaders(),
-      });
-      if (!res.ok) throw new Error("Failed to fetch versions");
-      const data = await res.json();
-      const versions = data?.versions ?? [];
-      if (versions.length === 0) {
-        alert("No existing versions found. Upload a YAML first to create one.");
-        return;
+      const projectID = (projectIDRaw || "").trim();
+      if (!projectID) {
+        throw new Error("project_public_id is required");
       }
+
+      const res = await fetch(
+        `/api/amg-apd/projects/${encodeURIComponent(projectID)}/latest`,
+        {
+          headers: getAmgApdHeaders({
+            chatId: projectID || undefined,
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || "Failed to load latest version for project");
+      }
+
+      const data: AnalysisResult & { yaml_content?: string } = await res.json();
+      if (!data?.graph) throw new Error("Backend did not return a graph.");
+
+      setLast(data);
+      if (data?.yaml_content) setEditedYaml(data.yaml_content);
       router.push("/dashboard/patterns");
-    } catch (e: any) {
-      alert("Could not load versions: " + (e?.message ?? "Unknown error"));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      alert("Could not load versions: " + msg);
+    } finally {
       setSearchingVersions(false);
     }
   }
@@ -171,15 +208,71 @@ export default function UploadPage() {
             <h1 className="text-2xl font-semibold mb-2">Upload YAML to Begin Analysis</h1>
             <p className="text-sm opacity-70">Upload your architecture specification to visualize and detect anti-patterns</p>
           </div>
-          <button
-            type="button"
-            onClick={handleViewExistingVersions}
-            disabled={searchingVersions}
-            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-          >
-            {searchingVersions ? "Searching…" : "View Existing Versions"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleViewExistingVersions}
+              disabled={searchingVersions}
+              className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {searchingVersions ? "Searching…" : "View Existing Versions"}
+            </button>
+            {/* Test Button using shared component with fixed project ID */}
+            <ViewPatternsForProjectButton
+              projectPublicId="TestChat123"
+              label="Test Button"
+            />
+          </div>
         </div>
+
+        {existingVersionsModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
+              <div className="mb-3">
+                <h2 className="text-lg font-semibold">View Existing Versions</h2>
+                <p className="text-sm opacity-70 mt-1">
+                  Enter the <span className="font-medium">project_public_id</span>{" "}
+                  to load the latest saved version.
+                </p>
+              </div>
+
+              <input
+                value={existingVersionsProjectId}
+                onChange={(e) => setExistingVersionsProjectId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setExistingVersionsModalOpen(false);
+                  if (e.key === "Enter") {
+                    setExistingVersionsModalOpen(false);
+                    void runViewExistingVersions(existingVersionsProjectId);
+                  }
+                }}
+                placeholder="e.g. ARCHFIND-XXXX"
+                className="block w-full rounded-lg border border-border bg-card px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                autoFocus
+              />
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface/80 transition-colors"
+                  onClick={() => setExistingVersionsModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
+                  onClick={() => {
+                    setExistingVersionsModalOpen(false);
+                    void runViewExistingVersions(existingVersionsProjectId);
+                  }}
+                >
+                  Search
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={onSubmit} className="space-y-5">
           <div className="space-y-2">
