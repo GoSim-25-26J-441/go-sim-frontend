@@ -11,14 +11,14 @@ import React, {
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
   useUploadDiagramImageMutation,
 } from "@/app/store/projectsApi";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
-import LoaderModal from "@/components/chat/LoaderModal";
+import LoaderModal from "@/components/chat/main/loader/LoaderModal";
 
 import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
