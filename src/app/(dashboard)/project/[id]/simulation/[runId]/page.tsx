@@ -67,6 +67,7 @@ interface Candidate {
     [key: string]: unknown;
   };
   source?: string;
+  s3_path?: string;
 }
 
 interface CandidatesResponse {
@@ -126,6 +127,59 @@ const LINE_COLORS  = [
   "#38bdf8", "#fb923c", "#a78bfa", "#34d399",
   "#f472b6", "#facc15", "#60a5fa", "#f87171",
 ];
+
+// ── Persisted metrics types ───────────────────────────────────────────────────
+
+interface MetricPoint {
+  time: string;
+  value: number;
+  service_id?: string;
+  node_id?: string;
+  tags?: Record<string, string>;
+}
+
+interface MetricTimeseries {
+  metric: string;
+  points: MetricPoint[];
+}
+
+interface MetricsSummary {
+  metrics?: Record<string, unknown>;
+  summary_data?: Record<string, unknown>;
+  total_requests?: number;
+  total_errors?: number;
+  total_duration_ms?: number;
+}
+
+interface MetricsResponse {
+  run_id: string;
+  summary?: MetricsSummary;
+  timeseries?: MetricTimeseries[];
+}
+
+// ── Best-candidate types ──────────────────────────────────────────────────────
+
+interface BestCandidateHost {
+  host_id: string;
+  cpu_cores?: number;
+  memory_gb?: number;
+}
+
+interface BestCandidateService {
+  service_id: string;
+  replicas?: number;
+  cpu_cores?: number;
+  memory_mb?: number;
+}
+
+interface BestCandidateResponse {
+  run_id: string;
+  best_candidate?: {
+    s3_path?: string;
+    hosts?: BestCandidateHost[];
+    services?: BestCandidateService[];
+  };
+}
 
 export interface SsePanelHandle {
   connect: () => void;
@@ -331,6 +385,85 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
           </LineChart>
         </ResponsiveContainer>
       )}
+    </div>
+  );
+}
+
+// ── MetricsTimeseriesChart: renders one chart per metric from persisted data ──
+
+interface MetricsTimeseriesChartProps {
+  timeseries: MetricTimeseries[];
+}
+
+function MetricsTimeseriesChart({ timeseries }: MetricsTimeseriesChartProps) {
+  if (!timeseries.length) return (
+    <p className="text-sm text-white/40 py-4 text-center">No timeseries data available.</p>
+  );
+
+  return (
+    <div className="space-y-6">
+      {timeseries.map((ts) => {
+        // Build per-service rows. Group points by service_id (or "global").
+        const serviceSet = new Set(ts.points.map((p) => p.service_id ?? "global"));
+        const services = Array.from(serviceSet);
+
+        // Build recharts row array indexed by time string
+        const rowMap: Record<string, Record<string, number>> = {};
+        for (const p of ts.points) {
+          const key = p.time;
+          if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
+          rowMap[key][p.service_id ?? "global"] = p.value;
+        }
+        const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
+
+        if (!rows.length) return null;
+
+        const tMin = rows[0]._t as number;
+        const tMax = rows[rows.length - 1]._t as number;
+        const allVals = ts.points.map((p) => p.value);
+        const vMax = Math.max(...allVals, 0) * 1.2;
+
+        return (
+          <div key={ts.metric}>
+            <p className="text-xs text-white/50 mb-2 font-mono">{ts.metric}</p>
+            <ResponsiveContainer width="100%" height={160}>
+              <LineChart data={rows} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis
+                  dataKey="_t"
+                  type="number"
+                  domain={[tMin, tMax]}
+                  tickFormatter={(v: number) => new Date(v).toISOString().substring(11, 19)}
+                  tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
+                  scale="time"
+                />
+                <YAxis
+                  domain={[0, vMax]}
+                  tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
+                  width={45}
+                />
+                <Tooltip
+                  contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)" }}
+                  labelFormatter={(v: number) => new Date(v).toISOString()}
+                  formatter={(v: number, name: string) => [v.toFixed(2), name]}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {services.map((svc, i) => (
+                  <Line
+                    key={svc}
+                    dataKey={svc}
+                    dot={false}
+                    stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                    strokeWidth={1.5}
+                    isAnimationActive={false}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -656,6 +789,14 @@ export default function SimulationRunPage() {
   // Scenario YAML viewer — populated by fetchRunInfo (scenario_yaml sibling of run)
   const [scenarioYaml, setScenarioYaml] = useState<string | null>(null);
   const [scenarioOpen, setScenarioOpen] = useState(false);
+  // Persisted metrics (fetched when run reaches terminal state)
+  const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  // Best-candidate view
+  const [bestCandidate, setBestCandidate] = useState<BestCandidateResponse | null>(null);
+  const [bestCandLoading, setBestCandLoading] = useState(false);
+  const [bestCandError, setBestCandError] = useState<string | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
   const seriesBufferRef = useRef<ServiceSeries>({});
   const [chartSeries, setChartSeries] = useState<ServiceSeries>({});
@@ -776,6 +917,56 @@ export default function SimulationRunPage() {
     setScenarioOpen((prev) => !prev);
   }, []);
 
+  // ── Persisted metrics fetch ───────────────────────────────────────────────────
+
+  const fetchMetrics = useCallback(async () => {
+    setMetricsLoading(true);
+    setMetricsError(null);
+    try {
+      const token = await getFirebaseIdToken();
+      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/metrics`;
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.status === 404) {
+        setMetricsData({ run_id: runId, timeseries: [] });
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as MetricsResponse;
+      setMetricsData(data);
+    } catch (e) {
+      setMetricsError((e as Error).message);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [runId]);
+
+  // ── Best-candidate fetch ───────────────────────────────────────────────────────
+
+  const fetchBestCandidate = useCallback(async () => {
+    setBestCandLoading(true);
+    setBestCandError(null);
+    try {
+      const token = await getFirebaseIdToken();
+      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/best-candidate`;
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.status === 404) {
+        setBestCandidate({ run_id: runId });
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as BestCandidateResponse;
+      setBestCandidate(data);
+    } catch (e) {
+      setBestCandError((e as Error).message);
+    } finally {
+      setBestCandLoading(false);
+    }
+  }, [runId]);
+
   // Clear chart data
   const clearChart = useCallback(() => {
     seriesBufferRef.current = {};
@@ -854,6 +1045,13 @@ export default function SimulationRunPage() {
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+
+  // Auto-fetch persisted metrics + best-candidate once the run is terminal
+  useEffect(() => {
+    if (isTerminal && !metricsData && !metricsLoading) fetchMetrics();
+    if (isTerminal && !bestCandidate && !bestCandLoading) fetchBestCandidate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTerminal]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -1259,6 +1457,7 @@ export default function SimulationRunPage() {
                   <th className="px-3 py-2 font-medium">Mem util %</th>
                   <th className="px-3 py-2 font-medium">Conc. users</th>
                   <th className="px-3 py-2 font-medium">Source</th>
+                  <th className="px-3 py-2 font-medium">YAML</th>
                   <th className="px-3 py-2 font-medium"></th>
                 </tr>
               </thead>
@@ -1294,6 +1493,21 @@ export default function SimulationRunPage() {
                           {c.source ?? "—"}
                         </td>
                         <td className="px-3 py-2">
+                          {c.s3_path ? (
+                            <a
+                              href={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(c.id)}/yaml`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sky-400/70 hover:text-sky-400 transition-colors text-[11px] font-normal"
+                              title={c.s3_path}
+                            >
+                              YAML ↗
+                            </a>
+                          ) : (
+                            <span className="text-white/20">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
                           <button
                             onClick={() => setExpandedCandidate(isExpanded ? null : c.id)}
                             className="text-white/30 hover:text-white/70 transition-colors"
@@ -1306,7 +1520,7 @@ export default function SimulationRunPage() {
 
                       {isExpanded && (
                         <tr className="border-b border-border/50 bg-black/20">
-                          <td colSpan={8} className="px-4 py-3">
+                          <td colSpan={9} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                               <div>
                                 <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Spec</p>
@@ -1338,6 +1552,180 @@ export default function SimulationRunPage() {
           </div>
         )}
       </div>
+
+      {/* Persisted metrics — shown once run is terminal */}
+      {isTerminal && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">
+              Metrics
+              {metricsData?.summary?.total_requests != null && (
+                <span className="ml-2 text-xs font-normal text-white/40">
+                  {metricsData.summary.total_requests.toLocaleString()} requests
+                </span>
+              )}
+            </h2>
+            <button
+              onClick={fetchMetrics}
+              disabled={metricsLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
+              {metricsData === null ? "Load metrics" : "Refresh"}
+            </button>
+          </div>
+
+          {metricsError && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {metricsError}
+            </p>
+          )}
+
+          {metricsLoading && (
+            <div className="flex items-center gap-2 text-xs text-white/50 py-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading metrics…
+            </div>
+          )}
+
+          {metricsData && !metricsLoading && (
+            <>
+              {/* Summary stats */}
+              {metricsData.summary && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Total requests</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {metricsData.summary.total_requests?.toLocaleString() ?? "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Total errors</p>
+                    <p className={`text-lg font-mono font-semibold ${(metricsData.summary.total_errors ?? 0) > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      {metricsData.summary.total_errors?.toLocaleString() ?? "0"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Duration</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {metricsData.summary.total_duration_ms != null
+                        ? `${(metricsData.summary.total_duration_ms / 1000).toFixed(1)}s`
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Timeseries charts */}
+              {(metricsData.timeseries?.length ?? 0) > 0 ? (
+                <MetricsTimeseriesChart timeseries={metricsData.timeseries!} />
+              ) : (
+                <p className="text-xs text-white/30 italic">No timeseries data available.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Best-candidate — shown once run is terminal */}
+      {isTerminal && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">Best candidate</h2>
+            <button
+              onClick={fetchBestCandidate}
+              disabled={bestCandLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className={`w-3 h-3 ${bestCandLoading ? "animate-spin" : ""}`} />
+              {bestCandidate === null ? "Load" : "Refresh"}
+            </button>
+          </div>
+
+          {bestCandError && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {bestCandError}
+            </p>
+          )}
+
+          {bestCandLoading && (
+            <div className="flex items-center gap-2 text-xs text-white/50 py-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
+            </div>
+          )}
+
+          {bestCandidate && !bestCandLoading && !bestCandidate.best_candidate && (
+            <p className="text-xs text-white/30 italic">No best-candidate data available for this run.</p>
+          )}
+
+          {bestCandidate?.best_candidate && !bestCandLoading && (
+            <div className="space-y-4">
+              {bestCandidate.best_candidate.s3_path && (
+                <p className="text-[11px] text-white/30 font-mono truncate" title={bestCandidate.best_candidate.s3_path}>
+                  S3: {bestCandidate.best_candidate.s3_path}
+                </p>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Hosts table */}
+                {(bestCandidate.best_candidate.hosts?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-2">Hosts</p>
+                    <div className="overflow-x-auto rounded-lg border border-border">
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="border-b border-border bg-white/5 text-white/40 text-left">
+                            <th className="px-3 py-2 font-medium">Host ID</th>
+                            <th className="px-3 py-2 font-medium">CPU cores</th>
+                            <th className="px-3 py-2 font-medium">Mem (GB)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bestCandidate.best_candidate.hosts!.map((h) => (
+                            <tr key={h.host_id} className="border-b border-border/50">
+                              <td className="px-3 py-2 text-white/80">{h.host_id}</td>
+                              <td className="px-3 py-2 text-white/70">{h.cpu_cores ?? "—"}</td>
+                              <td className="px-3 py-2 text-white/70">{h.memory_gb ?? "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Services table */}
+                {(bestCandidate.best_candidate.services?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-2">Services</p>
+                    <div className="overflow-x-auto rounded-lg border border-border">
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="border-b border-border bg-white/5 text-white/40 text-left">
+                            <th className="px-3 py-2 font-medium">Service ID</th>
+                            <th className="px-3 py-2 font-medium">Replicas</th>
+                            <th className="px-3 py-2 font-medium">CPU cores</th>
+                            <th className="px-3 py-2 font-medium">Mem (MB)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bestCandidate.best_candidate.services!.map((s) => (
+                            <tr key={s.service_id} className="border-b border-border/50">
+                              <td className="px-3 py-2 text-white/80">{s.service_id}</td>
+                              <td className="px-3 py-2 text-white/70">{s.replicas ?? "—"}</td>
+                              <td className="px-3 py-2 text-white/70">{s.cpu_cores ?? "—"}</td>
+                              <td className="px-3 py-2 text-white/70">{s.memory_mb ?? "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Event stream */}
       <SsePanel
