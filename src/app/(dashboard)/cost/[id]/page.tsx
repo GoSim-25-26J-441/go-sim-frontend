@@ -82,6 +82,7 @@ export default function CostPage2() {
     const [compareRegionsEnabled, setCompareRegionsEnabled] = useState(false);
     const [reloadingProviderCost, setReloadingProviderCost] = useState(false);
     const [expandedBreakdown, setExpandedBreakdown] = useState<string | null>(null);
+    const [filteredGenericRegions, setFilteredGenericRegions] = useState<typeof GENERIC_REGIONS>([]);
 
     const params = useParams();
     const router = useRouter();
@@ -145,6 +146,30 @@ export default function CostPage2() {
         }
     };
 
+    const loadFilteredGenericRegions = async () => {
+        if (!requestId) return;
+        try {
+            const [awsRegions, azureRegions] = await Promise.all([
+                fetchRegionsForRequest(requestId, "aws"),
+                fetchRegionsForRequest(requestId, "azure"),
+            ]);
+            const awsSet = new Set(awsRegions);
+            const azureSet = new Set(azureRegions);
+
+            const filtered = GENERIC_REGIONS.filter(
+                (r) => awsSet.has(r.aws) && azureSet.has(r.azure)
+            );
+            setFilteredGenericRegions(filtered);
+
+            if (filtered.length > 0 && !filtered.find((r) => r.id === selectedGenericRegionId)) {
+                setSelectedGenericRegionId(filtered[0].id);
+            }
+        } catch (e: any) {
+            console.error("Error loading filtered generic regions:", e);
+            setFilteredGenericRegions(GENERIC_REGIONS);
+        }
+    };
+
     const handleFetchCostForGenericRegion = async (genericRegionId: string) => {
         const genericRegion = getGenericRegionById(genericRegionId);
         if (!requestId || !genericRegion) return;
@@ -200,9 +225,16 @@ export default function CostPage2() {
 
     useEffect(() => {
         if (requestId && viewMode === "by-region") {
+            loadFilteredGenericRegions();
             handleFetchCostForGenericRegion(selectedGenericRegionId);
         }
-    }, [requestId, viewMode, selectedGenericRegionId]);
+    }, [requestId, viewMode]);
+
+    useEffect(() => {
+        if (requestId && viewMode === "by-region") {
+            handleFetchCostForGenericRegion(selectedGenericRegionId);
+        }
+    }, [selectedGenericRegionId]);
 
     const addRegion = async (region: string) => {
         if (selectedRegions.includes(region) || selectedRegions.length >= MAX_REGIONS) return;
@@ -416,7 +448,12 @@ export default function CostPage2() {
                                     }}
                                     disabled={reloadingProviderCost}
                                 >
-                                    {GENERIC_REGIONS.map((r) => (
+                                    {filteredGenericRegions.length === 0 && (
+                                        <option value="" disabled className="bg-[#1a1a1a] text-white">
+                                            Loading regions…
+                                        </option>
+                                    )}
+                                    {filteredGenericRegions.map((r) => (
                                         <option key={r.id} value={r.id} className="bg-[#1a1a1a] text-white">
                                             {r.displayName}
                                         </option>
@@ -430,7 +467,7 @@ export default function CostPage2() {
                                 )}
                             </div>
                             <p className="text-xs opacity-50 mt-2">
-                                Showing AWS and Azure pricing for the selected region.
+                                Only regions where both AWS and Azure have matching instances are shown.
                             </p>
                         </div>
                     ) : (
