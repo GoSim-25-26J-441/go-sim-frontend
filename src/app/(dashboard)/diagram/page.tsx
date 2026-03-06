@@ -11,14 +11,14 @@ import React, {
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
   useUploadDiagramImageMutation,
 } from "@/app/store/projectsApi";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
-import LoaderModal from "@/components/chat/LoaderModal";
+import LoaderModal from "@/components/chat/main/loader/LoaderModal";
 
 import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
@@ -877,6 +877,8 @@ export default function DrawDiagram() {
     if (opening || !projectId) return;
     setOpening(true);
     try {
+      let imageObjectKey: string | undefined;
+
       // First, render and upload the diagram image
       try {
         setLoadingMessage("Rendering diagram image...");
@@ -887,7 +889,8 @@ export default function DrawDiagram() {
           file: imageBlob,
         }).unwrap();
         if (uploadResult?.image_object_key) {
-          console.log("Diagram image uploaded with key:", uploadResult.image_object_key);
+          imageObjectKey = String(uploadResult.image_object_key);
+          console.log("Diagram image uploaded with key:", imageObjectKey);
         } else {
           console.log("Diagram image uploaded (no image_object_key in response).");
         }
@@ -902,7 +905,9 @@ export default function DrawDiagram() {
         setLoadingMessage("Saving diagram definition...");
         await saveDiagram({
           projectId,
-          diagram: backendFormat,
+          diagram: imageObjectKey
+            ? { ...backendFormat, image_object_key: imageObjectKey }
+            : backendFormat,
         }).unwrap();
         console.log("Diagram saved successfully");
       } catch (saveError) {

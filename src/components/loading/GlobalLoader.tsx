@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import Image from "next/image";
 import logo from "../../../public/logo/logo.png";
 import { useLoading } from "@/hooks/useLoading";
