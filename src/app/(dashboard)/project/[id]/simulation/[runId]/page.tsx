@@ -653,10 +653,8 @@ export default function SimulationRunPage() {
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [expandedCandidate, setExpandedCandidate] = useState<string | null>(null);
-  // Scenario YAML viewer
+  // Scenario YAML viewer — populated by fetchRunInfo (scenario_yaml sibling of run)
   const [scenarioYaml, setScenarioYaml] = useState<string | null>(null);
-  const [scenarioLoading, setScenarioLoading] = useState(false);
-  const [scenarioError, setScenarioError] = useState<string | null>(null);
   const [scenarioOpen, setScenarioOpen] = useState(false);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
   const seriesBufferRef = useRef<ServiceSeries>({});
@@ -675,11 +673,15 @@ export default function SimulationRunPage() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { run: RunInfo };
+      const data = (await res.json()) as { run: RunInfo; scenario_yaml?: string };
       setRunInfo(data.run);
       setRunError(null);
       if (data.run.metadata?.optimization_history?.length) {
         setOptSteps(data.run.metadata.optimization_history);
+      }
+      // scenario_yaml is a top-level sibling of "run" in the response
+      if (data.scenario_yaml) {
+        setScenarioYaml(data.scenario_yaml);
       }
       return data.run;
     } catch (e) {
@@ -768,42 +770,11 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
-  // ── Scenario YAML fetch ──────────────────────────────────────────────────────
-
-  const fetchScenarioYaml = useCallback(async () => {
-    setScenarioLoading(true);
-    setScenarioError(null);
-    try {
-      const token = await getFirebaseIdToken();
-      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/scenario`;
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.status === 404) {
-        setScenarioYaml(null);
-        setScenarioError("Scenario YAML not yet available for this run (export may not have run yet).");
-        return;
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { run_id: string; scenario_yaml: string };
-      setScenarioYaml(data.scenario_yaml);
-    } catch (e) {
-      setScenarioError((e as Error).message);
-    } finally {
-      setScenarioLoading(false);
-    }
-  }, [runId]);
+  // ── Scenario YAML — loaded from the main run fetch (scenario_yaml sibling of run) ──
 
   const handleScenarioToggle = useCallback(() => {
-    setScenarioOpen((prev) => {
-      const next = !prev;
-      // Auto-fetch on first open
-      if (next && scenarioYaml === null && !scenarioLoading && !scenarioError) {
-        fetchScenarioYaml();
-      }
-      return next;
-    });
-  }, [scenarioYaml, scenarioLoading, scenarioError, fetchScenarioYaml]);
+    setScenarioOpen((prev) => !prev);
+  }, []);
 
   // Clear chart data
   const clearChart = useCallback(() => {
@@ -1086,7 +1057,7 @@ export default function SimulationRunPage() {
         ) : null}
       </div>
 
-      {/* Scenario YAML viewer */}
+      {/* Scenario YAML viewer — data comes from the main run fetch */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         {/* Header — always visible, acts as toggle */}
         <button
@@ -1100,7 +1071,7 @@ export default function SimulationRunPage() {
                 {scenarioYaml.split("\n").length} lines
               </span>
             )}
-            {scenarioLoading && (
+            {runLoading && (
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-white/40" />
             )}
             <span className="text-white/30 text-xs">{scenarioOpen ? "▲" : "▼"}</span>
@@ -1109,53 +1080,39 @@ export default function SimulationRunPage() {
 
         {scenarioOpen && (
           <div className="border-t border-border">
-            {/* Error */}
-            {scenarioError && (
-              <p className="px-4 py-3 text-xs text-red-400 bg-red-500/10">
-                {scenarioError}
-              </p>
-            )}
-
-            {/* Loading */}
-            {scenarioLoading && !scenarioError && (
-              <div className="flex items-center gap-2 px-4 py-4 text-xs text-white/40">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
-              </div>
-            )}
-
-            {/* YAML content */}
-            {scenarioYaml && !scenarioLoading && (
+            {scenarioYaml ? (
               <div className="relative">
-                <button
-                  onClick={() => fetchScenarioYaml()}
-                  className="absolute top-3 right-12 text-[10px] text-white/25 hover:text-white/60 transition-colors"
-                  title="Refresh"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                </button>
-                <button
-                  onClick={() => navigator.clipboard.writeText(scenarioYaml)}
-                  className="absolute top-3 right-4 text-[10px] text-white/25 hover:text-white/60 transition-colors"
-                  title="Copy to clipboard"
-                >
-                  Copy
-                </button>
+                {/* Toolbar */}
+                <div className="flex items-center justify-end gap-3 px-4 py-2 border-b border-border bg-black/20">
+                  <button
+                    onClick={() => fetchRunInfo()}
+                    className="flex items-center gap-1 text-[11px] text-white/30 hover:text-white/60 transition-colors"
+                    title="Refresh (re-fetches run)"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Refresh
+                  </button>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(scenarioYaml)}
+                    className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
+                    title="Copy to clipboard"
+                  >
+                    Copy
+                  </button>
+                </div>
                 <pre className="p-4 font-mono text-[11px] text-emerald-300/80 leading-relaxed whitespace-pre overflow-x-auto bg-black/30 max-h-[500px]">
                   {scenarioYaml}
                 </pre>
               </div>
-            )}
-
-            {/* Empty / not fetched */}
-            {!scenarioYaml && !scenarioLoading && !scenarioError && (
+            ) : (
               <div className="flex items-center justify-between px-4 py-3">
-                <p className="text-xs text-white/30 italic">Scenario YAML not loaded.</p>
+                <p className="text-xs text-white/30 italic">
+                  Scenario YAML not available for this run yet.
+                </p>
                 <button
-                  onClick={fetchScenarioYaml}
+                  onClick={() => fetchRunInfo()}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors"
                 >
-                  <RefreshCw className="w-3 h-3" />
-                  Fetch
+                  <RefreshCw className="w-3 h-3" /> Refresh
                 </button>
               </div>
             )}
