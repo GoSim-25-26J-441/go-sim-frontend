@@ -71,3 +71,41 @@ export async function DELETE(
     );
   }
 }
+
+/** PATCH /api/amg-apd/versions/:id - update version (e.g. title) */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ error: "version id required" }, { status: 400 });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const backendHeaders = getBackendAmgApdHeaders(req);
+
+    const res = await fetch(`${BASE}/api/v1/amg-apd/versions/${id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...backendHeaders,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const text = await res.text();
+    return new NextResponse(text, {
+      status: res.status,
+      headers: {
+        "Content-Type": res.headers.get("content-type") ?? "application/json",
+      },
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message ?? "update version failed" },
+      { status: 500 }
+    );
+  }
+}

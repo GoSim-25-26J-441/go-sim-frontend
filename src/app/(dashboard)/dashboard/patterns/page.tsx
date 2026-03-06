@@ -31,6 +31,7 @@ export default function PatternsPage() {
   const [graphVersion, setGraphVersion] = useState(0);
   const [versionCount, setVersionCount] = useState<number | null>(null);
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
+  const [versionsRefreshTrigger, setVersionsRefreshTrigger] = useState(0);
   const [simulationModalOpen, setSimulationModalOpen] = useState(false);
   const [simulationSelectedVersion, setSimulationSelectedVersion] =
     useState("");
@@ -40,6 +41,64 @@ export default function PatternsPage() {
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
   const showGraphOverlay = graphRegenerating || regenerating;
+
+  /** Resend YAML to backend (analyze + save as new version), then update state. Default title uses max version_number + 1 from DB. */
+  async function analyzeAndSaveAsNewVersion(
+    yamlContent: string,
+    title?: string
+  ): Promise<AnalysisResult> {
+    let versionTitle = title;
+    if (versionTitle == null || versionTitle.trim() === "") {
+      const listRes = await fetch("/api/amg-apd/versions", {
+        headers: getAmgApdHeaders(),
+      });
+      const listData = listRes.ok ? await listRes.json() : {};
+      const list = listData?.versions ?? [];
+      const maxVersionNumber =
+        list.length === 0
+          ? 0
+          : Math.max(
+              ...list.map((v: { version_number?: number }) => v.version_number ?? 0)
+            );
+      const nextNum = maxVersionNumber + 1;
+      versionTitle = `Version ${String(nextNum).padStart(2, "0")}`;
+    }
+
+    const blob = new Blob([yamlContent], { type: "text/yaml" });
+    const fd = new FormData();
+    fd.append("file", blob, "architecture.yaml");
+    fd.append("title", versionTitle.trim());
+
+    const res = await fetch("/api/amg-apd/analyze-upload", {
+      method: "POST",
+      headers: getAmgApdHeaders(),
+      body: fd,
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Analyze failed");
+    }
+
+    const data: AnalysisResult = await res.json();
+    if (!data?.graph) throw new Error("Backend did not return a graph.");
+    return data;
+  }
+
+  async function refetchVersions() {
+    try {
+      const res = await fetch("/api/amg-apd/versions", {
+        headers: getAmgApdHeaders(),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = data?.versions ?? [];
+      setVersions(list);
+      setVersionCount(list.length);
+    } catch {
+      // ignore
+    }
+  }
 
   // When there's no graph (e.g. first visit or "View Existing Versions"), load latest version directly (no new version created)
   useEffect(() => {
@@ -227,12 +286,21 @@ export default function PatternsPage() {
       setSugs((data?.applied_fixes ?? []) as Suggestion[]);
       setOpen(false);
 
-      // Show regenerating state and force graph remount
-      setGraphRegenerating(true);
-      setGraphVersion((v) => v + 1);
-
-      // Brief delay so user sees "Regenerating graph..." before fresh render
-      setTimeout(() => setGraphRegenerating(false), 400);
+      // Persist as new version (same as Analyze & Visualize): resend to backend, save version, refresh graph
+      setRegenerating(true);
+      try {
+        const saved = await analyzeAndSaveAsNewVersion(fixedYaml);
+        setLast(saved);
+        setGraphRegenerating(true);
+        setGraphVersion((v) => v + 1);
+        await refetchVersions();
+        setVersionsRefreshTrigger((t) => t + 1);
+        setTimeout(() => setGraphRegenerating(false), 400);
+      } catch (e: any) {
+        setErr(e?.message ?? "Failed to save as new version");
+      } finally {
+        setRegenerating(false);
+      }
     } catch (e: any) {
       setErr(e?.message ?? "Failed to apply suggestions");
     } finally {
@@ -282,7 +350,7 @@ export default function PatternsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto">
+    <div className="space-y-6 max-w-[1600px] mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
       {/* Simulation modal */}
       {simulationModalOpen && (
         <div
@@ -352,8 +420,8 @@ export default function PatternsPage() {
         disabledApply={!hasDetections || loadingSug}
       />
 
-      {/* Top panel */}
-      <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-4 shadow-xl shadow-black/20 overflow-hidden">
+      {/* Top panel - sticky so content scrolls under it */}
+      <div className="sticky top-0 z-20 rounded-3xl border border-white/10 bg-[#1a1a1a]/95 backdrop-blur-sm p-4 shadow-xl shadow-black/20 overflow-hidden flex-shrink-0">
         {/* Title row: title + Return to Chat (moved up next to title) */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h1 className="text-lg font-semibold text-white/95">
@@ -371,7 +439,7 @@ export default function PatternsPage() {
 
         {/* Controls row: move remaining buttons left */}
         <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-white/10">
-          <VersionSidebar />
+          <VersionSidebar refreshTrigger={versionsRefreshTrigger} />
 
           <button
             type="button"
@@ -417,10 +485,10 @@ export default function PatternsPage() {
         </div>
       </div>
 
-      {/* Graph */}
-      <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden">
+      {/* Graph - main canvas area (taller, page can scroll) */}
+      <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0">
         {showGraphOverlay ? (
-          <div className="relative h-[60vh] flex items-center justify-center bg-black/30">
+          <div className="relative flex-1 min-h-[50vh] flex items-center justify-center bg-black/30">
             <div className="flex flex-col items-center gap-4">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
               <span className="text-sm font-medium text-white/90">
@@ -434,7 +502,28 @@ export default function PatternsPage() {
             </div>
           </div>
         ) : (
-          <GraphCanvas key={`amg-apd-graph-v${graphVersion}`} data={last} />
+          <div className="flex-1 min-h-0 flex flex-col">
+            <GraphCanvas
+              key={`amg-apd-graph-v${graphVersion}`}
+              data={last}
+              isGenerating={regenerating}
+              onGenerateGraph={async (yaml) => {
+                setRegenerating(true);
+                try {
+                  const data = await analyzeAndSaveAsNewVersion(yaml);
+                  setLast(data);
+                  setEditedYaml(yaml);
+                  setGraphVersion((v) => v + 1);
+                  await refetchVersions();
+                  setVersionsRefreshTrigger((t) => t + 1);
+                } catch (err: any) {
+                  alert("Failed to generate graph: " + (err?.message ?? "Unknown error"));
+                } finally {
+                  setRegenerating(false);
+                }
+              }}
+            />
+          </div>
         )}
       </div>
     </div>

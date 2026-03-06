@@ -68,3 +68,71 @@ html.dark select {
 .scrollbar-dark::-webkit-scrollbar-thumb:hover {
   background: rgba(154, 164, 178, 0.7);
 }
+
+/* Subtle, low-profile scrollbars for dashboard (transparent, minimal) */
+.scrollbar-subtle {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.scrollbar-subtle::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-subtle::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.scrollbar-subtle::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+
+.scrollbar-subtle::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.scrollbar-subtle::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Hide horizontal scrollbar when not needed, keep vertical subtle */
+.scrollbar-subtle::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Apply the same subtle scrollbar to the whole page (viewport scroll) */
+html,
+body {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 6px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+html::-webkit-scrollbar-thumb:active,
+body::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.25);
+}
