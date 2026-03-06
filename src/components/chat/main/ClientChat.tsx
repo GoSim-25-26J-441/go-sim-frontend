@@ -5,7 +5,7 @@ import { useEffect, useState, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { useAuth } from "@/providers/auth-context";
-import { Send, Loader2, AlertCircle, Settings2, Upload, Check } from "lucide-react";
+import { Send, Loader2, AlertCircle, Settings2, Upload, Check, ArrowLeft } from "lucide-react";
 import { getProjectThreadId } from "@/modules/di/getProjectThread";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
 import Dropdown from "./comp/DropDown";
@@ -265,11 +265,17 @@ export default function ClientChat({ id }: Props) {
           style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
         >
           <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => router.back()}
+              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+              aria-label="Go back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
             <span
               className="text-xs"
               style={{ color: "rgba(255,255,255,0.35)" }}
             >
-              {" "}
               Chat for Project ·{" "}
               <span className="font-mono">{id.slice(0, 18)}…</span>
               {threadId && (
