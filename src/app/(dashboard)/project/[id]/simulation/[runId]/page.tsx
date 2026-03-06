@@ -7,10 +7,21 @@ import React, {
   useImperativeHandle,
   useRef,
   useState,
+  useMemo,
 } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import { env } from "@/lib/env";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { startSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
@@ -96,6 +107,26 @@ interface SseEvent {
   timestamp: string;
 }
 
+// ── Chart types ───────────────────────────────────────────────────────────────
+
+interface TimePoint {
+  t: number;   // epoch ms
+  v: number;   // request count value
+}
+
+// key = service name → rolling array of TimePoints
+type ServiceSeries = Record<string, TimePoint[]>;
+
+// Recharts needs a flat array of row objects: { t, [svcName]: value, ... }
+type ChartRow = Record<string, number>;
+
+const MAX_POINTS   = 120;  // ~2 min at 1 event/s per service
+const FLUSH_MS     = 500;  // chart redraws at most every 500 ms
+const LINE_COLORS  = [
+  "#38bdf8", "#fb923c", "#a78bfa", "#34d399",
+  "#f472b6", "#facc15", "#60a5fa", "#f87171",
+];
+
 export interface SsePanelHandle {
   connect: () => void;
   abort: () => void;
@@ -158,6 +189,113 @@ function formatData(raw: string | undefined | null): string {
     }
   }
   return raw;
+}
+
+// ── RequestCountChart ─────────────────────────────────────────────────────────
+
+interface RequestCountChartProps {
+  series: ServiceSeries;
+  onClear: () => void;
+}
+
+function RequestCountChart({ series, onClear }: RequestCountChartProps) {
+  const services = Object.keys(series);
+
+  // Build a unified time-sorted array of rows for recharts
+  const rows = useMemo<ChartRow[]>(() => {
+    // Collect all unique timestamps
+    const tsSet = new Set<number>();
+    for (const pts of Object.values(series)) pts.forEach((p) => tsSet.add(p.t));
+    const sorted = Array.from(tsSet).sort((a, b) => a - b);
+
+    return sorted.map((t) => {
+      const row: ChartRow = { t };
+      for (const svc of services) {
+        const pt = series[svc].find((p) => p.t === t);
+        if (pt !== undefined) row[svc] = pt.v;
+      }
+      return row;
+    });
+  }, [series, services]);
+
+  const fmtTime = (epochMs: number) => {
+    const d = new Date(epochMs);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-white">
+          Request count
+          <span className="ml-2 text-xs font-normal text-white/40">per service · live</span>
+        </h2>
+        <button
+          onClick={onClear}
+          className="text-xs text-white/30 hover:text-white/60 transition-colors"
+        >
+          Clear
+        </button>
+      </div>
+
+      {services.length === 0 ? (
+        <div className="flex items-center justify-center h-40 text-white/20 text-xs select-none">
+          Waiting for request_count metrics…
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={rows} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis
+              dataKey="t"
+              type="number"
+              scale="time"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={fmtTime}
+              tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
+              tickLine={false}
+              axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+              minTickGap={60}
+            />
+            <YAxis
+              tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
+              tickLine={false}
+              axisLine={false}
+              width={32}
+              allowDecimals={false}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "#1a1a2e",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "8px",
+                fontSize: "11px",
+                color: "rgba(255,255,255,0.85)",
+              }}
+              labelFormatter={(v) => fmtTime(v as number)}
+              cursor={{ stroke: "rgba(255,255,255,0.15)" }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", paddingTop: "8px" }}
+            />
+            {services.map((svc, i) => (
+              <Line
+                key={svc}
+                type="monotone"
+                dataKey={svc}
+                stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3 }}
+                connectNulls
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
 }
 
 // ── SsePanel — proper forwardRef component ───────────────────────────────────
@@ -478,6 +616,9 @@ export default function SimulationRunPage() {
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [expandedCandidate, setExpandedCandidate] = useState<string | null>(null);
+  // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
+  const seriesBufferRef = useRef<ServiceSeries>({});
+  const [chartSeries, setChartSeries] = useState<ServiceSeries>({});
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -524,15 +665,34 @@ export default function SimulationRunPage() {
   const handleSseEvent = useCallback((type: string, data: string) => {
     if (type === "optimization_step") {
       try {
-        // Payload shape: { event, run_id, data: OptimizationStep }
         const payload = JSON.parse(data) as { data?: OptimizationStep };
         const step = payload.data;
         if (step && step.iteration_index != null) {
           setOptSteps((prev) => {
-            // Avoid duplicates if the same step arrives twice
             const exists = prev.some((s) => s.iteration_index === step.iteration_index);
             return exists ? prev : [...prev, step];
           });
+        }
+      } catch { /* malformed — ignore */ }
+    }
+
+    if (type === "metric_update") {
+      try {
+        const payload = JSON.parse(data) as {
+          metric?: string;
+          value?: number;
+          timestamp?: string;
+          labels?: { service?: string; endpoint?: string };
+        };
+        if (payload.metric === "request_count" && payload.labels?.service && payload.value != null) {
+          const svc = payload.labels.service;
+          const t = payload.timestamp ? new Date(payload.timestamp).getTime() : Date.now();
+          const pt: TimePoint = { t, v: payload.value };
+          const buf = seriesBufferRef.current;
+          if (!buf[svc]) buf[svc] = [];
+          buf[svc].push(pt);
+          // Enforce rolling window in the buffer
+          if (buf[svc].length > MAX_POINTS) buf[svc] = buf[svc].slice(-MAX_POINTS);
         }
       } catch { /* malformed — ignore */ }
     }
@@ -562,6 +722,12 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
+  // Clear chart data
+  const clearChart = useCallback(() => {
+    seriesBufferRef.current = {};
+    setChartSeries({});
+  }, []);
+
   // ── On mount ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -570,8 +736,28 @@ export default function SimulationRunPage() {
         simRef.current?.connect();
       }
     });
+
+    // Flush buffer → chart state at FLUSH_MS cadence
+    const flushId = setInterval(() => {
+      const buf = seriesBufferRef.current;
+      if (Object.keys(buf).length > 0) {
+        setChartSeries((prev) => {
+          const next = { ...prev };
+          for (const [svc, pts] of Object.entries(buf)) {
+            const existing = next[svc] ?? [];
+            const merged = [...existing, ...pts].slice(-MAX_POINTS);
+            next[svc] = merged;
+          }
+          // Clear consumed points from buffer
+          seriesBufferRef.current = {};
+          return next;
+        });
+      }
+    }, FLUSH_MS);
+
     return () => {
       simRef.current?.abort();
+      clearInterval(flushId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -816,6 +1002,9 @@ export default function SimulationRunPage() {
           </>
         ) : null}
       </div>
+
+      {/* Request count chart */}
+      <RequestCountChart series={chartSeries} onClear={clearChart} />
 
       {/* Optimization timeline — online optimization runs only */}
       {optSteps.length > 0 && (
