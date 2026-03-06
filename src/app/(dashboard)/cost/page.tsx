@@ -51,7 +51,7 @@ interface ApiResponseRow {
   response: any[];
 }
 
-const PROJECT_ID = "prodsdj-abc";
+const PROJECT_ID = "abc";
 
 export default function CostPage() {
   const [runs, setRuns] = useState<Run[]>([]);

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { fetchCostData, fetchRegions } from "@/app/api/asm/routes";
+import { fetchCostData, fetchRegionsForRequest } from "@/app/api/asm/routes";
 import {
     ChevronLeft,
     RefreshCw,
@@ -34,6 +34,8 @@ interface ClusterCostResult {
     purchase_type: string;
     lease_contract_length: string;
     instance_type: string;
+    vcpus: number;
+    memory_gb: number;
     region: string;
     nodes: number;
     price_per_node_hour: number;
@@ -106,13 +108,16 @@ export default function CostPage2() {
         }
     };
 
-    const handleFetchRegions = async (provider: string) => {
+    const handleFetchRegions = async (provider: string): Promise<string[]> => {
         try {
-            const regionsData = await fetchRegions(provider);
+            if (!requestId) return [];
+            const regionsData = await fetchRegionsForRequest(requestId, provider);
             setRegions(regionsData);
+            return regionsData;
         } catch (e: any) {
-            console.error("Error fetching regions:", e);
+            console.error("Error fetching regions for request:", e);
             setRegions([]);
+            return [];
         }
     };
 
@@ -175,19 +180,21 @@ export default function CostPage2() {
         if (viewMode === "by-region") {
             handleFetchCostForGenericRegion(selectedGenericRegionId);
         } else {
-            const defaultRegion = DEFAULT_REGIONS[selectedProvider] ?? regions[0] ?? "";
-            setSelectedRegions([defaultRegion]);
-            handleFetchRegions(selectedProvider);
-            handleFetchCostData(selectedProvider, defaultRegion);
+            handleFetchRegions(selectedProvider).then((list) => {
+                const defaultRegion = list?.[0] ?? DEFAULT_REGIONS[selectedProvider] ?? "";
+                setSelectedRegions([defaultRegion]);
+                if (defaultRegion) handleFetchCostData(selectedProvider, defaultRegion);
+            });
         }
     }, [requestId]);
 
     useEffect(() => {
         if (requestId && viewMode === "by-provider") {
-            handleFetchRegions(selectedProvider);
-            const defaultRegion = DEFAULT_REGIONS[selectedProvider] ?? "";
-            setSelectedRegions([defaultRegion]);
-            handleFetchCostData(selectedProvider, defaultRegion);
+            handleFetchRegions(selectedProvider).then((list) => {
+                const defaultRegion = list?.[0] ?? "";
+                setSelectedRegions([defaultRegion]);
+                if (defaultRegion) handleFetchCostData(selectedProvider, defaultRegion);
+            });
         }
     }, [selectedProvider, requestId, viewMode]);
 
@@ -330,6 +337,8 @@ export default function CostPage2() {
     const genericRegion = viewMode === "by-region" ? getGenericRegionById(selectedGenericRegionId) : null;
     const { best: bestAWS, minimal: minimalAWS } = identifyBestOptions(costsByRegionAWS);
     const { best: bestAzure, minimal: minimalAzure } = identifyBestOptions(costsByRegionAzure);
+    const combinedRegionCosts = viewMode === "by-region" ? [...costsByRegionAWS, ...costsByRegionAzure] : [];
+    const { best: bestRegion, minimal: minimalRegion } = identifyBestOptions(combinedRegionCosts);
 
     return (
         <div className="p-6 space-y-4">
@@ -352,11 +361,6 @@ export default function CostPage2() {
                         <BarChart3 className="w-5 h-5" />
                         View Metrices Analysis
                     </Link> */}
-                </div>
-
-                {/* Summary */}
-                <div className="mb-8">
-                    <p className="opacity-60 mb-6 text-sm">Detailed cost breakdown for each pricing option</p>
                 </div>
 
                 {/* Provider & Region Selection */}
@@ -601,7 +605,7 @@ export default function CostPage2() {
                                                                             {formatCurrency(cost.total_month)}
                                                                         </span>
                                                                         <div className="text-xs opacity-60">
-                                                                            {cost.instance_type}
+                                                                            {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -651,7 +655,9 @@ export default function CostPage2() {
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-sm opacity-70 mb-2">{cost.instance_type}</div>
+                                                    <div className="text-sm opacity-70 mb-2">
+                                                        {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
+                                                    </div>
                                                     <div className="flex justify-between items-center text-lg font-bold">
                                                         <span>Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
@@ -687,7 +693,9 @@ export default function CostPage2() {
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-sm opacity-70 mb-2">{cost.instance_type}</div>
+                                                    <div className="text-sm opacity-70 mb-2">
+                                                        {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
+                                                    </div>
                                                     <div className="flex justify-between items-center text-lg font-bold">
                                                         <span>Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
@@ -788,7 +796,7 @@ export default function CostPage2() {
                                                     <div className="flex items-center gap-4 text-sm opacity-60">
                                                         <div className="flex items-center gap-1">
                                                             <Building className="w-4 h-4" />
-                                                            <span>{cost.instance_type}</span>
+                                                            <span>{cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM</span>
                                                         </div>
                                                         <div className="flex items-center gap-1">
                                                             <MapPin className="w-4 h-4" />
