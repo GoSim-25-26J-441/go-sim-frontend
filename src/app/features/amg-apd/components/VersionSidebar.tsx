@@ -103,22 +103,18 @@ export default function VersionSidebar({
       if (!versionRes.ok) throw new Error(await versionRes.text());
       const v = await versionRes.json();
       const yamlContent = v?.yaml_content;
-      if (!yamlContent) throw new Error("Version has no YAML content");
+      const graph = v?.graph;
+      if (!yamlContent || !graph) throw new Error("Version has no YAML or graph content");
 
-      const blob = new Blob([yamlContent], { type: "text/yaml" });
-      const fd = new FormData();
-      fd.append("file", blob, "architecture.yaml");
-      fd.append("title", v.title || `Version ${v.version_number ?? ""}`);
-
-      const analyzeRes = await fetch("/api/amg-apd/analyze-upload", {
-        method: "POST",
-        headers: getAmgApdHeaders(),
-        body: fd,
-      });
-      if (!analyzeRes.ok) throw new Error(await analyzeRes.text());
-
-      const data: AnalysisResult = await analyzeRes.json();
-      if (!data?.graph) throw new Error("Backend did not return a graph.");
+      // Load this version into the canvas without creating a new version (no analyze-upload).
+      const data: AnalysisResult = {
+        graph,
+        detections: v?.detections ?? [],
+        dot_content: v?.dot_content,
+        version_id: v?.id,
+        version_number: v?.version_number,
+        created_at: v?.created_at,
+      };
 
       setLast(data);
       setEditedYaml(yamlContent);

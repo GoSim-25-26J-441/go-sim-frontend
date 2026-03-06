@@ -42,7 +42,7 @@ export default function PatternsPage() {
   const hasDetections = (last?.detections?.length ?? 0) > 0;
   const showGraphOverlay = graphRegenerating || regenerating;
 
-  /** Resend YAML to backend (analyze + save as new version), then update state. Default title: "Version 01", "Version 02", ... */
+  /** Resend YAML to backend (analyze + save as new version), then update state. Default title uses max version_number + 1 from DB. */
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
     title?: string
@@ -54,7 +54,13 @@ export default function PatternsPage() {
       });
       const listData = listRes.ok ? await listRes.json() : {};
       const list = listData?.versions ?? [];
-      const nextNum = list.length + 1;
+      const maxVersionNumber =
+        list.length === 0
+          ? 0
+          : Math.max(
+              ...list.map((v: { version_number?: number }) => v.version_number ?? 0)
+            );
+      const nextNum = maxVersionNumber + 1;
       versionTitle = `Version ${String(nextNum).padStart(2, "0")}`;
     }
 

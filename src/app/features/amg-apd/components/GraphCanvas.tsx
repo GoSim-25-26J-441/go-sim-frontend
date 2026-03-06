@@ -33,6 +33,7 @@ import {
   validateGraphForSave,
   exportGraphToYaml,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
+import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
 
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
 import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCyInteractions";
@@ -40,13 +41,14 @@ import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyToolt
 import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
 import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
-import { ChevronLeft, ChevronRight, PanelLeftClose, PanelRightClose, Wrench, Info } from "lucide-react";
-
-const EDGE_KIND_COLOR: Record<string, string> = {
-  CALLS: "#1f2937",
-  READS: "#06b6d4",
-  WRITES: "#94a3b8",
-};
+import {
+  ChevronLeft,
+  ChevronRight,
+  PanelLeftClose,
+  PanelRightClose,
+  Wrench,
+  Info,
+} from "lucide-react";
 
 cytoscape.use(dagre);
 cytoscape.use(coseBilkent);
@@ -55,40 +57,12 @@ cytoscape.use(elk);
 
 const PHASE_TICK_MS = 900;
 
-function finalizeRenderer(cy: cytoscape.Core) {
-  try {
-    cy.resize();
-    // small nudge that forces renderer to refresh viewport math
-    cy.zoom(cy.zoom());
-    cy.pan(cy.pan());
-    cy.style().update();
-  } catch {}
-}
-
 function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   if (!cy) return false;
-  const any = cy as any;
-  if (typeof any.destroyed === "function" && any.destroyed()) return false;
-  if (typeof any.container === "function" && !any.container()) return false;
+  const anyCy = cy as any;
+  if (typeof anyCy.destroyed === "function" && anyCy.destroyed()) return false;
+  if (typeof anyCy.container === "function" && !anyCy.container()) return false;
   return true;
-}
-
-function forceRedraw(cy: cytoscape.Core | null) {
-  if (!cyAlive(cy)) return;
-
-  try {
-    cy.style().update();
-    cy.resize();
-
-    const refreshLayout = cy.layout({
-      name: "preset",
-      positions: (node: any) => node.position(),
-      fit: false,
-      animate: false,
-    });
-
-    refreshLayout.run();
-  } catch {}
 }
 
 type UndoEntry = {
@@ -102,8 +76,6 @@ function isTypingTarget(t: EventTarget | null) {
 
   const tag = el.tagName?.toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return true;
-
-  // contenteditable or inside one
   if ((el as any).isContentEditable) return true;
   if (el.closest?.("[contenteditable='true']")) return true;
 
@@ -121,7 +93,6 @@ export default function GraphCanvas({
   isGenerating?: boolean;
   onGenerateGraph?: (yaml: string) => void | Promise<void>;
 }) {
-  // IMPORTANT: return BEFORE any hooks if there's no graph (Rules of Hooks)
   if (!data?.graph) {
     return (
       <div className="border rounded bg-white p-4 text-sm text-slate-600 shadow-sm">
@@ -134,85 +105,83 @@ export default function GraphCanvas({
   const analysis = data as AnalysisResult;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-
   const cyRef = useRef<cytoscape.Core | null>(null);
-  const [cy, setCy] = useState<cytoscape.Core | null>(null);
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const mountedCyRef = useRef<cytoscape.Core | null>(null);
 
+  const [cy, setCy] = useState<cytoscape.Core | null>(null);
   const [layoutName, setLayoutName] = useState<LayoutName>("dagre");
   const [selected, setSelected] = useState<SelectedItem>(null);
   const [editMode, setEditMode] = useState(false);
   const [tool, setTool] = useState<EditTool>("select");
   const [pendingSource, setPendingSource] = useState<string | null>(null);
-  const [defaultCallProtocol, setDefaultCallProtocol] = useState<CallProtocol>("rest");
+  const [defaultCallProtocol, setDefaultCallProtocol] =
+    useState<CallProtocol>("rest");
   const [defaultCallSync, setDefaultCallSync] = useState(true);
+  const [pendingAntiPatternKind, setPendingAntiPatternKind] =
+    useState<DetectionKind | null>(null);
+
+  const [localAdditions, setLocalAdditions] = useState<
+    Array<{
+      nodes: cytoscape.ElementDefinition[];
+      edges: cytoscape.ElementDefinition[];
+    }>
+  >([]);
 
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
-
-  const undoStackRef = useRef<UndoEntry[]>([]);
-
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
 
   const [stats, setStats] = useState<GraphStats>(() =>
     computeStatsFromData(analysis),
   );
 
-  const elements = useMemo(() => toElements(analysis), [analysis]);
+  const elements = useMemo(() => {
+    const base = toElements(analysis);
+    const extra = localAdditions.flatMap((a) => [...a.nodes, ...a.edges]);
+
+    const seen = new Set<string>();
+    return [...base, ...extra].filter((el: any) => {
+      const id = el?.data?.id;
+      if (!id) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [analysis, localAdditions]);
+
   const layout = useMemo(() => getCyLayout(layoutName), [layoutName]);
   const stylesheet = useMemo(() => styles as any, []);
-  const layoutRunRef = useRef(false);
-  const cyInitializedRef = useRef<cytoscape.Core | null>(null);
-
-  // ✅ FIX: use state (ref doesn't trigger re-render)
-  const [initialLayoutComplete, setInitialLayoutComplete] = useState(false);
 
   useEffect(() => {
     if (!cyAlive(cy)) return;
 
-    // wait 1 tick so react-cytoscapejs has applied `elements`
-    const t = window.setTimeout(() => {
+    const id = requestAnimationFrame(() => {
       if (!cyAlive(cy)) return;
 
       try {
-        cy.style().update();
-        cy.resize();
-
-        const layoutInstance = cy.layout({ ...layout, fit: false } as any);
-
-        layoutInstance.one("layoutstop", () => {
-          if (!cyAlive(cy)) return;
-          try {
-            cy.fit(cy.elements(), 40);
-            setInitialLayoutComplete(true);
-
-            requestAnimationFrame(() => {
-              if (!cyAlive(cy)) return;
-              finalizeRenderer(cy);
-
-              // extra tick (helps in some browsers)
-              setTimeout(() => {
-                if (!cyAlive(cy)) return;
-                finalizeRenderer(cy);
-              }, 0);
-            });
-
-            // (optional) force edge visibility
-            cy.edges().forEach((e) => {
-              e.style("opacity", 1);
-              e.style("line-opacity", 1);
-              e.style("target-arrow-opacity", 1);
-            });
-            cy.style().update();
-            cy.resize();
-          } catch {}
+        cy.nodes().forEach((n) => {
+          n.unlock();
+          n.grabify();
+          n.selectify();
         });
 
-        layoutInstance.run();
-      } catch {}
-    }, 0);
+        cy.edges().forEach((e) => {
+          e.style("opacity", 1);
+          e.style("line-opacity", 1);
+          e.style("target-arrow-opacity", 1);
+          e.style("width", 2.5);
+          e.style("curve-style", "bezier");
+          e.style("target-arrow-shape", "triangle");
+        });
 
-    return () => window.clearTimeout(t);
-  }, [cy, elements, layout]); // <-- IMPORTANT: includes elements
+        cy.style().update();
+        cy.resize();
+      } catch {}
+    });
+
+    return () => cancelAnimationFrame(id);
+  }, [cy, elements]);
 
   const phaseKey = useMemo(() => {
     const n = Object.keys(analysis.graph?.nodes ?? {}).length;
@@ -231,6 +200,10 @@ export default function GraphCanvas({
     containerRef,
   });
 
+  useEffect(() => {
+    setLocalAdditions([]);
+  }, [data]);
+
   useCyInteractions({
     cy,
     editMode,
@@ -241,130 +214,99 @@ export default function GraphCanvas({
     recomputeStats: () => recomputeStats(cy, analysis, setStats),
     defaultCallProtocol,
     defaultCallSync,
+    pendingAntiPatternKind,
+    setPendingAntiPatternKind,
+    onAddAntiPatternAt: (kind, pos) => {
+      const { nodes, edges } = getAntiPatternChunk(kind);
+
+      const offsetNodes = nodes.map((el) => {
+        const p = el.position;
+        if (!p) return el;
+        return {
+          ...el,
+          position: {
+            x: p.x + pos.x,
+            y: p.y + pos.y,
+          },
+          grabbable: true,
+          selectable: true,
+          locked: false,
+        };
+      });
+
+      const preparedEdges = edges.map((el) => ({
+        ...el,
+        classes: `${typeof el.classes === "string" ? `${el.classes} ` : ""}calls rest`,
+        style: {
+          ...(el as any).style,
+          width: 2.5,
+          opacity: 1,
+          "line-opacity": 1,
+          "target-arrow-opacity": 1,
+          "curve-style": "bezier",
+          "target-arrow-shape": "triangle",
+          "line-color": "#475569",
+          "target-arrow-color": "#475569",
+        },
+      }));
+
+      setLocalAdditions((prev) => [
+        ...prev,
+        { nodes: offsetNodes, edges: preparedEdges },
+      ]);
+
+      setSelected(null);
+      setPendingSource(null);
+      setPendingAntiPatternKind(null);
+
+      requestAnimationFrame(() => {
+        if (!cyAlive(cy)) return;
+        recomputeStats(cy, analysis, setStats);
+      });
+    },
   });
 
   useEffect(() => {
-    if (!cyAlive(cy)) return;
-    const el = containerRef.current;
-    if (!el) return;
+    setStats(computeStatsFromData(analysis));
+  }, [analysis]);
 
-    let raf1 = 0;
-    let raf2 = 0;
-
-    const redrawIfSized = () => {
-      const c = cyRef.current;
-      if (!cyAlive(cy)) return;
-
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 2 || rect.height <= 2) return;
-
-      // two rafs = wait for layout + paint
-      raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => {
-          const cc = cyRef.current;
-          if (!cyAlive(cc)) return;
-          forceRedraw(cc);
-        });
-      });
-    };
-
-    // First attempt immediately
-    redrawIfSized();
-
-    // Observe container size changes (this is the key fix)
-    const ro = new ResizeObserver(() => redrawIfSized());
-    ro.observe(el);
-
-    // Also catch late fonts/layout shifts
-    const t = window.setTimeout(redrawIfSized, 150);
-
-    return () => {
-      try {
-        ro.disconnect();
-      } catch {}
-      window.clearTimeout(t);
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [cy]);
-
-  // Ensure all elements are interactive and visible after cy is ready
   useEffect(() => {
-    // ✅ FIX: gate on state, not ref
-    if (!cyAlive(cy) || !initialLayoutComplete) return;
-
-    // Trigger a refresh similar to layout change to force edge visibility
-    const triggerEdgeRefresh = () => {
-      if (!cyAlive(cy)) return;
-      try {
-        // Run a minimal preset layout to trigger style recalculation (same as layout change)
-        const refreshLayout = cy!.layout({
-          name: "preset",
-          positions: (node: any) => node.position(),
-          fit: false,
-          animate: false,
-        });
-        refreshLayout.one("layoutstop", () => {
-          if (!cyAlive(cy)) return;
-          try {
-            // After refresh layout, ensure edges are visible
-            cy!.edges().forEach((edge) => {
-              edge.style("opacity", 1);
-              edge.style("line-opacity", 1);
-              edge.style("target-arrow-opacity", 1);
-            });
-            cy!.style().update();
-            cy!.resize();
-          } catch {}
-        });
-        refreshLayout.run();
-      } catch {}
-    };
+    if (!cyAlive(cy)) return;
 
     try {
-      // Ensure nodes are always selectable and grabbable
-      cy!.nodes().forEach((node) => {
-        node.style("events", "yes");
-        node.style("text-events", "yes");
-        if (!node.data("grabbable")) {
-          node.data("grabbable", true);
-        }
-      });
-
-      // CRITICAL: Ensure edges are visible and interactive (fixes arrows not visible on initial load)
-      cy!.edges().forEach((edge) => {
-        // Force visibility properties
-        edge.style("opacity", 1);
-        edge.style("line-opacity", 1);
-        edge.style("target-arrow-opacity", 1);
-        edge.style("events", "yes");
-        edge.style("width", edge.style("width") || 2.5);
-      });
-
-      // Force style recalculation and redraw (no cy.render())
-      cy!.style().update();
-      cy!.resize();
-
-      // Trigger refresh layout after a delay to ensure edges become visible
-      setTimeout(triggerEdgeRefresh, 300);
+      cy.resize();
+      const layoutInstance = cy.layout({
+        ...layout,
+        fit: true,
+        padding: 40,
+        animate: false,
+      } as any);
+      layoutInstance.run();
     } catch {}
-  }, [cy, elements, initialLayoutComplete]);
+  }, [cy, layout, analysis]);
 
-  /**
-   * FIX: define performDelete / performUndo BEFORE the useEffect that references them
-   * Also improved: when deleting nodes, include their connected edges in undo data.
-   */
+  useEffect(() => {
+    if (!cyAlive(cy)) return;
+
+    const onResize = () => {
+      if (!cyAlive(cy)) return;
+      try {
+        cy.resize();
+      } catch {}
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [cy]);
+
   const performDelete = useCallback(() => {
     if (!cyAlive(cy)) return;
 
-    const sel = cy!.elements(":selected");
+    const sel = cy.elements(":selected");
     if (!sel || sel.length === 0) return;
 
     const selectedNodes = sel.nodes();
     const selectedEdges = sel.edges();
-
-    // If nodes are deleted, cytoscape will also remove connected edges.
-    // Capture them so Undo restores the graph properly.
     const connectedEdges = selectedNodes.connectedEdges();
     const edgesToRemove = selectedEdges.union(connectedEdges);
     const toRemove = sel.union(connectedEdges);
@@ -391,7 +333,7 @@ export default function GraphCanvas({
     undoStackRef.current.push({ nodes: nodesJson, edges: edgesJson });
     if (undoStackRef.current.length > 50) undoStackRef.current.shift();
 
-    cy!.batch(() => {
+    cy.batch(() => {
       toRemove.remove();
     });
 
@@ -406,12 +348,9 @@ export default function GraphCanvas({
     const last = undoStackRef.current.pop();
     if (!last) return;
 
-    const { nodes, edges } = last;
-
-    cy!.batch(() => {
-      // Add nodes first (so edges have endpoints)
-      if (nodes.length) cy!.add(nodes);
-      if (edges.length) cy!.add(edges);
+    cy.batch(() => {
+      if (last.nodes.length) cy.add(last.nodes);
+      if (last.edges.length) cy.add(last.edges);
     });
 
     setSelected(null);
@@ -419,12 +358,10 @@ export default function GraphCanvas({
     recomputeStats(cy, analysis, setStats);
   }, [cy, analysis]);
 
-  // Keyboard shortcuts (Delete/Backspace and Ctrl/Cmd+Z)
   useEffect(() => {
     if (!editMode) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      // Don't hijack keys when user is typing in an input/textarea/etc.
       if (isTypingTarget(e.target)) return;
 
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -435,6 +372,7 @@ export default function GraphCanvas({
 
       const isUndo =
         (e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey);
+
       if (isUndo) {
         e.preventDefault();
         performUndo();
@@ -446,50 +384,24 @@ export default function GraphCanvas({
   }, [editMode, performDelete, performUndo]);
 
   useEffect(() => {
-    setStats(computeStatsFromData(analysis));
-  }, [analysis]);
-
-  useEffect(() => {
-    if (!cyAlive(cy) || !layoutRunRef.current) return;
-    try {
-      const opts = { ...layout, fit: false } as any;
-      const layoutInstance = cy!.layout(opts);
-      layoutInstance.one("layoutstop", () => {
-        if (!cyAlive(cy)) return;
-        try {
-          // Force edge visibility after layout change (same as initial load)
-          cy!.edges().forEach((edge) => {
-            edge.style("opacity", 1);
-            edge.style("line-opacity", 1);
-            edge.style("target-arrow-opacity", 1);
-          });
-          cy!.style().update();
-          cy!.resize();
-        } catch {}
-      });
-      layoutInstance.run();
-    } catch {}
-  }, [cy, layout]);
-
-  useEffect(() => {
     if (!cyAlive(cy)) return;
 
     try {
-      cy!.batch(() => {
-        cy!.nodes().forEach((n) => {
+      cy.batch(() => {
+        cy.nodes().forEach((n) => {
           const kinds = (n.data("detectionKinds") as DetectionKind[]) ?? [];
           if (kinds.length > 1) n.data("phase", 0);
           else n.removeData("phase");
         });
       });
-      cy!.style().update();
     } catch {}
 
     const t = window.setInterval(() => {
       if (!cyAlive(cy)) return;
+
       try {
-        cy!.batch(() => {
-          cy!.nodes().forEach((n) => {
+        cy.batch(() => {
+          cy.nodes().forEach((n) => {
             const kinds = (n.data("detectionKinds") as DetectionKind[]) ?? [];
             if (kinds.length > 1) {
               const p = (n.data("phase") as number) ?? 0;
@@ -497,7 +409,6 @@ export default function GraphCanvas({
             }
           });
         });
-        cy!.style().update();
       } catch {}
     }, PHASE_TICK_MS);
 
@@ -507,8 +418,8 @@ export default function GraphCanvas({
   function handleFit() {
     if (!cyAlive(cy)) return;
     try {
-      cy!.resize();
-      cy!.fit(cy!.elements(), 40);
+      cy.resize();
+      cy.fit(cy.elements(), 40);
     } catch {}
   }
 
@@ -517,21 +428,23 @@ export default function GraphCanvas({
     setTool("select");
     setPendingSource(null);
     setSelected(null);
+    setPendingAntiPatternKind(null);
   }
 
   function handleSaveChanges() {
     if (!cyAlive(cy)) return;
 
-    const error = validateGraphForSave(cy!);
+    const error = validateGraphForSave(cy);
     if (error) return window.alert(error);
 
-    const yaml = exportGraphToYaml(cy!);
+    const yaml = exportGraphToYaml(cy);
     setEditedYaml(yaml);
 
     setEditMode(false);
     setTool("select");
     setPendingSource(null);
     setSelected(null);
+    setPendingAntiPatternKind(null);
 
     if (onGenerateGraph) {
       void Promise.resolve(onGenerateGraph(yaml)).catch(() => {});
@@ -544,12 +457,13 @@ export default function GraphCanvas({
 
   function handleRenameNode(id: string, newLabel: string) {
     if (!cyAlive(cy)) return;
-    const node = cy!.getElementById(id);
+    const node = cy.getElementById(id);
     if (!node.empty()) node.data("label", newLabel);
   }
 
   function callEdgeLabel(protocol: string, sync: boolean): string {
-    const protocolDisplay = protocol === "grpc" ? "gRPC" : protocol === "event" ? "Event" : "REST";
+    const protocolDisplay =
+      protocol === "grpc" ? "gRPC" : protocol === "event" ? "Event" : "REST";
     const syncLabel = sync ? "sync" : "async";
     return `CALLS [${protocolDisplay}] (${syncLabel})`;
   }
@@ -557,21 +471,30 @@ export default function GraphCanvas({
   const handleUpdateEdge = useCallback(
     (edgeId: string, attrs: { kind: CallProtocol; sync: boolean }) => {
       if (!cyAlive(cy)) return;
-      const edge = cy!.getElementById(edgeId);
+
+      const edge = cy.getElementById(edgeId);
       if (edge.empty() || !edge.isEdge()) return;
-      const currentAttrs = (edge.data("attrs") as Record<string, unknown>) || {};
-      const newAttrs = { ...currentAttrs, kind: attrs.kind, dep_kind: attrs.kind, sync: attrs.sync };
+
+      const currentAttrs =
+        (edge.data("attrs") as Record<string, unknown>) || {};
+
+      const newAttrs = {
+        ...currentAttrs,
+        kind: attrs.kind,
+        dep_kind: attrs.kind,
+        sync: attrs.sync,
+      };
+
       edge.data("attrs", newAttrs);
       edge.data("label", callEdgeLabel(attrs.kind, attrs.sync));
-      try {
-        cy!.style().update();
-      } catch {}
     },
-    [cy]
+    [cy],
   );
 
   return (
-    <div className={`flex flex-col gap-3 p-4 min-h-[70vh] min-w-0 ${readOnly ? "flex-1" : ""}`}>
+    <div
+      className={`flex flex-col gap-3 p-4 min-h-[70vh] min-w-0 ${readOnly ? "flex-1" : ""}`}
+    >
       <ControlPanel
         layoutName={layoutName}
         onLayoutChange={setLayoutName}
@@ -586,9 +509,9 @@ export default function GraphCanvas({
       />
 
       <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden">
-        {/* Left: Edit tools – visible in edit mode; collapsible */}
-        {!readOnly && editMode && (
-          leftPanelCollapsed ? (
+        {!readOnly &&
+          editMode &&
+          (leftPanelCollapsed ? (
             <button
               type="button"
               onClick={() => setLeftPanelCollapsed(false)}
@@ -599,9 +522,11 @@ export default function GraphCanvas({
               <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
+            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden relative z-10">
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">Edit tools</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+                  Edit tools
+                </span>
                 <button
                   type="button"
                   onClick={() => setLeftPanelCollapsed(true)}
@@ -623,126 +548,49 @@ export default function GraphCanvas({
                     setDefaultCallProtocol(kind);
                     setDefaultCallSync(sync);
                   }}
+                  onAddAntiPattern={(kind) => setPendingAntiPatternKind(kind)}
+                  pendingAntiPatternKind={pendingAntiPatternKind}
                   variant="sidebar"
                 />
               </div>
             </aside>
-          )
-        )}
+          ))}
 
-        {/* Canvas area */}
         <div
           ref={containerRef}
-          className="relative flex-1 min-h-0 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
+          className="relative flex-1 min-h-[600px] min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 z-0"
         >
           <CytoscapeComponent
-          cy={(c) => {
-            if (cyRef.current !== c) {
+            cy={(c) => {
+              if (mountedCyRef.current === c) return;
+              mountedCyRef.current = c;
               cyRef.current = c;
               setCy(c);
-            }
+            }}
+            elements={elements}
+            stylesheet={stylesheet}
+            layout={undefined}
+            autoungrabify={false}
+            autounselectify={false}
+            boxSelectionEnabled={true}
+            userPanningEnabled={true}
+            userZoomingEnabled={true}
+            style={{
+              width: "100%",
+              height: "100%",
+              backgroundColor: "#f9fafb",
+            }}
+            minZoom={0.2}
+            maxZoom={3}
+            wheelSensitivity={0.2}
+          />
 
-            if (cyInitializedRef.current === c) return;
-            cyInitializedRef.current = c;
-
-            c.ready(() => {
-              // Force initial style application immediately - ensure edges are visible
-              try {
-                c.style().update();
-                c.edges().forEach((edge) => {
-                  edge.style("opacity", 1);
-                  edge.style("line-opacity", 1);
-                  edge.style("target-arrow-opacity", 1);
-                  edge.style("events", "yes");
-                  edge.style("width", edge.style("width") || 2.5);
-                });
-                c.style().update();
-                c.resize();
-              } catch {}
-
-              requestAnimationFrame(() => {
-                if (!cyAlive(c)) return;
-                try {
-                  c.resize();
-                  layoutRunRef.current = true;
-                  const opts = { ...layout, fit: false } as any;
-                  const layoutInstance = c.layout(opts);
-                  const onLayoutStop = () => {
-                    if (!cyAlive(c)) return;
-                    try {
-                      c.fit(c.elements(), 40);
-
-                      // ✅ FIX: trigger React effect (instead of ref)
-                      setInitialLayoutComplete(true);
-
-                      // keep your existing logic exactly, but let stylesheet control colors
-                      c.elements().forEach((ele) => {
-                        ele.style("opacity", 1);
-                        if (ele.isNode()) {
-                          ele.style("events", "yes");
-                          ele.style("text-events", "yes");
-                        }
-                        if (ele.isEdge()) {
-                          ele.style("opacity", 1);
-                          ele.style("line-opacity", 1);
-                          ele.style("target-arrow-opacity", 1);
-                          ele.style("events", "yes");
-                          ele.style("width", ele.style("width") || 2.5);
-                        }
-                      });
-                      c.style().update();
-                      c.resize();
-
-                      setTimeout(() => {
-                        if (!cyAlive(c)) return;
-                        try {
-                          const refreshLayout = c.layout({
-                            name: "preset",
-                            positions: (node: any) => node.position(),
-                            fit: false,
-                            animate: false,
-                          });
-                          refreshLayout.one("layoutstop", () => {
-                            if (!cyAlive(c)) return;
-                            try {
-                              c.edges().forEach((edge) => {
-                                edge.style("opacity", 1);
-                                edge.style("line-opacity", 1);
-                                edge.style("target-arrow-opacity", 1);
-                                edge.style("width", edge.style("width") || 2.5);
-                              });
-                              c.style().update();
-                              c.resize();
-                            } catch {}
-                          });
-                          refreshLayout.run();
-                        } catch {}
-                      }, 100);
-                    } catch {}
-                  };
-                  layoutInstance.one("layoutstop", onLayoutStop);
-                  layoutInstance.run();
-                } catch {}
-              });
-            });
-          }}
-          elements={elements}
-          stylesheet={stylesheet}
-          layout={undefined}
-          autoungrabify={false}
-          style={{ width: "100%", height: "100%", backgroundColor: "#f9fafb" }}
-          minZoom={0.2}
-          maxZoom={3}
-          wheelSensitivity={0.2}
-        />
-
-        <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
-        <NodeColorIndicators cy={cy} containerEl={containerRef.current} />
+          <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
+          <NodeColorIndicators cy={cy} containerEl={containerRef.current} />
         </div>
 
-        {/* Right: Details panel – collapsible */}
-        {!readOnly && (
-          rightPanelCollapsed ? (
+        {!readOnly &&
+          (rightPanelCollapsed ? (
             <button
               type="button"
               onClick={() => setRightPanelCollapsed(false)}
@@ -755,7 +603,9 @@ export default function GraphCanvas({
           ) : (
             <aside className="w-72 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">Details</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+                  Details
+                </span>
                 <button
                   type="button"
                   onClick={() => setRightPanelCollapsed(true)}
@@ -783,8 +633,7 @@ export default function GraphCanvas({
                 />
               </div>
             </aside>
-          )
-        )}
+          ))}
       </div>
     </div>
   );
@@ -798,6 +647,7 @@ function computeStatsFromData(data: AnalysisResult): GraphStats {
   const detections = Array.isArray(data?.detections)
     ? data.detections.length
     : 0;
+
   return {
     services: kindCount("SERVICE"),
     gateways: kindCount("API_GATEWAY"),
