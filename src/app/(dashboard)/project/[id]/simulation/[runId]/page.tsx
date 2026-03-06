@@ -203,11 +203,9 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
 
   // Build a unified time-sorted array of rows for recharts
   const rows = useMemo<ChartRow[]>(() => {
-    // Collect all unique timestamps
     const tsSet = new Set<number>();
     for (const pts of Object.values(series)) pts.forEach((p) => tsSet.add(p.t));
     const sorted = Array.from(tsSet).sort((a, b) => a - b);
-
     return sorted.map((t) => {
       const row: ChartRow = { t };
       for (const svc of services) {
@@ -217,6 +215,42 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
       return row;
     });
   }, [series, services]);
+
+  // Adaptive X-axis window: infer event cadence from the data span and pick
+  // a window that keeps ~60–120 ticks visible without crowding.
+  const xDomain = useMemo<[number, number] | ["dataMin", "dataMax"]>(() => {
+    if (rows.length < 2) return ["dataMin", "dataMax"];
+    const first = rows[0].t;
+    const last  = rows[rows.length - 1].t;
+    const spanMs = last - first;
+    const avgIntervalMs = spanMs / (rows.length - 1);
+
+    // Window = 60× the average interval, clamped between 15 s and 3 min
+    const windowMs = Math.min(
+      Math.max(avgIntervalMs * 60, 15_000),
+      180_000,
+    );
+    return [last - windowMs, last];
+  }, [rows]);
+
+  // Y-axis: add 20 % headroom above the visible maximum so lines never hug the top
+  const yMax = useMemo(() => {
+    let max = 0;
+    for (const row of rows) {
+      for (const [k, v] of Object.entries(row)) {
+        if (k !== "t" && typeof v === "number" && v > max) max = v;
+      }
+    }
+    return max === 0 ? 10 : Math.ceil(max * 1.2);
+  }, [rows]);
+
+  // Label for the visible window shown in the header
+  const windowLabel = useMemo(() => {
+    if (rows.length < 2 || xDomain[0] === "dataMin") return null;
+    const ms = (xDomain[1] as number) - (xDomain[0] as number);
+    if (ms < 60_000) return `last ${Math.round(ms / 1000)}s`;
+    return `last ${Math.round(ms / 60_000)}m`;
+  }, [rows, xDomain]);
 
   const fmtTime = (epochMs: number) => {
     const d = new Date(epochMs);
@@ -228,7 +262,9 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-white">
           Request count
-          <span className="ml-2 text-xs font-normal text-white/40">per service · live</span>
+          <span className="ml-2 text-xs font-normal text-white/40">
+            per service · live{windowLabel ? ` · ${windowLabel}` : ""}
+          </span>
         </h2>
         <button
           onClick={onClear}
@@ -250,7 +286,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
               dataKey="t"
               type="number"
               scale="time"
-              domain={["dataMin", "dataMax"]}
+              domain={xDomain}
               tickFormatter={fmtTime}
               tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
               tickLine={false}
@@ -258,6 +294,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
               minTickGap={60}
             />
             <YAxis
+              domain={[0, yMax]}
               tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
               tickLine={false}
               axisLine={false}
