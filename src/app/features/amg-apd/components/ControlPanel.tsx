@@ -6,7 +6,12 @@ export type LayoutName = "dagre" | "cose-bilkent" | "cola" | "elk";
 
 export type GraphStats = {
   services: number;
+  gateways: number;
+  eventTopics: number;
   databases: number;
+  externalSystems: number;
+  clients: number;
+  userActors: number;
   edges: number;
   detections: number;
 };
@@ -23,6 +28,7 @@ type Props = {
   onSaveChanges: () => void;
 
   isGenerating?: boolean;
+  readOnly?: boolean;
 
   data?: AnalysisResult;
 };
@@ -36,15 +42,26 @@ export default function ControlPanel({
   onToggleEdit,
   onSaveChanges,
   isGenerating = false,
+  readOnly = false,
 }: Props) {
-  const { services, databases, edges, detections } = stats;
+  const {
+    services,
+    gateways,
+    eventTopics,
+    databases,
+    externalSystems,
+    clients,
+    userActors,
+    edges,
+    detections,
+  } = stats;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded border bg-white px-3 py-2 text-xs shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-slate-700">Layout:</span>
+        <span className="font-semibold text-[#9AA4B2]">Layout:</span>
         <select
-          className="rounded border px-2 py-1 text-xs text-slate-700"
+          className="rounded-lg border border-white/15 bg-gray-800 px-3 py-1.5 text-xs text-white [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
           value={layoutName}
           onChange={(e) => onLayoutChange(e.target.value as LayoutName)}
         >
@@ -56,50 +73,67 @@ export default function ControlPanel({
         <button
           type="button"
           onClick={onFit}
-          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+          className="rounded-lg border border-white/15 bg-gray-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 transition-colors"
         >
-          Fit to screen
+          Fit to Screen
         </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Services: <strong>{services}</strong>
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Services: <strong className="font-semibold text-white">{services}</strong>
           </span>
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Databases: <strong>{databases}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Gateways: <strong className="font-semibold text-white">{gateways}</strong>
           </span>
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Edges: <strong>{edges}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Topics: <strong className="font-semibold text-white">{eventTopics}</strong>
           </span>
-          <span className="rounded bg-slate-100 px-2 py-1">
-            Anti-patterns: <strong>{detections}</strong>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Databases: <strong className="font-semibold text-white">{databases}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            External: <strong className="font-semibold text-white">{externalSystems}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Clients: <strong className="font-semibold text-white">{clients}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Actors: <strong className="font-semibold text-white">{userActors}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Edges: <strong className="font-semibold text-white">{edges}</strong>
+          </span>
+          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
+            Anti-patterns: <strong className="font-semibold text-white">{detections}</strong>
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onToggleEdit}
-            className={`rounded px-3 py-1 text-[11px] ${
-              editMode
-                ? "bg-amber-500 text-white hover:bg-amber-600"
-                : "bg-slate-900 text-white hover:bg-slate-800"
-            }`}
-          >
-            {editMode ? "Exit Edit Mode" : "Edit Graph"}
-          </button>
-          <button
-            type="button"
-            onClick={onSaveChanges}
-            disabled={!editMode || isGenerating}
-            style={{ visibility: editMode ? "visible" : "hidden" }}
-            className="rounded bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
-          >
-            {isGenerating ? "Generating…" : "Generate Graph"}
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onToggleEdit}
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
+                editMode
+                  ? "bg-amber-500 text-white hover:bg-amber-600"
+                  : "bg-[#9AA4B2] text-white hover:bg-[#9AA4B2]/90"
+              }`}
+            >
+              {editMode ? "Exit Edit Mode" : "Edit Graph"}
+            </button>
+            <button
+              type="button"
+              onClick={onSaveChanges}
+              disabled={!editMode || isGenerating}
+              style={{ visibility: editMode ? "visible" : "hidden" }}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 transition-colors"
+            >
+              {isGenerating ? "Generating…" : "Generate Graph"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

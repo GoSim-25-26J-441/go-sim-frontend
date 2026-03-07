@@ -1,268 +1,7 @@
-// /* eslint-disable @typescript-eslint/no-explicit-any */
-// "use client";
-
-// import { useEffect, useState } from "react";
-// import { X } from "lucide-react";
-// import { getFirebaseIdToken } from "@/lib/firebase/auth";
-
-// interface Question {
-//   id: string;
-//   label: string;
-//   type: "number" | "text" | "textarea";
-//   placeholder?: string;
-// }
-
-// interface QuestionsResponse {
-//   ok: boolean;
-//   enabled: boolean;
-//   questions?: Question[];
-//   error?: string;
-// }
-
-// interface DesignAnswers {
-//   preferred_vcpu?: number;
-//   preferred_memory_gb?: number;
-//   concurrent_users?: number;
-//   budget?: number;
-//   [key: string]: number | undefined;
-// }
-
-// interface DesignQuestionsModalProps {
-//   isOpen: boolean;
-//   onClose: () => void;
-//   onSubmit: (design: DesignAnswers) => void;
-//   onSkip: () => void;
-//   initialDesign?: Record<string, any>;
-// }
-
-// export default function DesignQuestionsModal({
-//   isOpen,
-//   onClose,
-//   onSubmit,
-//   onSkip,
-//   initialDesign,
-// }: DesignQuestionsModalProps) {
-//   const [questions, setQuestions] = useState<Question[]>([]);
-//   const [loading, setLoading] = useState(true);
-//   const [answers, setAnswers] = useState<DesignAnswers>({});
-//   const [enabled, setEnabled] = useState(false);
-
-//   useEffect(() => {
-//     if (!isOpen) return;
-
-//     async function fetchQuestions() {
-//       setLoading(true);
-//       try {
-//         const token = await getFirebaseIdToken();
-//         if (!token) {
-//           throw new Error("No authentication token available");
-//         }
-
-//         const res = await fetch("/api/design-input/rag/requirements-questions", {
-//           method: "GET",
-//           headers: {
-//             Authorization: `Bearer ${token}`,
-//           },
-//           cache: "no-store",
-//         });
-
-//         if (!res.ok) {
-//           const errorText = await res.text();
-//           console.error("Failed to fetch questions:", res.status, errorText);
-//           throw new Error(`Failed to fetch questions: ${res.status}`);
-//         }
-
-//         const data: QuestionsResponse = await res.json();
-//         console.log("Design questions response:", data);
-
-//         if (data.ok && data.enabled && data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
-//           console.log("Setting questions:", data.questions);
-//           const normalizedQuestions: Question[] = data.questions.map((q: any) => ({
-//             id: q.ID || q.id || "",
-//             label: q.Label || q.label || "",
-//             type: ((q.Type || q.type || "text").toLowerCase() as "number" | "text" | "textarea"),
-//             placeholder: q.Placeholder || q.placeholder,
-//           })).filter((q) => q.id && q.label);
-
-//           if (normalizedQuestions.length > 0) {
-//             setQuestions(normalizedQuestions);
-//             setEnabled(true);
-//             const initialAnswers: DesignAnswers = {};
-//             normalizedQuestions.forEach((q) => {
-//               if (initialDesign) {
-//                 if (q.id === "concurrent_users" && initialDesign.workload?.concurrent_users !== undefined) {
-//                   initialAnswers[q.id] = initialDesign.workload.concurrent_users;
-//                 } else if (initialDesign[q.id] !== undefined) {
-//                   initialAnswers[q.id] = initialDesign[q.id];
-//                 } else {
-//                   initialAnswers[q.id] = undefined;
-//                 }
-//               } else {
-//                 initialAnswers[q.id] = undefined;
-//               }
-//             });
-//             setAnswers(initialAnswers);
-//             console.log("Initial answers set:", initialAnswers);
-//           } else {
-//             console.warn("No valid questions after normalization");
-//             setEnabled(false);
-//             setQuestions([]);
-//           }
-//         } else {
-//           console.warn("Design questions not enabled or empty:", {
-//             ok: data.ok,
-//             enabled: data.enabled,
-//             questionsLength: data.questions?.length,
-//             questionsType: typeof data.questions,
-//             isArray: Array.isArray(data.questions),
-//             error: data.error,
-//             fullResponse: data,
-//           });
-//           setEnabled(false);
-//           setQuestions([]);
-//         }
-//       } catch (error) {
-//         console.error("Failed to fetch design questions:", error);
-//         setEnabled(false);
-//         setQuestions([]);
-//       } finally {
-//         setLoading(false);
-//       }
-//     }
-
-//     fetchQuestions();
-//   }, [isOpen, initialDesign]);
-
-//   const handleChange = (questionId: string, value: string) => {
-//     setAnswers((prev) => ({
-//       ...prev,
-//       [questionId]: value === "" ? undefined : parseFloat(value),
-//     }));
-//   };
-
-//   const handleSubmit = () => {
-//     const design: any = {};
-
-//     if (answers.concurrent_users !== undefined) {
-//       design.workload = { concurrent_users: answers.concurrent_users };
-//     }
-
-//     if (answers.preferred_vcpu !== undefined) {
-//       design.preferred_vcpu = answers.preferred_vcpu;
-//     }
-//     if (answers.preferred_memory_gb !== undefined) {
-//       design.preferred_memory_gb = answers.preferred_memory_gb;
-//     }
-//     if (answers.budget !== undefined) {
-//       design.budget = answers.budget;
-//     }
-
-//     Object.keys(answers).forEach((key) => {
-//       if (
-//         key !== "concurrent_users" &&
-//         key !== "preferred_vcpu" &&
-//         key !== "preferred_memory_gb" &&
-//         key !== "budget" &&
-//         answers[key] !== undefined
-//       ) {
-//         design[key] = answers[key];
-//       }
-//     });
-
-//     onSubmit(design);
-//     onClose();
-//   };
-
-//   if (!isOpen) return null;
-
-//   return (
-//     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-//       <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
-//         <div className="flex items-center justify-between p-4 border-b border-gray-800">
-//           <h2 className="text-lg font-semibold text-white">Design Requirements</h2>
-//           <button
-//             onClick={onClose}
-//             className="text-gray-400 hover:text-white transition-colors"
-//           >
-//             <X className="w-5 h-5" />
-//           </button>
-//         </div>
-
-//         <div className="flex-1 overflow-y-auto p-6">
-//           {loading ? (
-//             <div className="text-center text-gray-400 py-8">
-//               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-//               Loading questions...
-//             </div>
-//           ) : !enabled || questions.length === 0 ? (
-//             <div className="text-center text-gray-400 py-8">
-//               <p className="mb-2">Design questions are not available at this time.</p>
-//               <p className="text-xs text-gray-500">
-//                 You can still use the chat without providing design requirements.
-//               </p>
-//               <p className="text-xs text-gray-500 mt-2">
-//                 Click {'"'}Skip{'"'} to continue.
-//               </p>
-//             </div>
-//           ) : (
-//             <div className="space-y-4">
-//               <p className="text-sm text-gray-400 mb-4">
-//                 Please provide the following information to help us better assist you with your design:
-//               </p>
-//               {questions.map((question) => (
-//                 <div key={question.id}>
-//                   <label className="block text-sm font-medium text-gray-300 mb-2">
-//                     {question.label}
-//                   </label>
-//                   {question.type === "textarea" ? (
-//                     <textarea
-//                       key={`textarea-${question.id}`}
-//                       value={answers[question.id]?.toString() || ""}
-//                       onChange={(e) => handleChange(question.id, e.target.value)}
-//                       placeholder={question.placeholder}
-//                       className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-//                       rows={3}
-//                     />
-//                   ) : (
-//                     <input
-//                       key={`input-${question.id}`}
-//                       type={question.type}
-//                       value={answers[question.id]?.toString() || ""}
-//                       onChange={(e) => handleChange(question.id, e.target.value)}
-//                       placeholder={question.placeholder}
-//                       className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-//                     />
-//                   )}
-//                 </div>
-//               ))}
-//             </div>
-//           )}
-//         </div>
-
-//         <div className="flex items-center justify-end gap-3 p-4 border-t border-gray-800">
-//           <button
-//             onClick={onSkip}
-//             className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
-//           >
-//             Skip
-//           </button>
-//           <button
-//             onClick={handleSubmit}
-//             disabled={loading || !enabled || questions.length === 0}
-//             className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-//           >
-//             Submit
-//           </button>
-//         </div>
-//       </div>
-//     </div>
-//   );
-// }
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   X,
   Server,
@@ -274,21 +13,12 @@ import {
   ChevronRight,
   AlertCircle,
 } from "lucide-react";
-import { getFirebaseIdToken } from "@/lib/firebase/auth";
-
-interface Question {
-  id: string;
-  label: string;
-  type: "number" | "text" | "textarea";
-  placeholder?: string;
-}
-
-interface QuestionsResponse {
-  ok: boolean;
-  enabled: boolean;
-  questions?: Question[];
-  error?: string;
-}
+import type { Question } from "@/app/store/designApi";
+import {
+  useGetRequirementsQuestionsQuery,
+  useSaveDesignMutation,
+  useLazyGetDesignByProjectRunQuery,
+} from "@/app/store/designApi";
 
 interface DesignAnswers {
   preferred_vcpu?: number;
@@ -304,6 +34,9 @@ interface DesignQuestionsModalProps {
   onSubmit: (design: DesignAnswers) => void;
   onSkip: () => void;
   initialDesign?: Record<string, any>;
+  projectId?: string;
+  userId?: string;
+  runId?: string;
 }
 
 // Icon map for known question IDs
@@ -327,96 +60,109 @@ const questionHintMap: Record<string, string> = {
   budget: "Monthly infrastructure spend limit",
 };
 
+function buildDesignFromAnswers(answers: DesignAnswers) {
+  const design: Record<string, any> = {};
+  if (answers.concurrent_users !== undefined)
+    design.workload = { concurrent_users: answers.concurrent_users };
+  if (answers.preferred_vcpu !== undefined)
+    design.preferred_vcpu = answers.preferred_vcpu;
+  if (answers.preferred_memory_gb !== undefined)
+    design.preferred_memory_gb = answers.preferred_memory_gb;
+  if (answers.budget !== undefined) design.budget = answers.budget;
+  Object.keys(answers).forEach((key) => {
+    if (
+      ![
+        "concurrent_users",
+        "preferred_vcpu",
+        "preferred_memory_gb",
+        "budget",
+      ].includes(key) &&
+      answers[key] !== undefined
+    )
+      design[key] = answers[key];
+  });
+  return design;
+}
+
+function answersFromDesign(design: Record<string, any> | undefined, questions: Question[]): DesignAnswers {
+  const init: DesignAnswers = {};
+  questions.forEach((q) => {
+    if (design) {
+      if (
+        q.id === "concurrent_users" &&
+        design.workload?.concurrent_users !== undefined
+      ) {
+        init[q.id] = design.workload.concurrent_users;
+      } else {
+        init[q.id] = (design as any)[q.id] ?? undefined;
+      }
+    } else {
+      init[q.id] = undefined;
+    }
+  });
+  return init;
+}
+
 export default function DesignQuestionsModal({
   isOpen,
   onClose,
   onSubmit,
   onSkip,
   initialDesign,
+  projectId,
+  userId,
+  runId,
 }: DesignQuestionsModalProps) {
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [loading, setLoading] = useState(true);
   const [answers, setAnswers] = useState<DesignAnswers>({});
   const [enabled, setEnabled] = useState(false);
 
+  const { data: questionsData, isLoading: questionsLoading } =
+    useGetRequirementsQuestionsQuery(undefined, { skip: !isOpen });
+
+  const [fetchDesignByProjectRun, { data: designByRunData, isLoading: designLoading }] =
+    useLazyGetDesignByProjectRunQuery();
+
+  const [saveDesign, { isLoading: saving }] = useSaveDesignMutation();
+
+  const questions: Question[] = useMemo(() => {
+    const data = questionsData;
+    if (
+      !data?.ok ||
+      !data.enabled ||
+      !Array.isArray(data.questions) ||
+      data.questions.length === 0
+    )
+      return [];
+    return data.questions
+      .map((q: any) => ({
+        id: q.ID || q.id || "",
+        label: q.Label || q.label || "",
+        type: (q.Type || q.type || "text").toLowerCase() as "number" | "text" | "textarea",
+        placeholder: q.Placeholder || q.placeholder,
+      }))
+      .filter((q: Question) => q.id && q.label);
+  }, [questionsData]);
+
   useEffect(() => {
     if (!isOpen) return;
+    setEnabled(questions.length > 0);
+  }, [isOpen, questions.length]);
 
-    async function fetchQuestions() {
-      setLoading(true);
-      try {
-        const token = await getFirebaseIdToken();
-        if (!token) throw new Error("No authentication token available");
+  // When modal opens and we have project/user/run, fetch saved design to prefill form
+  useEffect(() => {
+    if (!isOpen || !userId || !projectId || !runId) return;
+    fetchDesignByProjectRun({ userId, projectId, runId });
+  }, [isOpen, userId, projectId, runId, fetchDesignByProjectRun]);
 
-        const res = await fetch(
-          "/api/design-input/rag/requirements-questions",
-          {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-store",
-          },
-        );
-
-        if (!res.ok)
-          throw new Error(`Failed to fetch questions: ${res.status}`);
-
-        const data: QuestionsResponse = await res.json();
-
-        if (
-          data.ok &&
-          data.enabled &&
-          Array.isArray(data.questions) &&
-          data.questions.length > 0
-        ) {
-          const normalized: Question[] = data.questions
-            .map((q: any) => ({
-              id: q.ID || q.id || "",
-              label: q.Label || q.label || "",
-              type: (q.Type || q.type || "text").toLowerCase() as
-                | "number"
-                | "text"
-                | "textarea",
-              placeholder: q.Placeholder || q.placeholder,
-            }))
-            .filter((q) => q.id && q.label);
-
-          if (normalized.length > 0) {
-            setQuestions(normalized);
-            setEnabled(true);
-            const init: DesignAnswers = {};
-            normalized.forEach((q) => {
-              if (initialDesign) {
-                if (
-                  q.id === "concurrent_users" &&
-                  initialDesign.workload?.concurrent_users !== undefined
-                ) {
-                  init[q.id] = initialDesign.workload.concurrent_users;
-                } else {
-                  init[q.id] = initialDesign[q.id] ?? undefined;
-                }
-              } else {
-                init[q.id] = undefined;
-              }
-            });
-            setAnswers(init);
-          } else {
-            setEnabled(false);
-            setQuestions([]);
-          }
-        } else {
-          setEnabled(false);
-          setQuestions([]);
-        }
-      } catch {
-        setEnabled(false);
-        setQuestions([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchQuestions();
-  }, [isOpen, initialDesign]);
+  // Populate answers: prefer designByRunData, then initialDesign, else empty
+  useEffect(() => {
+    if (questions.length === 0) return;
+    const design =
+      designByRunData?.request?.design ??
+      initialDesign ??
+      undefined;
+    setAnswers(answersFromDesign(design, questions));
+  }, [questions, designByRunData?.request?.design, initialDesign]);
 
   const handleChange = (questionId: string, value: string, type: string) => {
     if (type === "number") {
@@ -439,27 +185,25 @@ export default function DesignQuestionsModal({
     }
   };
 
-  const handleSubmit = () => {
-    const design: any = {};
-    if (answers.concurrent_users !== undefined)
-      design.workload = { concurrent_users: answers.concurrent_users };
-    if (answers.preferred_vcpu !== undefined)
-      design.preferred_vcpu = answers.preferred_vcpu;
-    if (answers.preferred_memory_gb !== undefined)
-      design.preferred_memory_gb = answers.preferred_memory_gb;
-    if (answers.budget !== undefined) design.budget = answers.budget;
-    Object.keys(answers).forEach((key) => {
-      if (
-        ![
-          "concurrent_users",
-          "preferred_vcpu",
-          "preferred_memory_gb",
-          "budget",
-        ].includes(key) &&
-        answers[key] !== undefined
-      )
-        design[key] = answers[key];
-    });
+  const loading = questionsLoading || designLoading;
+
+  const handleSubmit = async () => {
+    const design = buildDesignFromAnswers(answers);
+
+    // Save to backend if we have user and project
+    if (userId && projectId) {
+      try {
+        await saveDesign({
+          user_id: userId,
+          project_id: projectId,
+          design,
+          ...(runId ? { run_id: runId } : {}),
+        }).unwrap();
+      } catch {
+        // Save failed – still proceed with onSubmit per requirements
+      }
+    }
+
     onSubmit(design);
     onClose();
   };
@@ -743,19 +487,19 @@ export default function DesignQuestionsModal({
 
           <button
             onClick={handleSubmit}
-            disabled={loading || !enabled || questions.length === 0}
+            disabled={loading || saving || !enabled || questions.length === 0}
             className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-150"
             style={{
               backgroundColor:
-                loading || !enabled || questions.length === 0
+                loading || saving || !enabled || questions.length === 0
                   ? "rgba(255,255,255,0.06)"
                   : "#fff",
               color:
-                loading || !enabled || questions.length === 0
+                loading || saving || !enabled || questions.length === 0
                   ? "rgba(255,255,255,0.2)"
                   : "#000",
               cursor:
-                loading || !enabled || questions.length === 0
+                loading || saving || !enabled || questions.length === 0
                   ? "not-allowed"
                   : "pointer",
             }}
@@ -764,6 +508,11 @@ export default function DesignQuestionsModal({
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading…
+              </>
+            ) : saving ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Saving…
               </>
             ) : (
               <>

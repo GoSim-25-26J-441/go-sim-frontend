@@ -13,6 +13,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import Overview from "@/components/summary/Overview";
+import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 const iconSize = 15;
 
@@ -34,6 +35,7 @@ export default function Summary({
   const [loadingThread, setLoadingThread] = useState(true);
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [showImagesModal, setShowImagesModal] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -105,7 +107,7 @@ export default function Summary({
 
       <div className="flex flex-row justify-end">
         <button
-          onClick={() => router.push("/upload")}
+          onClick={() => setShowImagesModal(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-800/50 text-white/80 hover:text-white transition-colors shadow-md"
         >
           <Upload className="w-4 h-4" />
@@ -185,6 +187,12 @@ export default function Summary({
 
         <Overview />
       </div>
+
+      <DiagramImagesModal
+        projectId={id}
+        isOpen={showImagesModal}
+        onClose={() => setShowImagesModal(false)}
+      />
     </div>
   );
 }

@@ -88,10 +88,7 @@ export function buildMetaMaps(data?: AnalysisResult) {
 
   for (const det of detections) {
     const kind = normalizeDetectionKind(det.kind);
-
-    if (!kind) {
-      continue;
-    }
+    if (!kind) continue;
 
     for (const nodeRef of det.nodes ?? []) {
       const nodeId = resolveNodeId(nodeRef, nodesObj, nameToId);
@@ -103,6 +100,7 @@ export function buildMetaMaps(data?: AnalysisResult) {
         typeof edgeIndex === "string"
           ? parseInt(edgeIndex as any, 10)
           : edgeIndex;
+
       if (typeof idx === "number" && !Number.isNaN(idx)) {
         upsertMeta(edgeMeta, idx, kind, det.severity);
       }
@@ -110,4 +108,15 @@ export function buildMetaMaps(data?: AnalysisResult) {
   }
 
   return { nodeMeta, edgeMeta };
+}
+
+/** Resolve a node ref (from edge from/to) to the canonical node ID used in nodeMeta */
+export function resolveNodeIdFromData(
+  data: AnalysisResult | undefined,
+  ref: unknown
+): string | null {
+  if (!data?.graph?.nodes) return null;
+  const nodesObj = data.graph.nodes;
+  const nameToId = buildNameToId(nodesObj);
+  return resolveNodeId(ref, nodesObj, nameToId);
 }

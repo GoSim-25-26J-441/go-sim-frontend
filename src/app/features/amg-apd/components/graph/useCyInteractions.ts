@@ -5,7 +5,43 @@ import type {
   SelectedItem,
   EdgeKind,
   NodeKind,
+  CallProtocol,
+  DetectionKind,
 } from "@/app/features/amg-apd/types";
+
+const ADD_NODE_TOOLS: EditTool[] = [
+  "add-service",
+  "add-api-gateway",
+  "add-database",
+  "add-event-topic",
+  "add-external-system",
+  "add-client",
+  "add-user-actor",
+];
+
+const TOOL_TO_KIND: Record<EditTool, NodeKind> = {
+  select: "SERVICE",
+  "add-service": "SERVICE",
+  "add-api-gateway": "API_GATEWAY",
+  "add-database": "DATABASE",
+  "add-event-topic": "EVENT_TOPIC",
+  "add-external-system": "EXTERNAL_SYSTEM",
+  "add-client": "CLIENT",
+  "add-user-actor": "USER_ACTOR",
+  "connect-calls": "SERVICE",
+};
+
+const TOOL_TO_LABEL: Record<EditTool, string> = {
+  select: "node",
+  "add-service": "new-service",
+  "add-api-gateway": "new-api-gateway",
+  "add-database": "new-database",
+  "add-event-topic": "new-event-topic",
+  "add-external-system": "new-external-system",
+  "add-client": "new-client",
+  "add-user-actor": "new-user-actor",
+  "connect-calls": "node",
+};
 
 export function useCyInteractions({
   cy,
@@ -15,6 +51,11 @@ export function useCyInteractions({
   setPendingSource,
   setSelected,
   recomputeStats,
+  defaultCallProtocol = "rest",
+  defaultCallSync = true,
+  pendingAntiPatternKind,
+  setPendingAntiPatternKind,
+  onAddAntiPatternAt,
 }: {
   cy: cytoscape.Core | null;
   editMode: boolean;
@@ -23,6 +64,14 @@ export function useCyInteractions({
   setPendingSource: (v: string | null) => void;
   setSelected: (v: SelectedItem) => void;
   recomputeStats: () => void;
+  defaultCallProtocol?: CallProtocol;
+  defaultCallSync?: boolean;
+  pendingAntiPatternKind?: DetectionKind | null;
+  setPendingAntiPatternKind?: (k: DetectionKind | null) => void;
+  onAddAntiPatternAt?: (
+    kind: DetectionKind,
+    pos: { x: number; y: number },
+  ) => void;
 }) {
   useEffect(() => {
     if (!cy) return;
@@ -38,19 +87,10 @@ export function useCyInteractions({
       if (!node || !node.isNode?.()) return;
       if (node.hasClass("halo")) return;
 
-      if (
-        editMode &&
-        (tool === "connect-calls" ||
-          tool === "connect-reads" ||
-          tool === "connect-writes")
-      ) {
-        const edgeKind: EdgeKind =
-          tool === "connect-calls"
-            ? "CALLS"
-            : tool === "connect-reads"
-            ? "READS"
-            : "WRITES";
+      const shiftKey = evt.originalEvent?.shiftKey === true;
 
+      if (editMode && tool === "connect-calls") {
+        const edgeKind: EdgeKind = "CALLS";
         const id = node.id();
 
         if (!pendingSource) {
@@ -70,43 +110,18 @@ export function useCyInteractions({
 
         const sourceId = pendingSource;
         const targetId = id;
-
         const edgeId = `e-${Date.now().toString(36)}-${Math.random()
           .toString(36)
           .slice(2, 8)}`;
 
-        let label =
-          edgeKind === "READS"
-            ? "reads"
-            : edgeKind === "WRITES"
-            ? "writes"
-            : "calls";
-        let attrs: any | undefined;
-
-        if (edgeKind === "CALLS") {
-          const endpointsInput = window.prompt(
-            "Endpoints for this call (comma-separated).\nExample: GET /users/:id, POST /users",
-            ""
-          );
-          const endpoints =
-            endpointsInput
-              ?.split(",")
-              .map((s) => s.trim())
-              .filter(Boolean) ?? [];
-
-          const rpmInput = window.prompt(
-            "Approximate calls per minute (rpm) for this edge?",
-            "0"
-          );
-          let rpm = parseInt(rpmInput ?? "0", 10);
-          if (Number.isNaN(rpm) || rpm < 0) rpm = 0;
-
-          attrs = { endpoints, rate_per_min: rpm };
-          label =
-            endpoints.length || rpm > 0
-              ? `calls (${endpoints.length} ep), ${rpm}rpm`
-              : "calls";
-        }
+        const protocolDisplay =
+          defaultCallProtocol === "grpc"
+            ? "gRPC"
+            : defaultCallProtocol === "event"
+              ? "Event"
+              : "REST";
+        const syncLabel = defaultCallSync ? "sync" : "async";
+        const label = `CALLS [${protocolDisplay}] (${syncLabel})`;
 
         const edgeData: any = {
           id: edgeId,
@@ -114,8 +129,12 @@ export function useCyInteractions({
           target: targetId,
           kind: edgeKind,
           label,
+          attrs: {
+            kind: defaultCallProtocol,
+            dep_kind: defaultCallProtocol,
+            sync: defaultCallSync,
+          },
         };
-        if (attrs) edgeData.attrs = attrs;
 
         cy.add({ group: "edges", data: edgeData });
 
@@ -125,39 +144,76 @@ export function useCyInteractions({
         return;
       }
 
-      safeUnselectAll();
-      node.select();
-      setSelected({ type: "node", data: node.data() });
+      if (shiftKey) {
+        node.select();
+        const sel = cy.elements(":selected");
+        setSelected({
+          type: "node",
+          data: { ...node.data(), _multiCount: sel.length },
+        });
+      } else {
+        safeUnselectAll();
+        node.select();
+        setSelected({ type: "node", data: node.data() });
+      }
     };
 
     const onEdgeTap = (evt: any) => {
       const edge = evt.target as cytoscape.EdgeSingular;
       if (!edge || !edge.isEdge?.()) return;
 
-      try {
-        cy.elements().unselect();
-      } catch {}
-      edge.select();
-      setSelected({ type: "edge", data: edge.data() });
+      const shiftKey = evt.originalEvent?.shiftKey === true;
+
+      if (shiftKey) {
+        edge.select();
+        const sel = cy.elements(":selected");
+        setSelected({
+          type: "edge",
+          data: { ...edge.data(), _multiCount: sel.length },
+        });
+      } else {
+        try {
+          cy.elements().unselect();
+        } catch {}
+        edge.select();
+        setSelected({ type: "edge", data: edge.data() });
+      }
     };
 
     const onBgTap = (evt: any) => {
       if (evt.target !== cy) return;
 
-      if (editMode && (tool === "add-service" || tool === "add-database")) {
-        const pos = evt.position;
-        const idBase = tool === "add-service" ? "service" : "db";
+      const pos = evt.position ?? { x: 0, y: 0 };
+
+      if (editMode && pendingAntiPatternKind && onAddAntiPatternAt) {
+        onAddAntiPatternAt(pendingAntiPatternKind, pos);
+        setPendingAntiPatternKind?.(null);
+        return;
+      }
+
+      if (editMode && ADD_NODE_TOOLS.includes(tool)) {
+        const kind = TOOL_TO_KIND[tool];
+        const labelBase = TOOL_TO_LABEL[tool];
+        const idBase = labelBase.replace("new-", "").replace(/-/g, "_");
         const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
           .toString(36)
           .slice(2, 6)}`;
-        const label = tool === "add-service" ? "new-service" : "new-database";
-        const kind: NodeKind = tool === "add-service" ? "SERVICE" : "DATABASE";
 
-        cy.add({ group: "nodes", data: { id, label, kind }, position: pos });
+        cy.add({
+          group: "nodes",
+          data: { id, label: labelBase, kind },
+          position: pos,
+          grabbable: true,
+          selectable: true,
+          locked: false,
+        });
 
         const node = cy.getElementById(id);
         if (!node.empty()) {
           try {
+            node.unlock();
+            node.grabify();
+            node.selectify();
             cy.elements().unselect();
           } catch {}
           node.select();
@@ -171,6 +227,7 @@ export function useCyInteractions({
       safeUnselectAll();
       setSelected(null);
       setPendingSource(null);
+      setPendingAntiPatternKind?.(null);
     };
 
     cy.on("tap", "node", onNodeTap);
@@ -190,5 +247,10 @@ export function useCyInteractions({
     setPendingSource,
     setSelected,
     recomputeStats,
+    defaultCallProtocol,
+    defaultCallSync,
+    pendingAntiPatternKind,
+    setPendingAntiPatternKind,
+    onAddAntiPatternAt,
   ]);
 }

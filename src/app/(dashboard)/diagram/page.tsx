@@ -11,10 +11,14 @@ import React, {
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { useGetProjectSummaryQuery, useSaveDiagramMutation } from "@/app/store/projectsApi";
+import { useSearchParams } from "next/navigation";
+import {
+  useGetProjectSummaryQuery,
+  useSaveDiagramMutation,
+  useUploadDiagramImageMutation,
+} from "@/app/store/projectsApi";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
-import LoaderModal from "@/components/chat/LoaderModal";
+import LoaderModal from "@/components/chat/main/loader/LoaderModal";
 
 import S1 from "../../../../public/diagram-icons/S1.svg";
 import S2 from "../../../../public/diagram-icons/S2.svg";
@@ -112,7 +116,6 @@ function colorForKind(kind: NodeKind): string {
 
 export default function DrawDiagram() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const projectId = searchParams.get("project");
   
   const { data: summary, isLoading: loadingSummary } = useGetProjectSummaryQuery(
@@ -138,6 +141,7 @@ export default function DrawDiagram() {
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [saveDiagram] = useSaveDiagramMutation();
+  const [uploadDiagramImage] = useUploadDiagramImageMutation();
 
   // Helpers
 
@@ -767,6 +771,51 @@ export default function DrawDiagram() {
     `.trim();
   };
 
+  const buildExportPngBlob = async (): Promise<Blob> => {
+    const svgString = buildExportSvg();
+    const svgBlob = new Blob([svgString], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(svgBlob);
+
+    try {
+      const img = document.createElement("img");
+      img.src = url;
+
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Failed to get canvas context"));
+            return;
+          }
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+
+          canvas.toBlob(
+            (result) => {
+              if (!result) {
+                reject(new Error("Failed to create image blob"));
+                return;
+              }
+              resolve(result);
+            },
+            "image/png",
+            0.92
+          );
+        };
+        img.onerror = () => {
+          reject(new Error("Failed to load SVG into image"));
+        };
+      });
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
   // Download SVG / PNG / JPEG (no html2canvas)
   const handleDownloadImage = async (
     format: "svg" | "png" | "jpeg"
@@ -828,13 +877,37 @@ export default function DrawDiagram() {
     if (opening || !projectId) return;
     setOpening(true);
     try {
+      let imageObjectKey: string | undefined;
+
+      // First, render and upload the diagram image
+      try {
+        setLoadingMessage("Rendering diagram image...");
+        const imageBlob = await buildExportPngBlob();
+        setLoadingMessage("Uploading diagram image...");
+        const uploadResult = await uploadDiagramImage({
+          projectId,
+          file: imageBlob,
+        }).unwrap();
+        if (uploadResult?.image_object_key) {
+          imageObjectKey = String(uploadResult.image_object_key);
+          console.log("Diagram image uploaded with key:", imageObjectKey);
+        } else {
+          console.log("Diagram image uploaded (no image_object_key in response).");
+        }
+      } catch (imageError) {
+        console.error("Failed to upload diagram image:", imageError);
+        // Continue even if image upload fails
+      }
+
       // Save diagram to backend first
       try {
         const backendFormat = transformToBackendFormat();
-        setLoadingMessage("Saving diagram...");
+        setLoadingMessage("Saving diagram definition...");
         await saveDiagram({
           projectId,
-          diagram: backendFormat,
+          diagram: imageObjectKey
+            ? { ...backendFormat, image_object_key: imageObjectKey }
+            : backendFormat,
         }).unwrap();
         console.log("Diagram saved successfully");
       } catch (saveError) {
