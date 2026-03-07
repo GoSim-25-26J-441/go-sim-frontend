@@ -3,8 +3,8 @@
  * Backend uses X-User-Id and X-Chat-Id; if omitted it uses TestUser123 / TestChat123.
  */
 
-const DEFAULT_USER_ID = "TestUser123";
-const DEFAULT_CHAT_ID = "TestChat123";
+const DEFAULT_USER_ID = "e9G8LS9As5MofLqA5TR8Cg8Hiv32";
+const DEFAULT_CHAT_ID = "archfind-33878-1296";
 
 export type AmgApdHeaders = {
   "X-User-Id"?: string;
@@ -29,7 +29,7 @@ export function getAmgApdHeaders(overrides?: {
  */
 export function mergeAmgApdHeaders(
   init: RequestInit = {},
-  overrides?: { userId?: string; chatId?: string }
+  overrides?: { userId?: string; chatId?: string },
 ): RequestInit {
   const amg = getAmgApdHeaders(overrides);
   const prev = (init.headers ?? {}) as Record<string, string>;

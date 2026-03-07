@@ -51,7 +51,7 @@ export default function UploadPage() {
 
     if (!editedYaml) {
       alert(
-        "No edited YAML found.\n\nIf you refreshed this page, the edited YAML in session storage may be gone.\nGo back to the graph and click Generate Graph again."
+        "No edited YAML found.\n\nIf you refreshed this page, the edited YAML in session storage may be gone.\nGo back to the graph and click Generate Graph again.",
       );
       router.replace("/dashboard/patterns");
       return;
@@ -154,7 +154,7 @@ export default function UploadPage() {
           headers: getAmgApdHeaders({
             chatId: projectID || undefined,
           }),
-        }
+        },
       );
 
       if (!res.ok) {
@@ -183,7 +183,9 @@ export default function UploadPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-lg font-semibold mb-2">
-                {searchingVersions ? "Searching for versions…" : "Analyzing architecture…"}
+                {searchingVersions
+                  ? "Searching for versions…"
+                  : "Analyzing architecture…"}
               </h1>
               <p className="text-sm opacity-70">
                 {searchingVersions
@@ -205,8 +207,13 @@ export default function UploadPage() {
       <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-semibold mb-2">Upload YAML to Begin Analysis</h1>
-            <p className="text-sm opacity-70">Upload your architecture specification to visualize and detect anti-patterns</p>
+            <h1 className="text-2xl font-semibold mb-2">
+              Upload YAML to Begin Analysis
+            </h1>
+            <p className="text-sm opacity-70">
+              Upload your architecture specification to visualize and detect
+              anti-patterns
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -219,7 +226,7 @@ export default function UploadPage() {
             </button>
             {/* Test Button using shared component with fixed project ID */}
             <ViewPatternsForProjectButton
-              projectPublicId="TestChat123"
+              projectPublicId="archfind-33878-1296"
               label="Test Button"
             />
           </div>
@@ -229,10 +236,13 @@ export default function UploadPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
               <div className="mb-3">
-                <h2 className="text-lg font-semibold">View Existing Versions</h2>
+                <h2 className="text-lg font-semibold">
+                  View Existing Versions
+                </h2>
                 <p className="text-sm opacity-70 mt-1">
-                  Enter the <span className="font-medium">project_public_id</span>{" "}
-                  to load the latest saved version.
+                  Enter the{" "}
+                  <span className="font-medium">project_public_id</span> to load
+                  the latest saved version.
                 </p>
               </div>
 

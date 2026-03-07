@@ -12,9 +12,14 @@ import type {
 
 export default function VersionSidebar({
   refreshTrigger = 0,
+  projectId,
 }: {
   refreshTrigger?: number;
+  /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
+  projectId?: string;
 } = {}) {
+  const headers = () =>
+    getAmgApdHeaders(projectId ? { chatId: projectId } : undefined);
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +77,7 @@ export default function VersionSidebar({
     setError(null);
     try {
       const res = await fetch("/api/amg-apd/versions", {
-        headers: getAmgApdHeaders(),
+        headers: headers(),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -87,18 +92,18 @@ export default function VersionSidebar({
 
   useEffect(() => {
     fetchVersions();
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     if (refreshTrigger > 0) fetchVersions();
-  }, [refreshTrigger]);
+  }, [refreshTrigger, projectId]);
 
   async function handleMoveToVersion(id: string) {
     setOpen(false);
     setRegenerating(true);
     try {
       const versionRes = await fetch(`/api/amg-apd/versions/${id}`, {
-        headers: getAmgApdHeaders(),
+        headers: headers(),
       });
       if (!versionRes.ok) throw new Error(await versionRes.text());
       const v = await versionRes.json();
@@ -131,7 +136,7 @@ export default function VersionSidebar({
     try {
       const res = await fetch(`/api/amg-apd/versions/${id}`, {
         method: "DELETE",
-        headers: getAmgApdHeaders(),
+        headers: headers(),
       });
       if (!res.ok) throw new Error(await res.text());
       await fetchVersions();
@@ -158,7 +163,7 @@ export default function VersionSidebar({
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          ...getAmgApdHeaders(),
+          ...headers(),
         },
         body: JSON.stringify({ title: editingTitle.trim() }),
       });
@@ -224,7 +229,11 @@ export default function VersionSidebar({
                 Versions
               </span>
               <Link
-                href="/dashboard/patterns/compare"
+                href={
+                  projectId
+                    ? `/project/${projectId}/patterns/compare`
+                    : "/dashboard/patterns/compare"
+                }
                 className="text-xs text-[#9AA4B2] hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
                 onClick={closePanel}
               >
