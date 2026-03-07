@@ -1,10 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
+import { useAuth } from "@/providers/auth-context";
+import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
+import { createSimulationRun } from "@/lib/api-client/simulation";
+
+interface VersionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
 
 interface SimulationFormData {
   name: string;
@@ -19,8 +28,14 @@ interface SimulationFormData {
   scenario: string;
 }
 
+const NONE_VERSION_ID = "";
+
 export default function NewSimulationPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const versionFromUrl = searchParams.get("version");
+  const { userId } = useAuth();
+
   const [formData, setFormData] = useState<SimulationFormData>({
     name: "",
     description: "",
@@ -35,6 +50,73 @@ export default function NewSimulationPage() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Diagram version from AMG-APD
+  const [availableVersions, setAvailableVersions] = useState<VersionOption[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(true);
+  const [selectedVersionId, setSelectedVersionId] = useState<string>(NONE_VERSION_ID);
+  const [versionDetailResponse, setVersionDetailResponse] = useState<unknown>(null);
+  const [versionDetailLoading, setVersionDetailLoading] = useState(false);
+  const [debugView, setDebugView] = useState<"hide" | "show">("hide");
+
+  // Fetch versions list from AMG-APD (no project scope for standalone simulator)
+  useEffect(() => {
+    const controller = new AbortController();
+    setVersionsLoading(true);
+    const headers = getAmgApdHeaders({ userId: userId ?? undefined });
+    fetch("/api/amg-apd/versions", { signal: controller.signal, headers })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          versions?: Array<{ id: string; version_number?: number; title?: string; created_at?: string }>;
+        };
+        const list = data.versions ?? [];
+        const mapped: VersionOption[] = list.map((v) => ({
+          id: v.id,
+          label:
+            v.version_number != null && v.title?.trim()
+              ? `v${v.version_number} · ${v.title}`
+              : (v.title?.trim() || v.id),
+          description: v.created_at
+            ? `Created ${new Date(v.created_at).toLocaleDateString()}`
+            : undefined,
+        }));
+        setAvailableVersions(mapped);
+        if (versionFromUrl && mapped.some((m) => m.id === versionFromUrl)) {
+          setSelectedVersionId(versionFromUrl);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setVersionsLoading(false));
+    return () => controller.abort();
+  }, [userId, versionFromUrl]);
+
+  // Fetch full version when one is selected
+  useEffect(() => {
+    if (!selectedVersionId || selectedVersionId === NONE_VERSION_ID) {
+      setVersionDetailResponse(null);
+      return;
+    }
+    const controller = new AbortController();
+    setVersionDetailLoading(true);
+    setVersionDetailResponse(null);
+    const headers = getAmgApdHeaders({ userId: userId ?? undefined });
+    fetch(`/api/amg-apd/versions/${encodeURIComponent(selectedVersionId)}`, {
+      signal: controller.signal,
+      headers,
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setVersionDetailResponse({ error: res.status, body: data });
+          return;
+        }
+        setVersionDetailResponse(data);
+      })
+      .catch((err) => setVersionDetailResponse({ fetchError: String(err) }))
+      .finally(() => setVersionDetailLoading(false));
+    return () => controller.abort();
+  }, [selectedVersionId, userId]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -243,6 +325,27 @@ export default function NewSimulationPage() {
           <div>
             <h2 className="text-lg font-semibold text-white mb-4">Simulation Settings</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-white mb-2">
+                  Diagram version
+                </label>
+                <select
+                  value={selectedVersionId}
+                  onChange={(e) => setSelectedVersionId(e.target.value)}
+                  disabled={versionsLoading}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-white/20 disabled:opacity-50"
+                >
+                  <option value={NONE_VERSION_ID}>Use default</option>
+                  {availableVersions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+                {versionsLoading && (
+                  <p className="text-xs text-white/50 mt-1">Loading versions…</p>
+                )}
+              </div>
               <InputField
                 name="duration_seconds"
                 type="number"
@@ -288,6 +391,36 @@ export default function NewSimulationPage() {
               <p className="text-sm text-red-400">{errors.general}</p>
             </div>
           )}
+
+          {/* Debug: Version API response */}
+          <div className="border border-white/10 rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 bg-white/5">
+              <span className="text-xs font-medium text-white/70">Debug: Version API response</span>
+              <select
+                value={debugView}
+                onChange={(e) => setDebugView(e.target.value as "hide" | "show")}
+                className="text-xs px-2 py-1 rounded bg-black/40 border border-white/20 text-white focus:outline-none focus:ring-1 focus:ring-white/30"
+              >
+                <option value="hide">Hide</option>
+                <option value="show">Show version response</option>
+              </select>
+            </div>
+            {debugView === "show" && (
+              <div className="p-3 border-t border-white/10 bg-black/20 max-h-64 overflow-auto">
+                {versionDetailLoading ? (
+                  <p className="text-xs text-white/50">Loading…</p>
+                ) : versionDetailResponse === null ? (
+                  <p className="text-xs text-white/50">
+                    Select a diagram version to load response.
+                  </p>
+                ) : (
+                  <pre className="text-[11px] font-mono text-white/80 whitespace-pre-wrap break-all">
+                    {JSON.stringify(versionDetailResponse, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Submit Button */}
           <div className="flex items-center justify-end gap-4 pt-4 border-t border-border">

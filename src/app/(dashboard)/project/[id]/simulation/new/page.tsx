@@ -300,7 +300,19 @@ workload:
   const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([sampleOption]);
   const [versionsLoading, setVersionsLoading] = useState(true);
   const [selectedVersionId, setSelectedVersionId] = useState("sample");
+  const [versionDetailResponse, setVersionDetailResponse] = useState<unknown>(null);
+  const [versionDetailLoading, setVersionDetailLoading] = useState(false);
+  const [debugView, setDebugView] = useState<"hide" | "show" | "yaml">("hide");
   const isSampleScenario = selectedVersionId === "sample" || version === "sample";
+
+  /** YAML template from version API response (yaml_content field), when a saved version is loaded */
+  const versionYamlTemplate =
+    versionDetailResponse &&
+    typeof versionDetailResponse === "object" &&
+    "yaml_content" in versionDetailResponse &&
+    typeof (versionDetailResponse as { yaml_content?: string }).yaml_content === "string"
+      ? (versionDetailResponse as { yaml_content: string }).yaml_content
+      : null;
 
   useEffect(() => {
     // Fetch diagram versions from AMG-APD API (project-scoped when projectId is used as chat id).
@@ -340,6 +352,43 @@ workload:
       .finally(() => setVersionsLoading(false));
     return () => controller.abort();
   }, [projectId, userId]);
+
+  // When URL has ?version=..., show the form with that version (e.g. after refresh or shared link)
+  useEffect(() => {
+    if (!version) return;
+    setSelectedVersionId(version);
+    setVersionPhase(false);
+  }, [version]);
+
+  // Fetch version detail (GET /api/amg-apd/versions/:id) when a non-sample version is selected
+  useEffect(() => {
+    if (!selectedVersionId || selectedVersionId === "sample") {
+      setVersionDetailResponse(null);
+      return;
+    }
+    const controller = new AbortController();
+    setVersionDetailLoading(true);
+    setVersionDetailResponse(null);
+    const headers = getAmgApdHeaders({
+      userId: userId ?? undefined,
+      chatId: projectId,
+    });
+    fetch(`/api/amg-apd/versions/${encodeURIComponent(selectedVersionId)}`, {
+      signal: controller.signal,
+      headers,
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setVersionDetailResponse({ error: res.status, body: data });
+          return;
+        }
+        setVersionDetailResponse(data);
+      })
+      .catch((err) => setVersionDetailResponse({ fetchError: String(err) }))
+      .finally(() => setVersionDetailLoading(false));
+    return () => controller.abort();
+  }, [selectedVersionId, projectId, userId]);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<SimulationFormData>({
@@ -706,7 +755,12 @@ workload:
             <button
               type="button"
               disabled={versionsLoading}
-              onClick={() => setVersionPhase(false)}
+              onClick={() => {
+                const params = new URLSearchParams(searchParams.toString());
+                params.set("version", selectedVersionId);
+                router.replace(`/project/${projectId}/simulation/new?${params.toString()}`, { scroll: false });
+                setVersionPhase(false);
+              }}
               className="px-5 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Load &amp; Configure →
@@ -742,6 +796,52 @@ workload:
               </div>
             );
           }
+        )}
+      </div>
+
+      {/* Debug: Version API response (GET /api/amg-apd/versions/:id) + YAML template */}
+      <div className="border border-white/10 rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 bg-white/5">
+          <span className="text-xs font-medium text-white/70">Debug: Version API response</span>
+          <select
+            value={debugView}
+            onChange={(e) => setDebugView(e.target.value as "hide" | "show" | "yaml")}
+            className="text-xs px-2 py-1 rounded bg-black/40 border border-white/20 text-white focus:outline-none focus:ring-1 focus:ring-white/30"
+          >
+            <option value="hide">Hide</option>
+            <option value="show">Show version response</option>
+            <option value="yaml">Show YAML template</option>
+          </select>
+        </div>
+        {debugView === "show" && (
+          <div className="p-3 border-t border-white/10 bg-black/20 max-h-64 overflow-auto">
+            {versionDetailLoading ? (
+              <p className="text-xs text-white/50">Loading…</p>
+            ) : selectedVersionId === "sample" ? (
+              <p className="text-xs text-white/50">Select a saved diagram version (not sample) to load response.</p>
+            ) : versionDetailResponse === null ? (
+              <p className="text-xs text-white/50">No response yet.</p>
+            ) : (
+              <pre className="text-[11px] font-mono text-white/80 whitespace-pre-wrap break-all">
+                {JSON.stringify(versionDetailResponse, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+        {debugView === "yaml" && (
+          <div className="p-3 border-t border-white/10 bg-black/20 max-h-64 overflow-auto">
+            {versionDetailLoading ? (
+              <p className="text-xs text-white/50">Loading…</p>
+            ) : versionYamlTemplate ? (
+              <pre className="text-[11px] font-mono text-white/80 whitespace-pre-wrap break-all">
+                {versionYamlTemplate}
+              </pre>
+            ) : selectedVersionId === "sample" ? (
+              <p className="text-xs text-white/50">Select a saved diagram version (not sample) to load YAML template.</p>
+            ) : (
+              <p className="text-xs text-white/50">No YAML template in response yet.</p>
+            )}
+          </div>
         )}
       </div>
 
