@@ -264,22 +264,24 @@ export default function ViewMetricsAnalysisPage() {
                       {best.candidate.sim_workload?.concurrent_users ?? 0} users
                     </p>
                   </div>
-                  <div>
-                    <p className="text-sm opacity-60">Shortfall</p>
-                    <p
-                      className={`text-lg font-semibold ${getWorkloadPerformanceColor(
-                        best.workload_distance,
-                        targetUsers
-                      )}`}
-                    >
-                      {best.workload_distance} users
-                    </p>
-                    {targetUsers > 0 && (
-                      <p className="text-xs opacity-50 mt-1">
-                        ({((best.workload_distance / targetUsers) * 100).toFixed(1)}% of target)
-                      </p>
-                    )}
-                  </div>
+                  {(() => {
+                    const achieved = best.candidate.sim_workload?.concurrent_users ?? 0;
+                    const diff = achieved - targetUsers;
+                    const isSurplus = diff >= 0;
+                    return (
+                      <div>
+                        <p className="text-sm opacity-60">{isSurplus ? "Surplus" : "Shortfall"}</p>
+                        <p className={`text-lg font-semibold ${isSurplus ? "text-green-500" : "text-red-500"}`}>
+                          {isSurplus ? "+" : ""}{diff} users
+                        </p>
+                        {targetUsers > 0 && (
+                          <p className="text-xs opacity-50 mt-1">
+                            ({((Math.abs(diff) / targetUsers) * 100).toFixed(1)}% of target)
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm opacity-60">Source</p>
                     <p className="text-sm font-medium opacity-80">{best.candidate.source ?? "—"}</p>
@@ -314,9 +316,6 @@ export default function ViewMetricsAnalysisPage() {
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
                     Utilization
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
-                    Performance
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
                     Shortfall
@@ -383,24 +382,23 @@ export default function ViewMetricsAnalysisPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="opacity-80 font-medium">
-                        {score.candidate.sim_workload?.concurrent_users ?? 0} users
-                      </p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p
-                        className={`font-medium ${getWorkloadPerformanceColor(
-                          score.workload_distance,
-                          targetUsers
-                        )}`}
-                      >
-                        {score.workload_distance} users
-                      </p>
-                      {targetUsers > 0 && (
-                        <p className="text-xs opacity-50">
-                          {((score.workload_distance / targetUsers) * 100).toFixed(1)}% of target
-                        </p>
-                      )}
+                      {(() => {
+                        const achieved = score.candidate.sim_workload?.concurrent_users ?? 0;
+                        const diff = achieved - targetUsers;
+                        const isSurplus = diff >= 0;
+                        return (
+                          <>
+                            <p className={`font-medium ${isSurplus ? "text-green-500" : "text-red-500"}`}>
+                              {isSurplus ? "+" : ""}{diff} users
+                            </p>
+                            {targetUsers > 0 && (
+                              <p className="text-xs opacity-50">
+                                {((Math.abs(diff) / targetUsers) * 100).toFixed(1)}% of target
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -426,14 +424,21 @@ export default function ViewMetricsAnalysisPage() {
                         {index + 1}. {score.candidate.spec?.label ?? score.candidate.id} (
                         {score.candidate.id})
                       </h4>
-                      <span
-                        className={`px-2 py-1 text-xs rounded-full border ${score.passed_all_required
-                          ? "bg-card text-green-400 border-border"
-                          : "bg-card text-yellow-400 border-border"
-                          }`}
-                      >
-                        Shortfall: {score.workload_distance} users
-                      </span>
+                      {(() => {
+                        const achieved = score.candidate.sim_workload?.concurrent_users ?? 0;
+                        const diff = achieved - targetUsers;
+                        const isSurplus = diff >= 0;
+                        return (
+                          <span
+                            className={`px-2 py-1 text-xs rounded-full border ${isSurplus
+                              ? "bg-card text-green-400 border-border"
+                              : "bg-card text-red-400 border-border"
+                              }`}
+                          >
+                            {isSurplus ? "Surplus" : "Shortfall"}: {isSurplus ? "+" : ""}{diff} users
+                          </span>
+                        );
+                      })()}
                     </div>
                     <ul className="space-y-2">
                       {(score.suggestions ?? []).map((s, sIndex) => (
