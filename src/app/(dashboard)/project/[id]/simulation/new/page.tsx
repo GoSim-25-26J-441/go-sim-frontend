@@ -29,9 +29,11 @@ interface SimulationFormData {
 }
 
 // Scenario editor state mirroring simulation-core YAML schema
+// memory_gb is optional; omit or 0 means simulator default (16 GB)
 interface ScenarioHost {
   id: string;
   cores: number;
+  memory_gb?: number;
 }
 
 interface ScenarioDownstreamCallLatency {
@@ -126,6 +128,9 @@ function scenarioToYaml(scenario: ScenarioState): string {
     for (const host of scenario.hosts) {
       lines.push(`  - id: ${host.id || "host-1"}`);
       lines.push(`    cores: ${host.cores || 1}`);
+      if (host.memory_gb != null && host.memory_gb > 0) {
+        lines.push(`    memory_gb: ${host.memory_gb}`);
+      }
     }
   }
 
@@ -251,6 +256,7 @@ export default function ProjectNewSimulationPage() {
   const SAMPLE_SCENARIO_YAML = `hosts:
   - id: host-1
     cores: 4
+    memory_gb: 16
 
 services:
   - id: users
@@ -353,7 +359,7 @@ workload:
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioState>({
-    hosts: [{ id: "host-1", cores: 4 }],
+    hosts: [{ id: "host-1", cores: 4, memory_gb: 16 }],
     services: [
       {
         id: "svc1",
@@ -540,7 +546,8 @@ workload:
     setIsSubmitting(true);
 
     try {
-      const finalScenarioYaml = isSampleScenario ? SAMPLE_SCENARIO_YAML : scenarioYaml;
+      // Always use the scenario built in Step 1 (sample only seeds the form; edits are what we send)
+      const finalScenarioYaml = scenarioYaml;
       const durationMs = runMode === "online_optimization" ? 0 : Math.max(0, formData.duration_seconds * 1000);
 
       // Build optimization payload based on run mode
@@ -1138,6 +1145,27 @@ workload:
                             className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                           />
                         </div>
+                        <div className="w-32">
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Memory (GB)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="16 (default)"
+                            value={host.memory_gb ?? ""}
+                            onChange={(e) =>
+                              setScenario((prev) => {
+                                const raw = e.target.value.trim();
+                                const memory_gb = raw === "" ? undefined : Number(raw) || 0;
+                                const next = { ...prev, hosts: [...prev.hosts] };
+                                next.hosts[index] = { ...next.hosts[index], memory_gb };
+                                return next;
+                              })
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/40"
+                          />
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -1161,7 +1189,7 @@ workload:
                         ...prev,
                         hosts: [
                           ...prev.hosts,
-                          { id: `host-${prev.hosts.length + 1}`, cores: 4 },
+                          { id: `host-${prev.hosts.length + 1}`, cores: 4, memory_gb: 16 },
                         ],
                       }))
                     }
@@ -2431,12 +2459,12 @@ workload:
                 </div>
               )}
 
-              {/* Scenario YAML preview */}
+              {/* Scenario YAML — what was built in Step 1 (same as submitted to backend) */}
               <div>
                 <h3 className="text-sm font-semibold text-white/80 mb-2">Scenario YAML</h3>
                 <textarea
                   readOnly
-                  value={isSampleScenario ? SAMPLE_SCENARIO_YAML : scenarioYaml}
+                  value={scenarioYaml}
                   className="w-full h-48 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
                 />
               </div>

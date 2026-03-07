@@ -70,12 +70,33 @@ interface Candidate {
   s3_path?: string;
 }
 
+interface BestCandidateHost {
+  host_id: string;
+  cpu_cores?: number;
+  memory_gb?: number;
+}
+
+interface BestCandidateService {
+  service_id: string;
+  replicas?: number;
+  cpu_cores?: number;
+  memory_mb?: number;
+}
+
+interface BestCandidateTopology {
+  s3_path?: string;
+  hosts?: BestCandidateHost[];
+  services?: BestCandidateService[];
+}
+
 interface CandidatesResponse {
-  run_id: string;
+  run_id?: string;
   user_id?: string;
   project_id?: string;
   simulation?: { nodes?: number };
   candidates: Candidate[];
+  best_candidate_id?: string;
+  best_candidate?: BestCandidateTopology;
 }
 
 interface RunInfo {
@@ -155,30 +176,6 @@ interface MetricsResponse {
   run_id: string;
   summary?: MetricsSummary;
   timeseries?: MetricTimeseries[];
-}
-
-// ── Best-candidate types ──────────────────────────────────────────────────────
-
-interface BestCandidateHost {
-  host_id: string;
-  cpu_cores?: number;
-  memory_gb?: number;
-}
-
-interface BestCandidateService {
-  service_id: string;
-  replicas?: number;
-  cpu_cores?: number;
-  memory_mb?: number;
-}
-
-interface BestCandidateResponse {
-  run_id: string;
-  best_candidate?: {
-    s3_path?: string;
-    hosts?: BestCandidateHost[];
-    services?: BestCandidateService[];
-  };
 }
 
 export interface SsePanelHandle {
@@ -272,6 +269,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
 
   // Adaptive X-axis window: infer event cadence from the data span and pick
   // a window that keeps ~60–120 ticks visible without crowding.
+  // Ensure domain always has positive width to avoid Recharts duplicate tick keys.
   const xDomain = useMemo<[number, number] | ["dataMin", "dataMax"]>(() => {
     if (rows.length < 2) return ["dataMin", "dataMax"];
     const first = rows[0].t;
@@ -284,7 +282,10 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
       Math.max(avgIntervalMs * 60, 15_000),
       180_000,
     );
-    return [last - windowMs, last];
+    const start = last - windowMs;
+    // Avoid zero-width domain (causes duplicate key warnings in Recharts)
+    if (start >= last) return [last - 60_000, last];
+    return [start, last];
   }, [rows]);
 
   // Y-axis: add 20 % headroom above the visible maximum so lines never hug the top
@@ -346,6 +347,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
               tickLine={false}
               axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
               minTickGap={60}
+              tickCount={6}
             />
             <YAxis
               domain={[0, yMax]}
@@ -354,6 +356,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
               axisLine={false}
               width={32}
               allowDecimals={false}
+              tickCount={5}
             />
             <Tooltip
               contentStyle={{
@@ -421,7 +424,10 @@ function MetricsTimeseriesChart({ timeseries }: MetricsTimeseriesChartProps) {
         const tMin = rows[0]._t as number;
         const tMax = rows[rows.length - 1]._t as number;
         const allVals = ts.points.map((p) => p.value);
-        const vMax = Math.max(...allVals, 0) * 1.2;
+        const vMaxRaw = Math.max(...allVals, 0) * 1.2;
+        const vMax = vMaxRaw > 0 ? vMaxRaw : 1;
+        const xDomainMin = tMin < tMax ? tMin : tMax - 60_000;
+        const xDomainMax = tMin < tMax ? tMax : tMax;
 
         return (
           <div key={ts.metric}>
@@ -432,15 +438,17 @@ function MetricsTimeseriesChart({ timeseries }: MetricsTimeseriesChartProps) {
                 <XAxis
                   dataKey="_t"
                   type="number"
-                  domain={[tMin, tMax]}
+                  domain={[xDomainMin, xDomainMax]}
                   tickFormatter={(v: number) => new Date(v).toISOString().substring(11, 19)}
                   tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
                   scale="time"
+                  tickCount={6}
                 />
                 <YAxis
                   domain={[0, vMax]}
                   tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
                   width={45}
+                  tickCount={5}
                 />
                 <Tooltip
                   contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)" }}
@@ -793,12 +801,11 @@ export default function SimulationRunPage() {
   const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
-  // Best-candidate view
-  const [bestCandidate, setBestCandidate] = useState<BestCandidateResponse | null>(null);
-  const [bestCandLoading, setBestCandLoading] = useState(false);
-  const [bestCandError, setBestCandError] = useState<string | null>(null);
+  // Best-candidate topology (from same candidates API response)
+  const [bestCandidate, setBestCandidate] = useState<{ best_candidate_id: string; best_candidate?: BestCandidateTopology } | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
   const seriesBufferRef = useRef<ServiceSeries>({});
+  const knownServicesRef = useRef<Set<string>>(new Set());
   const [chartSeries, setChartSeries] = useState<ServiceSeries>({});
 
   const simRef = useRef<SsePanelHandle>(null);
@@ -873,9 +880,10 @@ export default function SimulationRunPage() {
         // Backend wraps the metric inside a "data" field: { data: {...}, event, run_id }
         // Fall back to flat format for older/direct payloads.
         const m: MetricPayload = outer.data ?? outer;
+        const svc = m.labels?.service;
+        if (svc) knownServicesRef.current.add(svc as string);
 
-        if (m.metric === "request_count" && m.labels?.service && m.value != null) {
-          const svc = m.labels.service;
+        if (m.metric === "request_count" && svc && m.value != null) {
           const t = m.timestamp ? new Date(m.timestamp).getTime() : Date.now();
           const pt: TimePoint = { t, v: m.value };
           const buf = seriesBufferRef.current;
@@ -904,6 +912,10 @@ export default function SimulationRunPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as CandidatesResponse;
       setCandidates(data.candidates ?? []);
+      setBestCandidate({
+        best_candidate_id: data.best_candidate_id ?? "",
+        best_candidate: data.best_candidate,
+      });
     } catch (e) {
       setCandidatesError((e as Error).message);
     } finally {
@@ -942,34 +954,10 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
-  // ── Best-candidate fetch ───────────────────────────────────────────────────────
-
-  const fetchBestCandidate = useCallback(async () => {
-    setBestCandLoading(true);
-    setBestCandError(null);
-    try {
-      const token = await getFirebaseIdToken();
-      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/best-candidate`;
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.status === 404) {
-        setBestCandidate({ run_id: runId });
-        return;
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as BestCandidateResponse;
-      setBestCandidate(data);
-    } catch (e) {
-      setBestCandError((e as Error).message);
-    } finally {
-      setBestCandLoading(false);
-    }
-  }, [runId]);
-
   // Clear chart data
   const clearChart = useCallback(() => {
     seriesBufferRef.current = {};
+    knownServicesRef.current.clear();
     setChartSeries({});
   }, []);
 
@@ -985,13 +973,16 @@ export default function SimulationRunPage() {
     // Flush buffer → chart state at FLUSH_MS cadence
     const flushId = setInterval(() => {
       const buf = seriesBufferRef.current;
-      if (Object.keys(buf).length > 0) {
+      if (Object.keys(buf).length > 0 || knownServicesRef.current.size > 0) {
         setChartSeries((prev) => {
           const next = { ...prev };
           for (const [svc, pts] of Object.entries(buf)) {
             const existing = next[svc] ?? [];
             const merged = [...existing, ...pts].slice(-MAX_POINTS);
             next[svc] = merged;
+          }
+          for (const svc of knownServicesRef.current) {
+            if (!(svc in next)) next[svc] = prev[svc] ?? [];
           }
           // Clear consumed points from buffer
           seriesBufferRef.current = {};
@@ -1046,10 +1037,10 @@ export default function SimulationRunPage() {
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
 
-  // Auto-fetch persisted metrics + best-candidate once the run is terminal
+  // Auto-fetch persisted metrics + candidates (includes best-candidate) once the run is terminal
   useEffect(() => {
     if (isTerminal && !metricsData && !metricsLoading) fetchMetrics();
-    if (isTerminal && !bestCandidate && !bestCandLoading) fetchBestCandidate();
+    if (isTerminal && candidates === null && !candidatesLoading) fetchCandidates();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTerminal]);
 
@@ -1464,12 +1455,20 @@ export default function SimulationRunPage() {
               <tbody>
                 {candidates.map((c) => {
                   const isExpanded = expandedCandidate === c.id;
+                  const isBest = bestCandidate?.best_candidate_id && c.id === bestCandidate.best_candidate_id;
                   return (
                     <React.Fragment key={c.id}>
                       <tr
-                        className="border-b border-border/50 hover:bg-white/5 transition-colors"
+                        className={`border-b border-border/50 hover:bg-white/5 transition-colors ${isBest ? "bg-amber-500/5" : ""}`}
                       >
-                        <td className="px-3 py-2 text-white/80">{c.id}</td>
+                        <td className="px-3 py-2 text-white/80">
+                          {c.id}
+                          {isBest && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300">
+                              Best
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-white/70">{c.spec?.vcpu ?? "—"}</td>
                         <td className="px-3 py-2 text-white/70">{c.spec?.memory_gb ?? "—"}</td>
                         <td className="px-3 py-2">
@@ -1626,38 +1625,38 @@ export default function SimulationRunPage() {
         </div>
       )}
 
-      {/* Best-candidate — shown once run is terminal */}
+      {/* Best candidate — shown once run is terminal; data from same /candidates API */}
       {isTerminal && (
         <div className="bg-card border border-border rounded-lg p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">Best candidate</h2>
             <button
-              onClick={fetchBestCandidate}
-              disabled={bestCandLoading}
+              onClick={fetchCandidates}
+              disabled={candidatesLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <RefreshCw className={`w-3 h-3 ${bestCandLoading ? "animate-spin" : ""}`} />
-              {bestCandidate === null ? "Load" : "Refresh"}
+              <RefreshCw className={`w-3 h-3 ${candidatesLoading ? "animate-spin" : ""}`} />
+              {candidates === null ? "Load" : "Refresh"}
             </button>
           </div>
 
-          {bestCandError && (
+          {candidatesError && (
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-              {bestCandError}
+              {candidatesError}
             </p>
           )}
 
-          {bestCandLoading && (
+          {candidatesLoading && (
             <div className="flex items-center gap-2 text-xs text-white/50 py-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
             </div>
           )}
 
-          {bestCandidate && !bestCandLoading && !bestCandidate.best_candidate && (
+          {bestCandidate && !candidatesLoading && !bestCandidate.best_candidate && (
             <p className="text-xs text-white/30 italic">No best-candidate data available for this run.</p>
           )}
 
-          {bestCandidate?.best_candidate && !bestCandLoading && (
+          {bestCandidate?.best_candidate && !candidatesLoading && (
             <div className="space-y-4">
               {bestCandidate.best_candidate.s3_path && (
                 <p className="text-[11px] text-white/30 font-mono truncate" title={bestCandidate.best_candidate.s3_path}>

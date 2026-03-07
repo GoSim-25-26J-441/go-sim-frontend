@@ -100,7 +100,7 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
 /**
  * Create a new simulation run (project-level).
  * Backend: POST /api/v1/simulation/projects/:project_id/runs
- * Use returned run.run_id for start, SSE, stop, best-candidate.
+ * Use returned run.run_id for start, SSE, stop, candidates (includes best-candidate).
  */
 export async function createProjectSimulationRun(
   projectId: string,
