@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
@@ -57,8 +56,6 @@ export default function PatternsView({
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
   const showGraphOverlay = graphRegenerating || regenerating;
-
-  const uploadHref = "/dashboard/patterns/upload";
 
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
@@ -402,15 +399,9 @@ export default function PatternsView({
           <h2 className="text-xl font-semibold text-white/95 mb-2">
             No graph to display
           </h2>
-          <p className="text-sm text-white/60 mb-6 max-w-md mx-auto">
-            Upload a YAML and run analysis to visualize your architecture.
+          <p className="text-sm text-white/60 max-w-md mx-auto">
+            Open a project and generate a diagram to analyze patterns.
           </p>
-          <Link
-            href={uploadHref}
-            className="inline-flex items-center gap-2 rounded-2xl bg-[#9AA4B2] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#9AA4B2]/20 hover:bg-[#9AA4B2]/90 hover:shadow-[#9AA4B2]/30 transition-all duration-200 hover:scale-[1.02]"
-          >
-            Upload YAML to Analyze
-          </Link>
         </div>
       </div>
     );
