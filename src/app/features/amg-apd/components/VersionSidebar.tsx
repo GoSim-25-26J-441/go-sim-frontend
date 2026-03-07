@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import type {
@@ -18,8 +19,12 @@ export default function VersionSidebar({
   /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
   projectId?: string;
 } = {}) {
+  const { userId } = useAuth();
   const headers = () =>
-    getAmgApdHeaders(projectId ? { chatId: projectId } : undefined);
+    getAmgApdHeaders({
+      userId: userId ?? undefined,
+      ...(projectId ? { chatId: projectId } : {}),
+    });
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

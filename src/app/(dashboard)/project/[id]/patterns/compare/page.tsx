@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type {
@@ -32,8 +33,12 @@ export default function ProjectPatternsComparePage({
   params: Promise<{ id: string }>;
 }) {
   const { id: projectId } = use(params);
+  const { userId } = useAuth();
   const headers = () =>
-    getAmgApdHeaders(projectId ? { chatId: projectId } : undefined);
+    getAmgApdHeaders({
+      userId: userId ?? undefined,
+      ...(projectId ? { chatId: projectId } : {}),
+    });
 
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(true);
@@ -59,7 +64,7 @@ export default function ProjectPatternsComparePage({
         setLoadingVersions(false);
       }
     })();
-  }, [projectId]);
+  }, [projectId, userId]);
 
   async function runCompare() {
     if (!leftId || !rightId || leftId === rightId) {
