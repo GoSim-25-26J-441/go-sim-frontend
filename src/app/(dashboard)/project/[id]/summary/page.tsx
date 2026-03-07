@@ -69,10 +69,10 @@ export default function Summary({
       href: `/project/${id}/simulation`,
     },
     {
-      key: "analysis",
-      label: "Analysis",
+      key: "cost",
+      label: "Cost",
       icon: Icons.Analysis,
-      href: `/project/${id}/analysis`,
+      href: `/project/${id}/cost`,
     },
   ];
 

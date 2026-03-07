@@ -290,7 +290,7 @@ export default function CostPage2() {
     };
 
     const handleBackClick = () => {
-        router.push('/cost');
+        router.back();
     };
 
     const identifyBestOptions = (costs: ClusterCostResult[]) => {

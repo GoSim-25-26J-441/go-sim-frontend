@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { fetchDesignsList } from '@/app/api/asm/routes';
@@ -53,18 +53,17 @@ interface ApiResponseRow {
 
 const PROJECT_ID = "abc";
 
-export default function CostPage() {
+type CostPageProps = {
+  projectId?: string;
+};
+
+export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { user, userId: firebaseUid } = useAuth();
+  const { userId: firebaseUid } = useAuth();
 
-  useEffect(() => {
-    if (!firebaseUid) return;
-    fetchRuns(firebaseUid);
-  }, [firebaseUid]);
-
-  const fetchRuns = async (uid: string) => {
+  const fetchRuns = useCallback(async (uid: string) => {
     try {
       setLoading(true);
       const data = await fetchDesignsList(uid);
@@ -87,7 +86,7 @@ export default function CostPage() {
         all_candidates: row.response || []
       }));
 
-      setRuns(runList.filter((r) => (r.project_id || "") === PROJECT_ID));
+      setRuns(runList.filter((r) => (r.project_id || "") === projectId));
     } catch (err) {
       console.error('Error fetching runs:', err);
       // const fallbackData: Run[] = [
@@ -126,7 +125,12 @@ export default function CostPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!firebaseUid) return;
+    fetchRuns(firebaseUid);
+  }, [fetchRuns, firebaseUid]);
 
   const handleRunClick = (run: Run) => {
     router.push(`/cost/${run.id}`);
@@ -180,7 +184,7 @@ export default function CostPage() {
             <div>
               <h3 className=" mb-4 flex items-center gap-2 text-2xl font-bold">
                 <FolderOpen className="w-5 h-5 opacity-70" />
-                Project: {PROJECT_ID}
+                Project: {projectId}
               </h3>
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold">Runs</h2>
