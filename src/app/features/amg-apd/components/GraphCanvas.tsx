@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import CytoscapeComponent from "react-cytoscapejs";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
@@ -87,11 +86,14 @@ export default function GraphCanvas({
   readOnly = false,
   isGenerating = false,
   onGenerateGraph,
+  onExportImageReady,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
   onGenerateGraph?: (yaml: string) => void | Promise<void>;
+  /** Called when cy is ready; pass a function that returns PNG data URL or null */
+  onExportImageReady?: (exportPng: () => string | null) => void;
 }) {
   if (!data?.graph) {
     return (
@@ -101,7 +103,6 @@ export default function GraphCanvas({
     );
   }
 
-  const router = useRouter();
   const analysis = data as AnalysisResult;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -299,6 +300,19 @@ export default function GraphCanvas({
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
 
+  useEffect(() => {
+    if (!onExportImageReady || !cyAlive(cy)) return;
+    onExportImageReady(() => {
+      const c = cyRef.current;
+      if (!c || !cyAlive(c)) return null;
+      try {
+        return c.png({ scale: 2 });
+      } catch {
+        return null;
+      }
+    });
+  }, [cy, onExportImageReady]);
+
   const performDelete = useCallback(() => {
     if (!cyAlive(cy)) return;
 
@@ -451,8 +465,8 @@ export default function GraphCanvas({
       return;
     }
 
-    const title = encodeURIComponent("Edited architecture");
-    router.push(`/dashboard/patterns/upload?regen=1&title=${title}`);
+    // No callback: user is in a context where regenerate is not available (e.g. compare view)
+    alert("Use the Patterns view for this project to regenerate the graph from edits.");
   }
 
   function handleRenameNode(id: string, newLabel: string) {
