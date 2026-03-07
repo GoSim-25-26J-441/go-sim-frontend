@@ -51,6 +51,15 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     let label = e?.kind ?? "";
 
     if (e?.kind === "CALLS") {
+      const protocol =
+        (typeof attrs.dep_kind === "string" && attrs.dep_kind.trim()) ||
+        (typeof attrs.kind === "string" && attrs.kind.trim()) ||
+        "rest";
+      const sync = typeof attrs.sync === "boolean" ? attrs.sync : true;
+      const protocolDisplay =
+        protocol === "grpc" ? "gRPC" : protocol === "event" ? "Event" : "REST";
+      const syncLabel = sync ? "sync" : "async";
+
       const endpoints = Array.isArray(attrs.endpoints)
         ? (attrs.endpoints as string[])
         : [];
@@ -68,7 +77,11 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
           ? endpoints.length
           : 0;
 
-      label = count > 0 || rpm > 0 ? `calls (${count} ep), ${rpm}rpm` : "calls";
+      if (count > 0 || rpm > 0) {
+        label = `CALLS [${protocolDisplay}] (${syncLabel}) — ${count} ep, ${rpm}rpm`;
+      } else {
+        label = `CALLS [${protocolDisplay}] (${syncLabel})`;
+      }
     }
 
     const hasDetection = kinds.length > 0;

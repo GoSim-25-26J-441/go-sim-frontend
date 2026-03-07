@@ -9,12 +9,43 @@ import { env } from "@/lib/env";
 
 type BackendRunSummary = {
   run_id: string;
+  user_id?: string;
+  project_id?: string;
+  engine_run_id?: string;
   status?: string;
   created_at?: string;
-  [key: string]: unknown;
+  updated_at?: string;
+  completed_at?: string | null;
+  metadata?: {
+    name?: string;
+    description?: string;
+    mode?: string;
+    objective?: string;
+    max_iterations?: number;
+    // optimization summary populated by engine callback
+    best_run_id?: string;
+    best_score?: number;
+    iterations?: number;
+    top_candidates?: string[];
+    [key: string]: unknown;
+  };
 };
 
-type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+function getRunLabel(run: BackendRunSummary): string {
+  const name = run.metadata?.name;
+  if (typeof name === "string" && name.trim()) return name.trim();
+  return run.run_id ?? "Unnamed run";
+}
+
+const MODE_LABELS: Record<string, string> = {
+  standard: "Standard",
+  batch: "Batch",
+  online: "Online",
+  batch_optimization: "Batch",
+  online_optimization: "Online",
+};
+
+type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "stopping";
 
 const statusConfig: Record<SimulationStatus, { label: string; icon: React.ReactNode; color: string; bgColor: string }> = {
   pending: {
@@ -47,6 +78,18 @@ const statusConfig: Record<SimulationStatus, { label: string; icon: React.ReactN
     color: "text-gray-400",
     bgColor: "bg-gray-400/10",
   },
+  stopped: {
+    label: "Stopped",
+    icon: <AlertCircle className="w-4 h-4" />,
+    color: "text-gray-400",
+    bgColor: "bg-gray-400/10",
+  },
+  stopping: {
+    label: "Stopping",
+    icon: <Loader2 className="w-4 h-4 animate-spin" />,
+    color: "text-orange-400",
+    bgColor: "bg-orange-400/10",
+  },
 };
 
 export default function ProjectSimulationPage() {
@@ -57,6 +100,8 @@ export default function ProjectSimulationPage() {
   const [runs, setRuns] = useState<BackendRunSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [rawResponse, setRawResponse] = useState<unknown>(null);
+  const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -78,7 +123,24 @@ export default function ProjectSimulationPage() {
           throw new Error(raw || `Failed to load simulation runs (HTTP ${res.status})`);
         }
         const data = await res.json();
-        const list: BackendRunSummary[] = Array.isArray(data) ? data : Array.isArray(data.runs) ? data.runs : [];
+        setRawResponse(data);
+
+        // Normalise into BackendRunSummary[]. Handles:
+        //   { runs: [{...}, ...] }   ← current backend shape
+        //   { run: {...} }           ← single-run responses
+        //   [{...}, ...]             ← bare array
+        //   { runs: ["id1", ...] }   ← legacy plain-ID list (kept for safety)
+        const rawList: unknown[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data.runs)
+          ? data.runs
+          : data.run
+          ? [data.run]
+          : [];
+
+        const list: BackendRunSummary[] = rawList.map((item) =>
+          typeof item === "string" ? { run_id: item } : (item as BackendRunSummary)
+        );
         setRuns(list);
       } catch (e) {
         console.error("Failed to load simulation runs:", e);
@@ -124,6 +186,13 @@ export default function ProjectSimulationPage() {
             </p>
           </div>
         </div>
+        <Link
+          href={`/project/${projectId}/simulation/new`}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition-colors"
+        >
+          <Play className="w-4 h-4" />
+          New simulation
+        </Link>
       </div>
 
       {error && (
@@ -131,6 +200,24 @@ export default function ProjectSimulationPage() {
           {error}
         </div>
       )}
+
+      {rawResponse !== null && (
+        <div className="rounded-lg border border-white/10 bg-white/5 text-xs">
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2 text-white/40 hover:text-white/70 transition-colors"
+          >
+            <span className="font-mono">Raw API response</span>
+            <span>{showRaw ? "▲ hide" : "▼ show"}</span>
+          </button>
+          {showRaw && (
+            <pre className="px-4 pb-4 font-mono text-[11px] text-white/60 whitespace-pre-wrap break-all border-t border-white/10 pt-3">
+              {JSON.stringify(rawResponse, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
 
       <div className="space-y-3">
         {runs.length === 0 && !error ? (
@@ -154,25 +241,88 @@ export default function ProjectSimulationPage() {
         {runs.length > 0 && (
           <ul className="space-y-3">
             {runs.map((run) => {
-              const statusKey =
-                (typeof run.status === "string" && run.status.toLowerCase().replace("run_status_", "") as SimulationStatus) ||
-                "pending";
-              const status = statusConfig[statusKey] ?? statusConfig.pending;
+              const label = getRunLabel(run);
+              const rawStatus = typeof run.status === "string"
+                ? run.status.toLowerCase().replace(/^run_status_/, "")
+                : "pending";
+              const statusKey = (rawStatus in statusConfig ? rawStatus : "pending") as SimulationStatus;
+              const status = statusConfig[statusKey];
+              const mode = run.metadata?.mode;
+              const modeLabel = typeof mode === "string" ? (MODE_LABELS[mode] ?? mode) : null;
+              const isRunning = statusKey === "running";
               return (
                 <li
                   key={run.run_id}
-                  className="bg-card rounded-lg border border-border p-4 flex items-center justify-between"
+                  className="bg-card rounded-lg border border-border p-4 flex items-start justify-between gap-4"
                 >
-                  <div>
-                    <p className="text-sm text-white/60">Run ID</p>
-                    <p className="font-mono text-sm text-white">{run.run_id}</p>
-                    {run.created_at && (
-                      <p className="text-xs text-white/40 mt-1">
-                        Created at {new Date(run.created_at).toLocaleString()}
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {/* Name + mode badge */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium text-white truncate">{label}</p>
+                      {modeLabel && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/60">
+                          {modeLabel}
+                        </span>
+                      )}
+                      {run.metadata?.objective && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300">
+                          {String(run.metadata.objective)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Description */}
+                    {run.metadata?.description && (
+                      <p className="text-xs text-white/50 truncate">
+                        {String(run.metadata.description)}
                       </p>
                     )}
+
+                    {/* IDs */}
+                    <p className="font-mono text-xs text-white/30 truncate">
+                      {run.run_id}
+                      {run.engine_run_id && (
+                        <span className="ml-2 text-white/20">· engine: {run.engine_run_id}</span>
+                      )}
+                    </p>
+
+                    {/* Timestamps */}
+                    <div className="flex items-center gap-3 text-[11px] text-white/30">
+                      {run.created_at && (
+                        <span>Created {new Date(run.created_at).toLocaleString()}</span>
+                      )}
+                      {run.completed_at && (
+                        <span>· Ended {new Date(run.completed_at).toLocaleString()}</span>
+                      )}
+                      {!run.completed_at && run.updated_at && isRunning && (
+                        <span>· Updated {new Date(run.updated_at).toLocaleString()}</span>
+                      )}
+                    </div>
+
+                    {/* Optimization summary */}
+                    {(run.metadata?.best_score != null || run.metadata?.iterations != null) && (
+                      <div className="flex items-center gap-3 text-[11px] flex-wrap pt-0.5">
+                        {run.metadata.iterations != null && (
+                          <span className="text-white/40">
+                            <span className="text-white/20">Iterations </span>
+                            <span className="font-mono text-amber-300/80">{String(run.metadata.iterations)}</span>
+                          </span>
+                        )}
+                        {run.metadata.best_score != null && (
+                          <span className="text-white/40">
+                            <span className="text-white/20">Best score </span>
+                            <span className="font-mono text-amber-300/80">
+                              {typeof run.metadata.best_score === "number"
+                                ? run.metadata.best_score.toFixed(4)
+                                : String(run.metadata.best_score)}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-3">
+
+                  <div className="flex items-center gap-3 shrink-0 pt-0.5">
                     <span
                       className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.color} ${status.bgColor}`}
                     >
@@ -180,7 +330,7 @@ export default function ProjectSimulationPage() {
                       {status.label}
                     </span>
                     <Link
-                      href={`/simulator/${encodeURIComponent(run.run_id)}`}
+                      href={`/project/${projectId}/simulation/${encodeURIComponent(run.run_id)}`}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-white/90 transition-colors"
                     >
                       <Play className="w-3 h-3" />

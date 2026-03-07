@@ -262,7 +262,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   X,
   Server,
@@ -274,21 +274,12 @@ import {
   ChevronRight,
   AlertCircle,
 } from "lucide-react";
-import { getFirebaseIdToken } from "@/lib/firebase/auth";
-
-interface Question {
-  id: string;
-  label: string;
-  type: "number" | "text" | "textarea";
-  placeholder?: string;
-}
-
-interface QuestionsResponse {
-  ok: boolean;
-  enabled: boolean;
-  questions?: Question[];
-  error?: string;
-}
+import type { Question } from "@/app/store/designApi";
+import {
+  useGetRequirementsQuestionsQuery,
+  useSaveDesignMutation,
+  useLazyGetDesignByProjectRunQuery,
+} from "@/app/store/designApi";
 
 interface DesignAnswers {
   preferred_vcpu?: number;
@@ -304,6 +295,9 @@ interface DesignQuestionsModalProps {
   onSubmit: (design: DesignAnswers) => void;
   onSkip: () => void;
   initialDesign?: Record<string, any>;
+  projectId?: string;
+  userId?: string;
+  runId?: string;
 }
 
 // Icon map for known question IDs
@@ -327,96 +321,109 @@ const questionHintMap: Record<string, string> = {
   budget: "Monthly infrastructure spend limit",
 };
 
+function buildDesignFromAnswers(answers: DesignAnswers) {
+  const design: Record<string, any> = {};
+  if (answers.concurrent_users !== undefined)
+    design.workload = { concurrent_users: answers.concurrent_users };
+  if (answers.preferred_vcpu !== undefined)
+    design.preferred_vcpu = answers.preferred_vcpu;
+  if (answers.preferred_memory_gb !== undefined)
+    design.preferred_memory_gb = answers.preferred_memory_gb;
+  if (answers.budget !== undefined) design.budget = answers.budget;
+  Object.keys(answers).forEach((key) => {
+    if (
+      ![
+        "concurrent_users",
+        "preferred_vcpu",
+        "preferred_memory_gb",
+        "budget",
+      ].includes(key) &&
+      answers[key] !== undefined
+    )
+      design[key] = answers[key];
+  });
+  return design;
+}
+
+function answersFromDesign(design: Record<string, any> | undefined, questions: Question[]): DesignAnswers {
+  const init: DesignAnswers = {};
+  questions.forEach((q) => {
+    if (design) {
+      if (
+        q.id === "concurrent_users" &&
+        design.workload?.concurrent_users !== undefined
+      ) {
+        init[q.id] = design.workload.concurrent_users;
+      } else {
+        init[q.id] = (design as any)[q.id] ?? undefined;
+      }
+    } else {
+      init[q.id] = undefined;
+    }
+  });
+  return init;
+}
+
 export default function DesignQuestionsModal({
   isOpen,
   onClose,
   onSubmit,
   onSkip,
   initialDesign,
+  projectId,
+  userId,
+  runId,
 }: DesignQuestionsModalProps) {
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [loading, setLoading] = useState(true);
   const [answers, setAnswers] = useState<DesignAnswers>({});
   const [enabled, setEnabled] = useState(false);
 
+  const { data: questionsData, isLoading: questionsLoading } =
+    useGetRequirementsQuestionsQuery(undefined, { skip: !isOpen });
+
+  const [fetchDesignByProjectRun, { data: designByRunData, isLoading: designLoading }] =
+    useLazyGetDesignByProjectRunQuery();
+
+  const [saveDesign, { isLoading: saving }] = useSaveDesignMutation();
+
+  const questions: Question[] = useMemo(() => {
+    const data = questionsData;
+    if (
+      !data?.ok ||
+      !data.enabled ||
+      !Array.isArray(data.questions) ||
+      data.questions.length === 0
+    )
+      return [];
+    return data.questions
+      .map((q: any) => ({
+        id: q.ID || q.id || "",
+        label: q.Label || q.label || "",
+        type: (q.Type || q.type || "text").toLowerCase() as "number" | "text" | "textarea",
+        placeholder: q.Placeholder || q.placeholder,
+      }))
+      .filter((q: Question) => q.id && q.label);
+  }, [questionsData]);
+
   useEffect(() => {
     if (!isOpen) return;
+    setEnabled(questions.length > 0);
+  }, [isOpen, questions.length]);
 
-    async function fetchQuestions() {
-      setLoading(true);
-      try {
-        const token = await getFirebaseIdToken();
-        if (!token) throw new Error("No authentication token available");
+  // When modal opens and we have project/user/run, fetch saved design to prefill form
+  useEffect(() => {
+    if (!isOpen || !userId || !projectId || !runId) return;
+    fetchDesignByProjectRun({ userId, projectId, runId });
+  }, [isOpen, userId, projectId, runId, fetchDesignByProjectRun]);
 
-        const res = await fetch(
-          "/api/design-input/rag/requirements-questions",
-          {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-store",
-          },
-        );
-
-        if (!res.ok)
-          throw new Error(`Failed to fetch questions: ${res.status}`);
-
-        const data: QuestionsResponse = await res.json();
-
-        if (
-          data.ok &&
-          data.enabled &&
-          Array.isArray(data.questions) &&
-          data.questions.length > 0
-        ) {
-          const normalized: Question[] = data.questions
-            .map((q: any) => ({
-              id: q.ID || q.id || "",
-              label: q.Label || q.label || "",
-              type: (q.Type || q.type || "text").toLowerCase() as
-                | "number"
-                | "text"
-                | "textarea",
-              placeholder: q.Placeholder || q.placeholder,
-            }))
-            .filter((q) => q.id && q.label);
-
-          if (normalized.length > 0) {
-            setQuestions(normalized);
-            setEnabled(true);
-            const init: DesignAnswers = {};
-            normalized.forEach((q) => {
-              if (initialDesign) {
-                if (
-                  q.id === "concurrent_users" &&
-                  initialDesign.workload?.concurrent_users !== undefined
-                ) {
-                  init[q.id] = initialDesign.workload.concurrent_users;
-                } else {
-                  init[q.id] = initialDesign[q.id] ?? undefined;
-                }
-              } else {
-                init[q.id] = undefined;
-              }
-            });
-            setAnswers(init);
-          } else {
-            setEnabled(false);
-            setQuestions([]);
-          }
-        } else {
-          setEnabled(false);
-          setQuestions([]);
-        }
-      } catch {
-        setEnabled(false);
-        setQuestions([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchQuestions();
-  }, [isOpen, initialDesign]);
+  // Populate answers: prefer designByRunData, then initialDesign, else empty
+  useEffect(() => {
+    if (questions.length === 0) return;
+    const design =
+      designByRunData?.request?.design ??
+      initialDesign ??
+      undefined;
+    setAnswers(answersFromDesign(design, questions));
+  }, [questions, designByRunData?.request?.design, initialDesign]);
 
   const handleChange = (questionId: string, value: string, type: string) => {
     if (type === "number") {
@@ -439,27 +446,25 @@ export default function DesignQuestionsModal({
     }
   };
 
-  const handleSubmit = () => {
-    const design: any = {};
-    if (answers.concurrent_users !== undefined)
-      design.workload = { concurrent_users: answers.concurrent_users };
-    if (answers.preferred_vcpu !== undefined)
-      design.preferred_vcpu = answers.preferred_vcpu;
-    if (answers.preferred_memory_gb !== undefined)
-      design.preferred_memory_gb = answers.preferred_memory_gb;
-    if (answers.budget !== undefined) design.budget = answers.budget;
-    Object.keys(answers).forEach((key) => {
-      if (
-        ![
-          "concurrent_users",
-          "preferred_vcpu",
-          "preferred_memory_gb",
-          "budget",
-        ].includes(key) &&
-        answers[key] !== undefined
-      )
-        design[key] = answers[key];
-    });
+  const loading = questionsLoading || designLoading;
+
+  const handleSubmit = async () => {
+    const design = buildDesignFromAnswers(answers);
+
+    // Save to backend if we have user and project
+    if (userId && projectId) {
+      try {
+        await saveDesign({
+          user_id: userId,
+          project_id: projectId,
+          design,
+          ...(runId ? { run_id: runId } : {}),
+        }).unwrap();
+      } catch {
+        // Save failed – still proceed with onSubmit per requirements
+      }
+    }
+
     onSubmit(design);
     onClose();
   };
@@ -743,19 +748,19 @@ export default function DesignQuestionsModal({
 
           <button
             onClick={handleSubmit}
-            disabled={loading || !enabled || questions.length === 0}
+            disabled={loading || saving || !enabled || questions.length === 0}
             className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-150"
             style={{
               backgroundColor:
-                loading || !enabled || questions.length === 0
+                loading || saving || !enabled || questions.length === 0
                   ? "rgba(255,255,255,0.06)"
                   : "#fff",
               color:
-                loading || !enabled || questions.length === 0
+                loading || saving || !enabled || questions.length === 0
                   ? "rgba(255,255,255,0.2)"
                   : "#000",
               cursor:
-                loading || !enabled || questions.length === 0
+                loading || saving || !enabled || questions.length === 0
                   ? "not-allowed"
                   : "pointer",
             }}
@@ -764,6 +769,11 @@ export default function DesignQuestionsModal({
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading…
+              </>
+            ) : saving ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Saving…
               </>
             ) : (
               <>
