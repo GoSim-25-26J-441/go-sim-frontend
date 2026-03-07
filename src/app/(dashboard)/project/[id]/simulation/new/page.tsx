@@ -6,7 +6,10 @@ import Link from "next/link";
 import { ArrowLeft, FileCode2, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
 import { createProjectSimulationRun, CreateProjectRunRequest } from "@/lib/api-client/simulation";
+import { useAuth } from "@/providers/auth-context";
+import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 
+/** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
 interface DiagramVersion {
   id: string;
   label: string;
@@ -287,37 +290,56 @@ workload:
 `;
 
   // Version/diagram selector phase (shown before the multi-step form)
+  const { userId } = useAuth();
   const [versionPhase, setVersionPhase] = useState(true);
-  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([
-    { id: "sample", label: "Sample scenario", description: "A pre-built sample scenario to get started quickly." },
-  ]);
+  const sampleOption: DiagramVersion = {
+    id: "sample",
+    label: "Sample scenario",
+    description: "A pre-built sample scenario to get started quickly.",
+  };
+  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([sampleOption]);
   const [versionsLoading, setVersionsLoading] = useState(true);
   const [selectedVersionId, setSelectedVersionId] = useState("sample");
   const isSampleScenario = selectedVersionId === "sample" || version === "sample";
 
   useEffect(() => {
-    // Attempt to fetch project diagram versions from the backend.
-    // The endpoint is not yet built; on failure we fall back to the sample option.
+    // Fetch diagram versions from AMG-APD API (project-scoped when projectId is used as chat id).
     const controller = new AbortController();
     setVersionsLoading(true);
-    fetch(`/api/v1/projects/${projectId}/diagram-versions`, { signal: controller.signal })
+    const headers = getAmgApdHeaders({
+      userId: userId ?? undefined,
+      chatId: projectId,
+    });
+    fetch("/api/amg-apd/versions", {
+      signal: controller.signal,
+      headers,
+    })
       .then(async (res) => {
-        if (!res.ok) throw new Error("not available");
-        const data = (await res.json()) as { versions?: DiagramVersion[] };
-        if (data.versions && data.versions.length > 0) {
-          setAvailableVersions([
-            { id: "sample", label: "Sample scenario", description: "A pre-built sample scenario to get started quickly." },
-            ...data.versions,
-          ]);
-          setSelectedVersionId(data.versions[0].id);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          versions?: Array<{ id: string; version_number?: number; title?: string; created_at?: string }>;
+        };
+        const list = data.versions ?? [];
+        if (list.length > 0) {
+          const mapped: DiagramVersion[] = list.map((v) => ({
+            id: v.id,
+            label:
+              v.version_number != null && v.title?.trim()
+                ? `v${v.version_number} · ${v.title}`
+                : (v.title?.trim() || v.id),
+            description: v.created_at
+              ? `Created ${new Date(v.created_at).toLocaleDateString()}`
+              : undefined,
+          }));
+          setAvailableVersions([sampleOption, ...mapped]);
         }
       })
       .catch(() => {
-        // API not available yet — keep the default sample option
+        // Keep sample only on error or no data
       })
       .finally(() => setVersionsLoading(false));
     return () => controller.abort();
-  }, [projectId]);
+  }, [projectId, userId]);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<SimulationFormData>({
@@ -667,8 +689,8 @@ workload:
               )}
               {availableVersions.length === 1 && (
                 <p className="text-xs text-amber-400/80 pt-1">
-                  No saved diagram versions found for this project. Connect the diagram API to load
-                  project-specific versions.
+                  No saved diagram versions for this project. Use the sample or create versions in
+                  Pattern Detection first.
                 </p>
               )}
             </div>
