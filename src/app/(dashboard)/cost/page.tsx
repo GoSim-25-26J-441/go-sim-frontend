@@ -133,7 +133,8 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   }, [fetchRuns, firebaseUid]);
 
   const handleRunClick = (run: Run) => {
-    router.push(`/cost/${run.id}`);
+    const path = projectId ? `/project/${projectId}/cost/${run.id}` : `/cost/${run.id}`;
+    router.push(path);
   };
 
   if (loading) {
@@ -275,7 +276,7 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                           <ChevronRight className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity" />
                         </div>
                         <Link
-                          href={`/cost/suggest/${run.id}`}
+                          href={projectId ? `/project/${projectId}/cost/suggest/${run.id}` : `/cost/suggest/${run.id}`}
                           onClick={(e) => e.stopPropagation()}
                           className="text-xs font-medium opacity-70 hover:opacity-100 flex items-center gap-1"
                         >

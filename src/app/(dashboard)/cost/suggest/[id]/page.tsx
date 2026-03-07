@@ -61,10 +61,12 @@ function getWorkloadPerformanceColor(distance: number, target: number) {
   return "text-red-500";
 }
 
-export default function ViewMetricsAnalysisPage() {
-  const params = useParams();
-  const id = params.id as string;
+type ViewMetricsAnalysisPageProps = {
+  id: string;
+  projectId?: string;
+};
 
+export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysisPageProps) {
   const { user } = useAuth();
 
   const [data, setData] = useState<StoredRequest | null>(null);
@@ -99,11 +101,14 @@ export default function ViewMetricsAnalysisPage() {
     );
   }
 
+  const costBaseHref = projectId ? `/project/${projectId}/cost` : "/cost";
+  const costRunHref = projectId ? `/project/${projectId}/cost/${id}` : `/cost/${id}`;
+
   if (error || !data) {
     return (
       <div className="p-6 max-w-7xl mx-auto">
         <Link
-          href="/cost"
+          href={costBaseHref}
           className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100 mb-6"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -132,7 +137,7 @@ export default function ViewMetricsAnalysisPage() {
         <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
           <div className="flex items-center gap-4">
             <Link
-              href="/cost"
+              href={costBaseHref}
               className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -140,7 +145,7 @@ export default function ViewMetricsAnalysisPage() {
             <h1 className="text-3xl font-bold">Metrices Analysis</h1>
           </div>
           <Link
-            href={`/cost/${id}`}
+            href={costRunHref}
             className="rounded-xl border border-border px-4 py-2 font-medium hover:bg-surface transition-colors inline-flex items-center gap-2"
           >
             View Cost Analysis
@@ -457,4 +462,10 @@ export default function ViewMetricsAnalysisPage() {
       </div>
     </div>
   );
+}
+
+export default function ViewMetricsAnalysisPage() {
+  const params = useParams();
+  const id = params.id as string;
+  return <ViewMetricsAnalysisContent id={id} />;
 }

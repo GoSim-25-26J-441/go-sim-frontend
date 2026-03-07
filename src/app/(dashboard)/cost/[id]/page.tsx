@@ -70,7 +70,12 @@ type ViewMode = "by-provider" | "by-region";
 
 const DEFAULT_GENERIC_REGION_ID = GENERIC_REGIONS[0]?.id ?? "us-east";
 
-export default function CostPage2() {
+type CostRunDetailProps = {
+    requestId: string;
+    projectId?: string;
+};
+
+export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
     const [costData, setCostData] = useState<CostData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -84,12 +89,7 @@ export default function CostPage2() {
     const [expandedBreakdown, setExpandedBreakdown] = useState<string | null>(null);
     const [filteredGenericRegions, setFilteredGenericRegions] = useState<typeof GENERIC_REGIONS>([]);
 
-    const params = useParams();
     const router = useRouter();
-
-    const requestId = params.id as string;
-
-    console.log("Request ID from route params:", requestId);
 
     const handleFetchCostData = async (provider?: string, region?: string) => {
         try {
@@ -290,7 +290,11 @@ export default function CostPage2() {
     };
 
     const handleBackClick = () => {
-        router.back();
+        if (projectId) {
+            router.push(`/project/${projectId}/cost`);
+        } else {
+            router.back();
+        }
     };
 
     const identifyBestOptions = (costs: ClusterCostResult[]) => {
@@ -387,7 +391,7 @@ export default function CostPage2() {
                         <h1 className="text-4xl font-bold">Cluster Cost Analysis</h1>
                     </div>
                     {/* <Link
-                        href={`/cost/suggest/${requestId}`}
+                        href={projectId ? `/project/${projectId}/cost/suggest/${requestId}` : `/cost/suggest/${requestId}`}
                         className="rounded-xl border border-border px-4 py-2 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
                     >
                         <BarChart3 className="w-5 h-5" />
@@ -1176,4 +1180,10 @@ export default function CostPage2() {
             </div>
         </div>
     );
+}
+
+export default function CostRunDetailPage() {
+    const params = useParams();
+    const requestId = params.id as string;
+    return <CostRunDetail requestId={requestId} />;
 }
