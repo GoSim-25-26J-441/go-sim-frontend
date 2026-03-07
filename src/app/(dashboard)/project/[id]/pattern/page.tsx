@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2, MessageCircle, Search, Play, BarChart3, ShieldAlert, Upload } from "lucide-react";
+import { useAuth } from "@/providers/auth-context";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
@@ -152,6 +153,7 @@ export default function ProjectPatternPage({
 }) {
   const { id: projectId } = use(params);
   const router = useRouter();
+  const { userId } = useAuth();
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
 
@@ -180,7 +182,7 @@ export default function ProjectPatternPage({
           `/api/amg-apd/projects/${encodeURIComponent(projectID)}/latest`,
           {
             method: "GET",
-            headers: getAmgApdHeaders({ chatId: projectID }),
+            headers: getAmgApdHeaders({ userId: userId ?? undefined, chatId: projectID }),
           }
         );
 
@@ -213,7 +215,7 @@ export default function ProjectPatternPage({
     };
 
     fetchAndProceed();
-  }, [projectId, router, setLast, setEditedYaml]);
+  }, [projectId, userId, router, setLast, setEditedYaml]);
 
   if (!projectId) {
     return (

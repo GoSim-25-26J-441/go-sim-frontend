@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
 import SuggestionModal, {
@@ -33,9 +34,13 @@ export default function PatternsView({
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const regenerating = useAmgApdStore((s) => s.regenerating);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const { userId } = useAuth();
 
   const headers = () =>
-    getAmgApdHeaders(projectId ? { chatId: projectId } : undefined);
+    getAmgApdHeaders({
+      userId: userId ?? undefined,
+      ...(projectId ? { chatId: projectId } : {}),
+    });
 
   const [open, setOpen] = useState(false);
   const [loadingSug, setLoadingSug] = useState(false);
