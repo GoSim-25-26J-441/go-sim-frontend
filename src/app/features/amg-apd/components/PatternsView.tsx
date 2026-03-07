@@ -52,6 +52,7 @@ export default function PatternsView({
   const [simulationSelectedVersion, setSimulationSelectedVersion] =
     useState("");
 
+  const exportImageRef = useRef<(() => string | null) | null>(null);
   const restoreStartedRef = useRef(false);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
@@ -61,7 +62,7 @@ export default function PatternsView({
 
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
-    title?: string
+    title?: string,
   ): Promise<AnalysisResult> {
     let versionTitle = title;
     if (versionTitle == null || versionTitle.trim() === "") {
@@ -74,7 +75,9 @@ export default function PatternsView({
         list.length === 0
           ? 0
           : Math.max(
-              ...list.map((v: { version_number?: number }) => v.version_number ?? 0)
+              ...list.map(
+                (v: { version_number?: number }) => v.version_number ?? 0,
+              ),
             );
       const nextNum = maxVersionNumber + 1;
       versionTitle = `Version ${String(nextNum).padStart(2, "0")}`;
@@ -206,7 +209,7 @@ export default function PatternsView({
   function handleSimulationConfirm() {
     if (projectId && simulationSelectedVersion) {
       router.push(
-        `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`
+        `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
       );
     } else {
       alert("Button is clicked");
@@ -233,6 +236,45 @@ export default function PatternsView({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  function handleDownloadJson() {
+    if (!last) {
+      alert("No graph data to download.");
+      return;
+    }
+    const payload = {
+      graph: last.graph,
+      detections: last.detections ?? [],
+      dot_content: last.dot_content ?? undefined,
+      version_id: last.version_id,
+      version_number: last.version_number,
+      created_at: last.created_at,
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "architecture.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleDownloadImage() {
+    const dataUrl = exportImageRef.current?.();
+    if (!dataUrl) {
+      alert("Graph is not ready to export. Wait for the diagram to load.");
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = "architecture-graph.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   async function openSuggestions() {
@@ -444,22 +486,8 @@ export default function PatternsView({
         disabledApply={!hasDetections || loadingSug}
       />
 
-      <div className="sticky top-0 z-20 rounded-3xl border border-white/10 bg-[#1a1a1a]/95 backdrop-blur-sm p-4 shadow-xl shadow-black/20 overflow-hidden flex-shrink-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h1 className="text-lg font-semibold text-white/95">
-            Architecture Model & Anti-Pattern Detector
-          </h1>
-
-          <button
-            type="button"
-            onClick={handleReturnToChat}
-            className="rounded-2xl border border-white/15 bg-card/80 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
-          >
-            Return to Chat
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-white/10">
+      <div className="sticky top-0 z-20 rounded-2xl border border-white/10 bg-[#1a1a1a]/95 backdrop-blur-sm p-3 shadow-xl shadow-black/20 overflow-hidden flex-shrink-0">
+        <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-white/10">
           <VersionSidebar
             refreshTrigger={versionsRefreshTrigger}
             projectId={projectId}
@@ -469,7 +497,7 @@ export default function PatternsView({
             type="button"
             onClick={openSuggestions}
             disabled={!hasDetections || !editedYaml}
-            className="rounded-2xl border border-white/15 bg-surface/80 px-5 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+            className="rounded-xl border border-white/15 bg-surface/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
             title={
               !editedYaml
                 ? "No current YAML available"
@@ -484,22 +512,48 @@ export default function PatternsView({
           <button
             type="button"
             onClick={handleDownloadYaml}
-            className="rounded-2xl border border-white/15 bg-card/80 px-5 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+            className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
           >
             Download YAML
           </button>
+
+          <button
+            type="button"
+            onClick={handleDownloadJson}
+            className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+          >
+            Download JSON
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownloadImage}
+            className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+          >
+            Download Image
+          </button>
+
+          {!onReturnToChat && (
+            <button
+              type="button"
+              onClick={handleReturnToChat}
+              className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+            >
+              Return to Chat
+            </button>
+          )}
         </div>
 
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
           <Legend versionCount={versionCount ?? undefined} />
 
-          <div className="lg:flex-shrink-0 lg:self-end">
+          <div className="flex-shrink-0">
             <button
               type="button"
               onClick={() => setSimulationModalOpen(true)}
-              className="w-full lg:w-auto rounded-2xl bg-[#0d307c] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#2563eb]/30 hover:bg-[#1d4ed8] transition-all duration-200"
+              className="rounded-2xl bg-[#0d307c] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#2563eb]/30 hover:bg-[#1d4ed8] transition-all duration-200"
             >
-              Proceed to Performance Simulation
+              Proceed to Performance Simulator
             </button>
           </div>
         </div>
@@ -526,6 +580,9 @@ export default function PatternsView({
               key={`amg-apd-graph-v${graphVersion}`}
               data={last}
               isGenerating={regenerating}
+              onExportImageReady={(fn) => {
+                exportImageRef.current = fn;
+              }}
               onGenerateGraph={async (yaml) => {
                 setRegenerating(true);
                 try {
@@ -537,7 +594,8 @@ export default function PatternsView({
                   setVersionsRefreshTrigger((t) => t + 1);
                 } catch (err: any) {
                   alert(
-                    "Failed to generate graph: " + (err?.message ?? "Unknown error"),
+                    "Failed to generate graph: " +
+                      (err?.message ?? "Unknown error"),
                   );
                 } finally {
                   setRegenerating(false);

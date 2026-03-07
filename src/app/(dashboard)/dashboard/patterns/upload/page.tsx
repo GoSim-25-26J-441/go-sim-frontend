@@ -226,7 +226,7 @@ export default function UploadPage() {
             </button>
             {/* Test Button using shared component with fixed project ID */}
             <ViewPatternsForProjectButton
-              projectPublicId="archfind-33878-1296"
+              projectPublicId="archfind-73941-5904"
               label="Test Button"
             />
           </div>

@@ -5,11 +5,20 @@ import { useEffect, useState, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { useAuth } from "@/providers/auth-context";
-import { Send, Loader2, AlertCircle, Settings2, Upload, Check, ArrowLeft } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  AlertCircle,
+  Settings2,
+  Upload,
+  Check,
+  ArrowLeft,
+} from "lucide-react";
 import { getProjectThreadId } from "@/modules/di/getProjectThread";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
 import Dropdown from "./comp/DropDown";
 import MessageBubble from "./comp/MessageBubble";
+import CheckPatternsOverlay from "@/app/features/amg-apd/components/CheckPatternsOverlay";
 
 type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
@@ -45,6 +54,8 @@ export default function ClientChat({ id }: Props) {
   const [checkingThread, setCheckingThread] = useState(!urlThreadId);
   const [showDesignModal, setShowDesignModal] = useState(false);
   const [designAnswers, setDesignAnswers] = useState<Record<string, any>>({});
+  const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
+    useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -337,14 +348,21 @@ export default function ClientChat({ id }: Props) {
             )}
 
             <button
-            onClick={() => {}}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
-          >
-            <Check className="w-3.5 h-3.5" />
-            Check Design Patterns
-          </button>
+              onClick={() => setShowCheckPatternsOverlay(true)}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+            >
+              <Check className="w-3.5 h-3.5" />
+              Check Anti-Patterns
+            </button>
           </div>
         </div>
+
+        {showCheckPatternsOverlay && (
+          <CheckPatternsOverlay
+            projectId={id}
+            onClose={() => setShowCheckPatternsOverlay(false)}
+          />
+        )}
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {loadingHistory && (

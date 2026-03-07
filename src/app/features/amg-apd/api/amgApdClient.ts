@@ -4,7 +4,7 @@
  */
 
 const DEFAULT_USER_ID = "e9G8LS9As5MofLqA5TR8Cg8Hiv32";
-const DEFAULT_CHAT_ID = "archfind-33878-1296";
+const DEFAULT_CHAT_ID = "archfind-73941-5904";
 
 export type AmgApdHeaders = {
   "X-User-Id"?: string;

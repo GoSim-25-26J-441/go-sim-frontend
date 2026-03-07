@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 
 const DEFAULT_USER_ID = "e9G8LS9As5MofLqA5TR8Cg8Hiv32";
-const DEFAULT_CHAT_ID = "archfind-33878-1296";
+const DEFAULT_CHAT_ID = "archfind-73941-5904";
 
 /**
  * Build headers to forward to AMG-APD backend from incoming request.

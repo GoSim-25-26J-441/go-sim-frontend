@@ -87,11 +87,14 @@ export default function GraphCanvas({
   readOnly = false,
   isGenerating = false,
   onGenerateGraph,
+  onExportImageReady,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
   onGenerateGraph?: (yaml: string) => void | Promise<void>;
+  /** Called when cy is ready; pass a function that returns PNG data URL or null */
+  onExportImageReady?: (exportPng: () => string | null) => void;
 }) {
   if (!data?.graph) {
     return (
@@ -298,6 +301,19 @@ export default function GraphCanvas({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
+
+  useEffect(() => {
+    if (!onExportImageReady || !cyAlive(cy)) return;
+    onExportImageReady(() => {
+      const c = cyRef.current;
+      if (!c || !cyAlive(c)) return null;
+      try {
+        return c.png({ scale: 2 });
+      } catch {
+        return null;
+      }
+    });
+  }, [cy, onExportImageReady]);
 
   const performDelete = useCallback(() => {
     if (!cyAlive(cy)) return;
