@@ -99,8 +99,9 @@ export const cyStyles: StylesheetLike = [
       },
 
       shape: (ele: any) => {
-        const kind = ele.data("kind") as string;
-        return kind === "DATABASE" ? "ellipse" : "round-rectangle";
+        const kind = (ele.data("kind") as string) ?? "";
+        const k = kind.toUpperCase();
+        return k === "DATABASE" || k === "DB" ? "ellipse" : "round-rectangle";
       },
 
       "z-index": 10,

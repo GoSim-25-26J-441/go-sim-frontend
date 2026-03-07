@@ -34,6 +34,7 @@ import {
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
 
+import { useToast } from "@/hooks/useToast";
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
 import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCyInteractions";
 import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyTooltip";
@@ -87,6 +88,7 @@ export default function GraphCanvas({
   isGenerating = false,
   onGenerateGraph,
   onExportImageReady,
+  onDuplicateName,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
@@ -94,6 +96,8 @@ export default function GraphCanvas({
   onGenerateGraph?: (yaml: string) => void | Promise<void>;
   /** Called when cy is ready; pass a function that returns PNG data URL or null */
   onExportImageReady?: (exportPng: () => string | null) => void;
+  /** When renaming to a name that already exists, called with that name (replaces alert) */
+  onDuplicateName?: (name: string) => void;
 }) {
   if (!data?.graph) {
     return (
@@ -105,6 +109,7 @@ export default function GraphCanvas({
 
   const analysis = data as AnalysisResult;
 
+  const showToast = useToast((s) => s.showToast);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const undoStackRef = useRef<UndoEntry[]>([]);
@@ -449,7 +454,10 @@ export default function GraphCanvas({
     if (!cyAlive(cy)) return;
 
     const error = validateGraphForSave(cy);
-    if (error) return window.alert(error);
+    if (error) {
+      showToast(error, "error");
+      return;
+    }
 
     const yaml = exportGraphToYaml(cy);
     setEditedYaml(yaml);
@@ -466,13 +474,36 @@ export default function GraphCanvas({
     }
 
     // No callback: user is in a context where regenerate is not available (e.g. compare view)
-    alert("Use the Patterns view for this project to regenerate the graph from edits.");
+    showToast(
+      "Use the Patterns view for this project to regenerate the graph from edits.",
+      "info",
+    );
   }
 
   function handleRenameNode(id: string, newLabel: string) {
     if (!cyAlive(cy)) return;
+    const trimmed = newLabel.trim();
+    if (!trimmed) return;
+
     const node = cy.getElementById(id);
-    if (!node.empty()) node.data("label", newLabel);
+    if (node.empty()) return;
+
+    const existing = new Set<string>();
+    cy.nodes().forEach((n) => {
+      if (n.hasClass("halo")) return;
+      if (n.id() === id) return;
+      const l = (n.data("label") as string) ?? "";
+      if (l.trim()) existing.add(l.trim().toLowerCase());
+    });
+    if (existing.has(trimmed.toLowerCase())) {
+      if (onDuplicateName) {
+        onDuplicateName(trimmed);
+      } else {
+        alert(`Sorry, "${trimmed}" already exists. Please choose a different name.`);
+      }
+      return;
+    }
+    node.data("label", trimmed);
   }
 
   function callEdgeLabel(protocol: string, sync: boolean): string {

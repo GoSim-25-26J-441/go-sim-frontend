@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { useToast } from "@/hooks/useToast";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type {
   AmgApdVersionSummary,
   AnalysisResult,
@@ -29,6 +31,9 @@ export default function VersionSidebar({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteVersionId, setConfirmDeleteVersionId] = useState<
+    string | null
+  >(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -40,6 +45,7 @@ export default function VersionSidebar({
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const showToast = useToast((s) => s.showToast);
 
   const closePanel = useCallback(() => setOpen(false), []);
 
@@ -128,15 +134,25 @@ export default function VersionSidebar({
 
       setLast(data);
       setEditedYaml(yamlContent);
+      showToast("Switched to version successfully", "success");
     } catch (e: any) {
-      alert("Failed to load version: " + (e?.message ?? "Unknown error"));
+      showToast(
+        "Failed to load version: " + (e?.message ?? "Unknown error"),
+        "error",
+      );
     } finally {
       setRegenerating(false);
     }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this version? This cannot be undone.")) return;
+    setConfirmDeleteVersionId(id);
+  }
+
+  async function confirmDeleteVersion() {
+    const id = confirmDeleteVersionId;
+    if (!id) return;
+    setConfirmDeleteVersionId(null);
     setDeletingId(id);
     try {
       const res = await fetch(`/api/amg-apd/versions/${id}`, {
@@ -145,8 +161,12 @@ export default function VersionSidebar({
       });
       if (!res.ok) throw new Error(await res.text());
       await fetchVersions();
+      showToast("Version deleted successfully", "success");
     } catch (e: any) {
-      alert("Failed to delete: " + (e?.message ?? "Unknown error"));
+      showToast(
+        "Failed to delete version: " + (e?.message ?? "Unknown error"),
+        "error",
+      );
     } finally {
       setDeletingId(null);
     }
@@ -175,8 +195,12 @@ export default function VersionSidebar({
       if (!res.ok) throw new Error(await res.text());
       await fetchVersions();
       setEditingId(null);
+      showToast("Version renamed successfully", "success");
     } catch (e: any) {
-      alert("Failed to rename: " + (e?.message ?? "Unknown error"));
+      showToast(
+        "Failed to rename: " + (e?.message ?? "Unknown error"),
+        "error",
+      );
     } finally {
       setSavingTitleId(null);
     }
@@ -201,6 +225,20 @@ export default function VersionSidebar({
 
   return (
     <div className="relative">
+      {typeof document !== "undefined" &&
+        createPortal(
+          <ConfirmModal
+            open={confirmDeleteVersionId !== null}
+            onClose={() => setConfirmDeleteVersionId(null)}
+            title="Delete version?"
+            message="This version will be permanently deleted. This action cannot be undone."
+            confirmLabel="Delete"
+            cancelLabel="Cancel"
+            variant="danger"
+            onConfirm={confirmDeleteVersion}
+          />,
+          document.body,
+        )}
       <button
         ref={buttonRef}
         type="button"

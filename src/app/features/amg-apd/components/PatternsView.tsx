@@ -11,6 +11,8 @@ import SuggestionModal, {
 import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
+import { useToast } from "@/hooks/useToast";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type {
   AnalysisResult,
   AmgApdVersionSummary,
@@ -36,6 +38,7 @@ export default function PatternsView({
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
   const { userId } = useAuth();
 
+  const showToast = useToast((s) => s.showToast);
   const headers = () =>
     getAmgApdHeaders({
       userId: userId ?? undefined,
@@ -55,6 +58,9 @@ export default function PatternsView({
   const [simulationModalOpen, setSimulationModalOpen] = useState(false);
   const [simulationSelectedVersion, setSimulationSelectedVersion] =
     useState("");
+  const [duplicateNameForModal, setDuplicateNameForModal] = useState<
+    string | null
+  >(null);
 
   const exportImageRef = useRef<(() => string | null) | null>(null);
   const restoreStartedRef = useRef(false);
@@ -204,7 +210,7 @@ export default function PatternsView({
     } else if (projectId) {
       router.push(`/project/${projectId}/chat`);
     } else {
-      alert("Button is clicked");
+      showToast("Return to Chat is not available here", "info");
     }
   }
 
@@ -214,7 +220,7 @@ export default function PatternsView({
         `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
       );
     } else {
-      alert("Button is clicked");
+      showToast("Please select a version first", "warning");
     }
     setSimulationModalOpen(false);
     setSimulationSelectedVersion("");
@@ -222,8 +228,9 @@ export default function PatternsView({
 
   function handleDownloadYaml() {
     if (!editedYaml) {
-      alert(
+      showToast(
         "No current YAML found. Upload a YAML or generate one from Edit mode.",
+        "warning",
       );
       return;
     }
@@ -238,11 +245,12 @@ export default function PatternsView({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    showToast("YAML downloaded", "success");
   }
 
   function handleDownloadJson() {
     if (!last) {
-      alert("No graph data to download.");
+      showToast("No graph data to download.", "warning");
       return;
     }
     const payload = {
@@ -263,12 +271,16 @@ export default function PatternsView({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    showToast("JSON downloaded", "success");
   }
 
   function handleDownloadImage() {
     const dataUrl = exportImageRef.current?.();
     if (!dataUrl) {
-      alert("Graph is not ready to export. Wait for the diagram to load.");
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
       return;
     }
     const a = document.createElement("a");
@@ -277,11 +289,12 @@ export default function PatternsView({
     document.body.appendChild(a);
     a.click();
     a.remove();
+    showToast("Image downloaded", "success");
   }
 
   async function openSuggestions() {
     if (!editedYaml) {
-      alert("No current YAML available. Upload a YAML first.");
+      showToast("No current YAML available. Upload a YAML first.", "warning");
       return;
     }
 
@@ -316,7 +329,7 @@ export default function PatternsView({
 
   async function applySuggestions(selectedIds: string[]) {
     if (!editedYaml) {
-      alert("No current YAML available.");
+      showToast("No current YAML available.", "warning");
       return;
     }
 
@@ -365,13 +378,16 @@ export default function PatternsView({
         await refetchVersions();
         setVersionsRefreshTrigger((t) => t + 1);
         setTimeout(() => setGraphRegenerating(false), 400);
+        showToast("Suggestions applied successfully", "success");
       } catch (e: any) {
         setErr(e?.message ?? "Failed to save as new version");
+        showToast(e?.message ?? "Failed to save as new version", "error");
       } finally {
         setRegenerating(false);
       }
     } catch (e: any) {
       setErr(e?.message ?? "Failed to apply suggestions");
+      showToast(e?.message ?? "Failed to apply suggestions", "error");
     } finally {
       setApplyLoading(false);
     }
@@ -414,6 +430,20 @@ export default function PatternsView({
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
+      <ConfirmModal
+        open={duplicateNameForModal !== null}
+        onClose={() => setDuplicateNameForModal(null)}
+        title="Name already in use"
+        message={
+          duplicateNameForModal
+            ? `Sorry, "${duplicateNameForModal}" already exists. Please choose a different name.`
+            : ""
+        }
+        confirmLabel="OK"
+        variant="warning"
+        alertOnly
+        onConfirm={() => setDuplicateNameForModal(null)}
+      />
       {simulationModalOpen && (
         <div
           className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -547,7 +577,7 @@ export default function PatternsView({
             <button
               type="button"
               onClick={() => setSimulationModalOpen(true)}
-              className="rounded-2xl bg-[#0d307c] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#2563eb]/30 hover:bg-[#1d4ed8] transition-all duration-200"
+              className="rounded-2xl bg-[#1b2363] px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-[#2563eb]/30 hover:bg-[#072679] transition-all duration-200"
             >
               Proceed to Performance Simulator
             </button>
@@ -579,6 +609,7 @@ export default function PatternsView({
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
+              onDuplicateName={(name) => setDuplicateNameForModal(name)}
               onGenerateGraph={async (yaml) => {
                 setRegenerating(true);
                 try {
@@ -588,10 +619,12 @@ export default function PatternsView({
                   setGraphVersion((v) => v + 1);
                   await refetchVersions();
                   setVersionsRefreshTrigger((t) => t + 1);
+                  showToast("Graph generated successfully", "success");
                 } catch (err: any) {
-                  alert(
+                  showToast(
                     "Failed to generate graph: " +
                       (err?.message ?? "Unknown error"),
+                    "error",
                   );
                 } finally {
                   setRegenerating(false);
