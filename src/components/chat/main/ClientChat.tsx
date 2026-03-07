@@ -4,13 +4,8 @@
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
-import {
-  Send,
-  Loader2,
-  AlertCircle,
-  Settings2,
-  Upload,
-} from "lucide-react";
+import { useAuth } from "@/providers/auth-context";
+import { Send, Loader2, AlertCircle, Settings2, Upload, Check, ArrowLeft } from "lucide-react";
 import { getProjectThreadId } from "@/modules/di/getProjectThread";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
 import Dropdown from "./comp/DropDown";
@@ -32,8 +27,8 @@ interface ChatResponse {
   [key: string]: unknown;
 }
 
-
 export default function ClientChat({ id }: Props) {
+  const { userId } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
   const urlThreadId = searchParams.get("thread");
@@ -233,6 +228,9 @@ export default function ClientChat({ id }: Props) {
         }}
         onSkip={() => setShowDesignModal(false)}
         initialDesign={designAnswers}
+        projectId={id}
+        userId={userId ?? undefined}
+        runId={threadId ?? undefined}
       />
 
       <div
@@ -267,11 +265,17 @@ export default function ClientChat({ id }: Props) {
           style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
         >
           <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => router.back()}
+              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+              aria-label="Go back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
             <span
               className="text-xs"
               style={{ color: "rgba(255,255,255,0.35)" }}
             >
-              {" "}
               Chat for Project ·{" "}
               <span className="font-mono">{id.slice(0, 18)}…</span>
               {threadId && (
@@ -297,7 +301,7 @@ export default function ClientChat({ id }: Props) {
             )}
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => {}}
               className="flex items-center px-2 py-1 rounded-md text-white/80 hover:text-white transition-colors shadow-md gap-2"
@@ -331,6 +335,14 @@ export default function ClientChat({ id }: Props) {
                 onSelect={setThinkingDetail}
               />
             )}
+
+            <button
+            onClick={() => {}}
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+          >
+            <Check className="w-3.5 h-3.5" />
+            Check Design Patterns
+          </button>
           </div>
         </div>
 

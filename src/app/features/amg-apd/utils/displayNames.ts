@@ -37,7 +37,9 @@ export function toDisplayName(name: string | undefined): string {
   if (!name || typeof name !== "string") return name ?? "";
   // Extract service name from "SERVICE:bff" format
   const trimmed = name.trim();
-  const namePart = trimmed.includes(":") ? trimmed.split(":").pop() ?? trimmed : trimmed;
+  const namePart = trimmed.includes(":")
+    ? (trimmed.split(":").pop() ?? trimmed)
+    : trimmed;
   const lower = namePart.toLowerCase();
   if (ABBREV_MAP[lower]) return ABBREV_MAP[lower];
   // Try base part for compounds like "bff-1"
@@ -51,7 +53,7 @@ export function toDisplayName(name: string | undefined): string {
 
 /** Human-readable labels for anti-pattern kinds. */
 export const ANTIPATTERN_LABELS: Record<string, string> = {
-  cycles: "Circular Dependencies",
+  cycles: "Cyclic Dependencies",
   god_service: "God Service",
   tight_coupling: "Tight Coupling",
   shared_database: "Shared Database",

@@ -138,8 +138,12 @@ function MiniDiagram({
 
   if (layout === "single") {
     return (
-      <div className={`flex flex-col items-center gap-2 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}>
-        <div className={`rounded-lg border px-3 py-2 text-sm font-semibold ${nodeBox}`}>
+      <div
+        className={`flex flex-col items-center gap-2 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}
+      >
+        <div
+          className={`rounded-lg border px-3 py-2 text-sm font-semibold ${nodeBox}`}
+        >
           {nodes[0]}
         </div>
         <div className="text-xs text-slate-600">central</div>
@@ -149,13 +153,19 @@ function MiniDiagram({
 
   if (layout === "bidir") {
     return (
-      <div className={`flex flex-col items-center gap-3 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}>
+      <div
+        className={`flex flex-col items-center gap-3 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}
+      >
         <div className="flex items-center gap-2">
-          <div className={`rounded-lg border px-3 py-2 text-sm font-semibold ${nodeBox}`}>
+          <div
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold ${nodeBox}`}
+          >
             {nodes[0]}
           </div>
           <span className={`text-base ${edgeClr}`}>⟷</span>
-          <div className={`rounded-lg border px-3 py-2 text-sm font-semibold ${nodeBox}`}>
+          <div
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold ${nodeBox}`}
+          >
             {nodes[1]}
           </div>
         </div>
@@ -165,17 +175,23 @@ function MiniDiagram({
 
   if (layout === "cycle") {
     return (
-      <div className={`flex flex-col items-center gap-2 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}>
+      <div
+        className={`flex flex-col items-center gap-2 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}
+      >
         <div className="flex flex-wrap items-center justify-center gap-1.5">
           {nodes.map((n, i) => (
             <span key={i} className="flex items-center gap-1.5">
-              <span className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold ${nodeBox}`}>
+              <span
+                className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold ${nodeBox}`}
+              >
                 {n}
               </span>
               <span className={`text-sm ${edgeClr}`}>→</span>
             </span>
           ))}
-          <span className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold ${nodeBox}`}>
+          <span
+            className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold ${nodeBox}`}
+          >
             {nodes[0]}
           </span>
         </div>
@@ -185,14 +201,20 @@ function MiniDiagram({
 
   if (layout === "chain" || layout === "split") {
     return (
-      <div className={`flex flex-col items-center gap-2 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}>
+      <div
+        className={`flex flex-col items-center gap-2 rounded-lg border-2 ${borderClr} ${baseBg} p-4`}
+      >
         <div className="flex flex-wrap items-center justify-center gap-1.5">
           {nodes.map((n, i) => (
             <span key={i} className="flex items-center gap-1.5">
-              <span className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold ${nodeBox}`}>
+              <span
+                className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold ${nodeBox}`}
+              >
                 {n}
               </span>
-              {i < nodes.length - 1 && <span className={`text-sm ${edgeClr}`}>→</span>}
+              {i < nodes.length - 1 && (
+                <span className={`text-sm ${edgeClr}`}>→</span>
+              )}
             </span>
           ))}
         </div>
@@ -236,9 +258,24 @@ export default function BeforeAfterPreview({
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
         <span className="flex items-center gap-1.5">
-          <svg className="h-3.5 w-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          <svg
+            className="h-3.5 w-3.5 text-slate-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+            />
           </svg>
           {open ? "Hide diagram" : "Show before / after"}
         </span>

@@ -5,6 +5,8 @@ import type {
   SelectedItem,
   EdgeKind,
   NodeKind,
+  CallProtocol,
+  DetectionKind,
 } from "@/app/features/amg-apd/types";
 
 const ADD_NODE_TOOLS: EditTool[] = [
@@ -49,6 +51,11 @@ export function useCyInteractions({
   setPendingSource,
   setSelected,
   recomputeStats,
+  defaultCallProtocol = "rest",
+  defaultCallSync = true,
+  pendingAntiPatternKind,
+  setPendingAntiPatternKind,
+  onAddAntiPatternAt,
 }: {
   cy: cytoscape.Core | null;
   editMode: boolean;
@@ -57,6 +64,14 @@ export function useCyInteractions({
   setPendingSource: (v: string | null) => void;
   setSelected: (v: SelectedItem) => void;
   recomputeStats: () => void;
+  defaultCallProtocol?: CallProtocol;
+  defaultCallSync?: boolean;
+  pendingAntiPatternKind?: DetectionKind | null;
+  setPendingAntiPatternKind?: (k: DetectionKind | null) => void;
+  onAddAntiPatternAt?: (
+    kind: DetectionKind,
+    pos: { x: number; y: number },
+  ) => void;
 }) {
   useEffect(() => {
     if (!cy) return;
@@ -99,13 +114,26 @@ export function useCyInteractions({
           .toString(36)
           .slice(2, 8)}`;
 
+        const protocolDisplay =
+          defaultCallProtocol === "grpc"
+            ? "gRPC"
+            : defaultCallProtocol === "event"
+              ? "Event"
+              : "REST";
+        const syncLabel = defaultCallSync ? "sync" : "async";
+        const label = `CALLS [${protocolDisplay}] (${syncLabel})`;
+
         const edgeData: any = {
           id: edgeId,
           source: sourceId,
           target: targetId,
           kind: edgeKind,
-          label: "calls",
-          attrs: { kind: "rest", sync: true },
+          label,
+          attrs: {
+            kind: defaultCallProtocol,
+            dep_kind: defaultCallProtocol,
+            sync: defaultCallSync,
+          },
         };
 
         cy.add({ group: "edges", data: edgeData });
@@ -155,8 +183,15 @@ export function useCyInteractions({
     const onBgTap = (evt: any) => {
       if (evt.target !== cy) return;
 
+      const pos = evt.position ?? { x: 0, y: 0 };
+
+      if (editMode && pendingAntiPatternKind && onAddAntiPatternAt) {
+        onAddAntiPatternAt(pendingAntiPatternKind, pos);
+        setPendingAntiPatternKind?.(null);
+        return;
+      }
+
       if (editMode && ADD_NODE_TOOLS.includes(tool)) {
-        const pos = evt.position;
         const kind = TOOL_TO_KIND[tool];
         const labelBase = TOOL_TO_LABEL[tool];
         const idBase = labelBase.replace("new-", "").replace(/-/g, "_");
@@ -168,11 +203,17 @@ export function useCyInteractions({
           group: "nodes",
           data: { id, label: labelBase, kind },
           position: pos,
+          grabbable: true,
+          selectable: true,
+          locked: false,
         });
 
         const node = cy.getElementById(id);
         if (!node.empty()) {
           try {
+            node.unlock();
+            node.grabify();
+            node.selectify();
             cy.elements().unselect();
           } catch {}
           node.select();
@@ -186,6 +227,7 @@ export function useCyInteractions({
       safeUnselectAll();
       setSelected(null);
       setPendingSource(null);
+      setPendingAntiPatternKind?.(null);
     };
 
     cy.on("tap", "node", onNodeTap);
@@ -205,5 +247,10 @@ export function useCyInteractions({
     setPendingSource,
     setSelected,
     recomputeStats,
+    defaultCallProtocol,
+    defaultCallSync,
+    pendingAntiPatternKind,
+    setPendingAntiPatternKind,
+    onAddAntiPatternAt,
   ]);
 }
