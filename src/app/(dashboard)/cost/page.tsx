@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { fetchDesignsList } from '@/app/api/asm/routes';
@@ -51,20 +51,19 @@ interface ApiResponseRow {
   response: any[];
 }
 
-const PROJECT_ID = "prodsdj-abc";
+const PROJECT_ID = "abc";
 
-export default function CostPage() {
+type CostPageProps = {
+  projectId?: string;
+};
+
+export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { user, userId: firebaseUid } = useAuth();
+  const { userId: firebaseUid } = useAuth();
 
-  useEffect(() => {
-    if (!firebaseUid) return;
-    fetchRuns(firebaseUid);
-  }, [firebaseUid]);
-
-  const fetchRuns = async (uid: string) => {
+  const fetchRuns = useCallback(async (uid: string) => {
     try {
       setLoading(true);
       const data = await fetchDesignsList(uid);
@@ -87,7 +86,7 @@ export default function CostPage() {
         all_candidates: row.response || []
       }));
 
-      setRuns(runList.filter((r) => (r.project_id || "") === PROJECT_ID));
+      setRuns(runList.filter((r) => (r.project_id || "") === projectId));
     } catch (err) {
       console.error('Error fetching runs:', err);
       // const fallbackData: Run[] = [
@@ -126,10 +125,16 @@ export default function CostPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!firebaseUid) return;
+    fetchRuns(firebaseUid);
+  }, [fetchRuns, firebaseUid]);
 
   const handleRunClick = (run: Run) => {
-    router.push(`/cost/${run.id}`);
+    const path = projectId ? `/project/${projectId}/cost/${run.id}` : `/cost/${run.id}`;
+    router.push(path);
   };
 
   if (loading) {
@@ -155,13 +160,13 @@ export default function CostPage() {
               <h1 className="text-3xl font-bold">Cost Analysis</h1>
               <p className="opacity-60 mt-2 text-sm">Select a run to view detailed cost breakdown</p>
             </div>
-            <Link
+            {/* <Link
               href="/cost/suggest"
               className="rounded-xl border border-border px-6 py-3 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
             >
               <BarChart3 className="w-5 h-5" />
               Metrices Analysis
-            </Link>
+            </Link> */}
           </div>
         </div>
       </div>
@@ -180,7 +185,7 @@ export default function CostPage() {
             <div>
               <h3 className=" mb-4 flex items-center gap-2 text-2xl font-bold">
                 <FolderOpen className="w-5 h-5 opacity-70" />
-                Project: {PROJECT_ID}
+                Project: {projectId}
               </h3>
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold">Runs</h2>
@@ -271,7 +276,7 @@ export default function CostPage() {
                           <ChevronRight className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity" />
                         </div>
                         <Link
-                          href={`/cost/suggest/${run.id}`}
+                          href={projectId ? `/project/${projectId}/cost/suggest/${run.id}` : `/cost/suggest/${run.id}`}
                           onClick={(e) => e.stopPropagation()}
                           className="text-xs font-medium opacity-70 hover:opacity-100 flex items-center gap-1"
                         >
