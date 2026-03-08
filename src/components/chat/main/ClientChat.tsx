@@ -261,7 +261,7 @@ export default function ClientChat({ id }: Props) {
             }}
           >
             <span
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              className="w-1.5 h-1.5 rounded-full shrink-0"
               style={{ backgroundColor: "#60a5fa" }}
             />
             <span>
@@ -421,7 +421,7 @@ export default function ClientChat({ id }: Props) {
                 color: "#fca5a5",
               }}
             >
-              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               {err}
             </div>
           )}
@@ -478,7 +478,7 @@ export default function ClientChat({ id }: Props) {
             <button
               disabled={!threadId || loading || !input.trim()}
               onClick={handleSend}
-              className={`flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 ${
+              className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 ${
                 !threadId || loading || !input.trim()
                   ? "bg-white/80 cursor-not-allowed"
                   : "bg-white hover:bg-white/80 cursor-pointer"

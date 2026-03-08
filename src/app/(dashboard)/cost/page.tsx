@@ -1,9 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { fetchDesignsList } from '@/app/api/asm/routes';
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { fetchDesignsList } from "@/app/api/asm/routes";
 import { useAuth } from "@/providers/auth-context";
 import {
   BarChart3,
@@ -14,8 +15,9 @@ import {
   FileText,
   Circle,
   ChevronRight,
-  FolderOpen
-} from 'lucide-react';
+  FolderOpen,
+  ArrowLeft,
+} from "lucide-react";
 
 interface Run {
   id: string;
@@ -28,7 +30,7 @@ interface Run {
   created_at: string;
   best_candidate: {
     candidate: {
-      spec: { vcpu: number; memory_gb: number }
+      spec: { vcpu: number; memory_gb: number };
     };
     workload_distance: number;
   };
@@ -63,69 +65,74 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   const router = useRouter();
   const { userId: firebaseUid } = useAuth();
 
-  const fetchRuns = useCallback(async (uid: string) => {
-    try {
-      setLoading(true);
-      const data = await fetchDesignsList(uid);
-      const runList: Run[] = data.rows.map((row: ApiResponseRow, index: number) => ({
-        id: row.id,
-        project_id: row.project_id,
-        run_id: row.run_id,
-        requestNumber: index + 1,
-        workload: row.request.design.workload.concurrent_users,
-        preferred_vcpu: row.request.design.preferred_vcpu,
-        preferred_memory_gb: row.request.design.preferred_memory_gb,
-        created_at: new Date(row.created_at).toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
-        best_candidate: row.best_candidate,
-        all_candidates: row.response || []
-      }));
+  const fetchRuns = useCallback(
+    async (uid: string) => {
+      try {
+        setLoading(true);
+        const data = await fetchDesignsList(uid);
+        const runList: Run[] = data.rows.map(
+          (row: ApiResponseRow, index: number) => ({
+            id: row.id,
+            project_id: row.project_id,
+            run_id: row.run_id,
+            requestNumber: index + 1,
+            workload: row.request.design.workload.concurrent_users,
+            preferred_vcpu: row.request.design.preferred_vcpu,
+            preferred_memory_gb: row.request.design.preferred_memory_gb,
+            created_at: new Date(row.created_at).toLocaleDateString("en-US", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            best_candidate: row.best_candidate,
+            all_candidates: row.response || [],
+          }),
+        );
 
-      setRuns(runList.filter((r) => (r.project_id || "") === projectId));
-    } catch (err) {
-      console.error('Error fetching runs:', err);
-      // const fallbackData: Run[] = [
-      //   {
-      //     id: "0610bab4-a1a6-4ab2-9314-2e54caa1d126",
-      //     requestNumber: 1,
-      //     workload: 2000,
-      //     preferred_vcpu: 5,
-      //     preferred_memory_gb: 24,
-      //     created_at: "Dec 4, 2025, 22:43",
-      //     best_candidate: {
-      //       candidate: {
-      //         spec: { vcpu: 16, memory_gb: 64 }
-      //       },
-      //       workload_distance: 100
-      //     },
-      //     all_candidates: []
-      //   },
-      //   {
-      //     id: "1e9a8484-958b-42a6-99c0-1e671a21eed6",
-      //     requestNumber: 2,
-      //     workload: 2000,
-      //     preferred_vcpu: 8,
-      //     preferred_memory_gb: 16,
-      //     created_at: "Dec 4, 2025, 22:18",
-      //     best_candidate: {
-      //       candidate: {
-      //         spec: { vcpu: 4, memory_gb: 8 }
-      //       },
-      //       workload_distance: 100
-      //     },
-      //     all_candidates: []
-      //   }
-      // ];
-      // setRuns(fallbackData);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
+        setRuns(runList.filter((r) => (r.project_id || "") === projectId));
+      } catch (err) {
+        console.error("Error fetching runs:", err);
+        // const fallbackData: Run[] = [
+        //   {
+        //     id: "0610bab4-a1a6-4ab2-9314-2e54caa1d126",
+        //     requestNumber: 1,
+        //     workload: 2000,
+        //     preferred_vcpu: 5,
+        //     preferred_memory_gb: 24,
+        //     created_at: "Dec 4, 2025, 22:43",
+        //     best_candidate: {
+        //       candidate: {
+        //         spec: { vcpu: 16, memory_gb: 64 }
+        //       },
+        //       workload_distance: 100
+        //     },
+        //     all_candidates: []
+        //   },
+        //   {
+        //     id: "1e9a8484-958b-42a6-99c0-1e671a21eed6",
+        //     requestNumber: 2,
+        //     workload: 2000,
+        //     preferred_vcpu: 8,
+        //     preferred_memory_gb: 16,
+        //     created_at: "Dec 4, 2025, 22:18",
+        //     best_candidate: {
+        //       candidate: {
+        //         spec: { vcpu: 4, memory_gb: 8 }
+        //       },
+        //       workload_distance: 100
+        //     },
+        //     all_candidates: []
+        //   }
+        // ];
+        // setRuns(fallbackData);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
     if (!firebaseUid) return;
@@ -133,7 +140,9 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   }, [fetchRuns, firebaseUid]);
 
   const handleRunClick = (run: Run) => {
-    const path = projectId ? `/project/${projectId}/cost/${run.id}` : `/cost/${run.id}`;
+    const path = projectId
+      ? `/project/${projectId}/cost/${run.id}`
+      : `/cost/${run.id}`;
     router.push(path);
   };
 
@@ -153,22 +162,34 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   return (
     <div className="p-6 space-y-4">
       {/* Header Section */}
-      <div className="border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">Cost Analysis</h1>
-              <p className="opacity-60 mt-2 text-sm">Select a run to view detailed cost breakdown</p>
-            </div>
-            {/* <Link
+      <div
+        className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+      >
+          <button
+            onClick={() => router.back()}
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+            aria-label="Go back"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+
+          <div>
+            <h1 className="text-md font-bold text-white flex items-center gap-2">
+              Cost Analysis
+            </h1>
+            <p className="opacity-60 text-xs">
+              Select a run to view detailed cost breakdown
+            </p>
+          </div>
+
+        {/* <Link
               href="/cost/suggest"
               className="rounded-xl border border-border px-6 py-3 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
             >
               <BarChart3 className="w-5 h-5" />
               Metrices Analysis
             </Link> */}
-          </div>
-        </div>
       </div>
 
       {/* Main Content */}
@@ -178,8 +199,13 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
           {runs.length === 0 ? (
             <div className="text-center py-16 border-2 border-dashed border-border rounded-2xl bg-card">
               <FileText className="w-16 h-16 opacity-50 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold opacity-80 mb-3">No runs found</h3>
-              <p className="opacity-60 max-w-md mx-auto text-sm">Run metrics analysis to add runs and analyze infrastructure costs.</p>
+              <h3 className="text-xl font-semibold opacity-80 mb-3">
+                No runs found
+              </h3>
+              <p className="opacity-60 max-w-md mx-auto text-sm">
+                Run metrics analysis to add runs and analyze infrastructure
+                costs.
+              </p>
             </div>
           ) : (
             <div>
@@ -200,7 +226,10 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                     <div className="flex justify-between items-start mb-4">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <Circle className="w-3 h-3 opacity-50" fill="currentColor" />
+                          <Circle
+                            className="w-3 h-3 opacity-50"
+                            fill="currentColor"
+                          />
                           <span className="text-xs opacity-60">
                             Run #{index + 1}
                           </span>
@@ -226,34 +255,45 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                             Created
                           </p>
                           <p className="text-sm opacity-90">
-                            {new Date(run.created_at).toLocaleDateString("en-US", {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              hour12: true
-                            })}
+                            {new Date(run.created_at).toLocaleDateString(
+                              "en-US",
+                              {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: true,
+                              },
+                            )}
                           </p>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="bg-card border border-border rounded-lg p-3">
-                          <p className="text-xs opacity-60 mb-2">Preferred Spec</p>
+                          <p className="text-xs opacity-60 mb-2">
+                            Preferred Spec
+                          </p>
                           <div className="flex items-center gap-2 mb-1">
                             <Cpu className="w-4 h-4 opacity-70" />
-                            <span className="font-medium">{run.preferred_vcpu} vCPU</span>
+                            <span className="font-medium">
+                              {run.preferred_vcpu} vCPU
+                            </span>
                           </div>
                           <div className="flex items-center gap-2">
                             <MemoryStick className="w-4 h-4 opacity-70" />
-                            <span className="font-medium">{run.preferred_memory_gb} GB RAM</span>
+                            <span className="font-medium">
+                              {run.preferred_memory_gb} GB RAM
+                            </span>
                           </div>
                         </div>
 
                         {run.best_candidate && (
                           <div className="bg-card border border-border rounded-lg p-3">
-                            <p className="text-xs opacity-60 mb-2">Recommended</p>
+                            <p className="text-xs opacity-60 mb-2">
+                              Recommended
+                            </p>
                             <div className="flex items-center gap-2 mb-1">
                               <CheckCircle className="w-4 h-4 text-green-400" />
                               <span className="font-medium">
@@ -263,7 +303,8 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                             <div className="flex items-center gap-2">
                               <CheckCircle className="w-4 h-4 text-green-400" />
                               <span className="font-medium">
-                                {run.best_candidate.candidate.spec.memory_gb} GB RAM
+                                {run.best_candidate.candidate.spec.memory_gb} GB
+                                RAM
                               </span>
                             </div>
                           </div>
@@ -272,11 +313,17 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
 
                       <div className="pt-4 border-t border-border space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs opacity-60">Click to view cost analysis</span>
+                          <span className="text-xs opacity-60">
+                            Click to view cost analysis
+                          </span>
                           <ChevronRight className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity" />
                         </div>
                         <Link
-                          href={projectId ? `/project/${projectId}/cost/suggest/${run.id}` : `/cost/suggest/${run.id}`}
+                          href={
+                            projectId
+                              ? `/project/${projectId}/cost/suggest/${run.id}`
+                              : `/cost/suggest/${run.id}`
+                          }
                           onClick={(e) => e.stopPropagation()}
                           className="text-xs font-medium opacity-70 hover:opacity-100 flex items-center gap-1"
                         >
@@ -296,10 +343,11 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
         <div className="mt-12 pt-6 border-t border-border">
           <div className="text-center">
             <p className="text-sm opacity-60">
-              Showing {runs.length} run{runs.length !== 1 ? 's' : ''}
+              Showing {runs.length} run{runs.length !== 1 ? "s" : ""}
             </p>
             <p className="text-xs opacity-50 mt-2">
-              Select any run to analyze cloud provider costs, compare pricing options, and optimize your infrastructure
+              Select any run to analyze cloud provider costs, compare pricing
+              options, and optimize your infrastructure
             </p>
           </div>
         </div>

@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -413,10 +415,10 @@ export default function PatternsView({
   }
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
+    <div className="space-y-6 max-w-400 mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
       {simulationModalOpen && (
         <div
-          className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-99999 flex items-center justify-center p-4 "
           onClick={(e) =>
             e.target === e.currentTarget && setSimulationModalOpen(false)
           }
@@ -437,7 +439,7 @@ export default function PatternsView({
                 Version
               </label>
               <select
-                className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white scheme-dark focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
                 value={simulationSelectedVersion}
                 onChange={(e) => setSimulationSelectedVersion(e.target.value)}
               >
@@ -482,7 +484,7 @@ export default function PatternsView({
         disabledApply={!hasDetections || loadingSug}
       />
 
-      <div className="sticky top-0 z-20 rounded-2xl border border-white/10 bg-[#1a1a1a]/95 backdrop-blur-sm p-3 shadow-xl shadow-black/20 overflow-hidden flex-shrink-0">
+      <div className="sticky top-0 z-20 p-3 shadow-xl shadow-black/20 overflow-hidden shrink-0">
         <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-white/10">
           <VersionSidebar
             refreshTrigger={versionsRefreshTrigger}
@@ -493,7 +495,7 @@ export default function PatternsView({
             type="button"
             onClick={openSuggestions}
             disabled={!hasDetections || !editedYaml}
-            className="rounded-xl border border-white/15 bg-surface/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
             title={
               !editedYaml
                 ? "No current YAML available"
@@ -508,7 +510,7 @@ export default function PatternsView({
           <button
             type="button"
             onClick={handleDownloadYaml}
-            className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
           >
             Download YAML
           </button>
@@ -516,7 +518,7 @@ export default function PatternsView({
           <button
             type="button"
             onClick={handleDownloadJson}
-            className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
           >
             Download JSON
           </button>
@@ -524,7 +526,7 @@ export default function PatternsView({
           <button
             type="button"
             onClick={handleDownloadImage}
-            className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
           >
             Download Image
           </button>
@@ -533,7 +535,7 @@ export default function PatternsView({
             <button
               type="button"
               onClick={handleReturnToChat}
-              className="rounded-xl border border-white/15 bg-card/80 px-4 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
             >
               Return to Chat
             </button>
@@ -543,11 +545,11 @@ export default function PatternsView({
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
           <Legend versionCount={versionCount ?? undefined} />
 
-          <div className="flex-shrink-0">
+          <div className="shrink-0">
             <button
               type="button"
               onClick={() => setSimulationModalOpen(true)}
-              className="rounded-2xl bg-[#0d307c] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#2563eb]/30 hover:bg-[#1d4ed8] transition-all duration-200"
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
             >
               Proceed to Performance Simulator
             </button>
@@ -555,7 +557,7 @@ export default function PatternsView({
         </div>
       </div>
 
-      <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0">
+      <div className="bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0">
         {showGraphOverlay ? (
           <div className="relative flex-1 min-h-[50vh] flex items-center justify-center bg-black/30">
             <div className="flex flex-col items-center gap-4">
