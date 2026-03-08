@@ -1,10 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, GitCompare } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
+import { useToast } from "@/hooks/useToast";
 import type {
   AmgApdVersionSummary,
   AnalysisResult,
@@ -34,6 +36,7 @@ export default function ProjectPatternsComparePage({
 }) {
   const { id: projectId } = use(params);
   const { userId } = useAuth();
+  const showToast = useToast((s) => s.showToast);
   const headers = () =>
     getAmgApdHeaders({
       userId: userId ?? undefined,
@@ -69,6 +72,7 @@ export default function ProjectPatternsComparePage({
   async function runCompare() {
     if (!leftId || !rightId || leftId === rightId) {
       setError("Select two different versions.");
+      showToast("Select two different versions to compare.", "warning");
       return;
     }
     setError(null);
@@ -88,8 +92,11 @@ export default function ProjectPatternsComparePage({
         left: data.left,
         right: data.right,
       });
+      showToast("Comparison loaded", "success");
     } catch (e: any) {
-      setError(e?.message ?? "Compare failed");
+      const msg = e?.message ?? "Compare failed";
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       setLoadingCompare(false);
     }
@@ -111,78 +118,88 @@ export default function ProjectPatternsComparePage({
     : null;
 
   return (
-    <div className="p-6 flex flex-col gap-6 min-h-[calc(100dvh-280px)] max-w-[1600px] mx-auto">
-      <div className="flex items-center gap-4 flex-shrink-0">
+    <div className="p-6 space-y-4 min-w-0">
+      <div className="flex items-center justify-between gap-3 flex-shrink-0 py-4 px-1">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link
+            href={projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns"}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors inline-flex"
+          >
+            <ArrowLeft className="w-5 h-5 text-white" />
+          </Link>
+          <div>
+            <h1 className="text-xl font-bold text-white flex items-center gap-2">
+              <GitCompare className="w-5 h-5" />
+              Compare Architecture Model Versions
+            </h1>
+            <p className="text-sm text-white/60 mt-1">
+              Project <span className="font-mono text-xs">{projectId}</span>
+            </p>
+          </div>
+        </div>
         <Link
           href={projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns"}
-          className="text-sm font-medium text-white/80 hover:text-white hover:underline transition-colors"
+          className="flex-shrink-0 rounded-2xl border border-white/15 bg-card/80 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
         >
-          ← Back to graph
+          Back to graph
         </Link>
-        <h1 className="text-xl font-semibold text-white">
-          Compare versions
-          {projectId && (
-            <span className="text-sm font-normal text-white/60 ml-2">
-              (Project {projectId})
-            </span>
-          )}
-        </h1>
       </div>
 
-      <div className="rounded-3xl border border-white/10 bg-gray-900/80 backdrop-blur-sm p-5 shadow-xl shadow-black/20 flex-shrink-0">
-        <div className="flex flex-wrap items-end gap-5">
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
-              Left version
-            </label>
-            <select
-              className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
-              value={leftId}
-              onChange={(e) => setLeftId(e.target.value)}
-              disabled={loadingVersions}
+      <div className="min-w-0 flex flex-col gap-6 flex-1 min-h-[calc(100dvh-280px)] max-w-[1600px] mx-auto">
+        <div className="rounded-3xl border border-white/10 bg-gray-900/80 backdrop-blur-sm p-6 shadow-xl shadow-black/20 flex-shrink-0">
+          <div className="flex flex-wrap items-end gap-5">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
+                Left version
+              </label>
+              <select
+                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
+                value={leftId}
+                onChange={(e) => setLeftId(e.target.value)}
+                disabled={loadingVersions}
+              >
+                <option value="">Select…</option>
+                {versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    #{v.version_number} {v.title || "Untitled"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
+                Right version
+              </label>
+              <select
+                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
+                value={rightId}
+                onChange={(e) => setRightId(e.target.value)}
+                disabled={loadingVersions}
+              >
+                <option value="">Select…</option>
+                {versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    #{v.version_number} {v.title || "Untitled"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={runCompare}
+              disabled={
+                loadingVersions ||
+                loadingCompare ||
+                !leftId ||
+                !rightId ||
+                leftId === rightId
+              }
+              className="rounded-2xl bg-[#9AA4B2] px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#9AA4B2]/20 hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
             >
-              <option value="">Select…</option>
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  #{v.version_number} {v.title || "Untitled"}
-                </option>
-              ))}
-            </select>
+              {loadingCompare ? "Loading…" : "Compare"}
+            </button>
           </div>
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
-              Right version
-            </label>
-            <select
-              className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
-              value={rightId}
-              onChange={(e) => setRightId(e.target.value)}
-              disabled={loadingVersions}
-            >
-              <option value="">Select…</option>
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  #{v.version_number} {v.title || "Untitled"}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            type="button"
-            onClick={runCompare}
-            disabled={
-              loadingVersions ||
-              loadingCompare ||
-              !leftId ||
-              !rightId ||
-              leftId === rightId
-            }
-            className="rounded-2xl bg-[#9AA4B2] px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#9AA4B2]/20 hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-          >
-            {loadingCompare ? "Loading…" : "Compare"}
-          </button>
         </div>
-      </div>
 
       {error && (
         <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300 flex-shrink-0">
@@ -229,6 +246,7 @@ export default function ProjectPatternsComparePage({
           initial graph vs after suggestions).
         </p>
       )}
+      </div>
     </div>
   );
 }

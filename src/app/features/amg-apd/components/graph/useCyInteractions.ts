@@ -43,6 +43,42 @@ const TOOL_TO_LABEL: Record<EditTool, string> = {
   "connect-calls": "node",
 };
 
+/** Prefix used for next unique label per tool (e.g. "service", "database"). */
+const TOOL_TO_LABEL_PREFIX: Record<EditTool, string> = {
+  select: "node",
+  "add-service": "service",
+  "add-api-gateway": "api-gateway",
+  "add-database": "database",
+  "add-event-topic": "event-topic",
+  "add-external-system": "external-system",
+  "add-client": "client",
+  "add-user-actor": "user-actor",
+  "connect-calls": "node",
+};
+
+/** Returns the next unique label for the given prefix (e.g. "service" -> "service-1", "service-2", …). */
+function getNextUniqueLabel(cy: cytoscape.Core, prefix: string): string {
+  const labels = new Set<string>();
+  cy.nodes().forEach((n) => {
+    if ((n as any).hasClass?.("halo")) return;
+    const l = (n.data("label") as string) ?? "";
+    const t = l.trim();
+    if (t) labels.add(t);
+  });
+
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const exactOrNum = new RegExp(`^${escaped}(?:-(\\d+))?$`, "i");
+  const used = new Set<number>();
+  labels.forEach((l) => {
+    const m = l.match(exactOrNum);
+    if (m) used.add(m[1] ? parseInt(m[1], 10) : 1);
+  });
+
+  let n = 1;
+  while (used.has(n)) n++;
+  return `${prefix}-${n}`;
+}
+
 export function useCyInteractions({
   cy,
   editMode,
@@ -193,15 +229,16 @@ export function useCyInteractions({
 
       if (editMode && ADD_NODE_TOOLS.includes(tool)) {
         const kind = TOOL_TO_KIND[tool];
-        const labelBase = TOOL_TO_LABEL[tool];
-        const idBase = labelBase.replace("new-", "").replace(/-/g, "_");
+        const prefix = TOOL_TO_LABEL_PREFIX[tool];
+        const label = getNextUniqueLabel(cy, prefix);
+        const idBase = prefix.replace(/-/g, "_");
         const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
           .toString(36)
           .slice(2, 6)}`;
 
         cy.add({
           group: "nodes",
-          data: { id, label: labelBase, kind },
+          data: { id, label, kind },
           position: pos,
           grabbable: true,
           selectable: true,
