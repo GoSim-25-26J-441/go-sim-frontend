@@ -8,6 +8,10 @@ import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
 import { createProjectSimulationRun, CreateProjectRunRequest } from "@/lib/api-client/simulation";
 import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
+import {
+  amgApdTemplateToScenarioState,
+  parseAmgApdTemplate,
+} from "./amgApdTemplateToScenario";
 
 /** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
 interface DiagramVersion {
@@ -389,6 +393,22 @@ workload:
       .finally(() => setVersionDetailLoading(false));
     return () => controller.abort();
   }, [selectedVersionId, projectId, userId]);
+
+  // When a saved version's YAML template is available, parse and apply as baseline scenario
+  useEffect(() => {
+    if (!versionYamlTemplate || selectedVersionId === "sample") return;
+    const parsed = parseAmgApdTemplate(versionYamlTemplate);
+    if (parsed) {
+      try {
+        setScenario(amgApdTemplateToScenarioState(parsed));
+        setScenarioError(null);
+      } catch {
+        setScenarioError("Could not load diagram as baseline; using default scenario.");
+      }
+    } else {
+      setScenarioError("Could not load diagram as baseline; using default scenario.");
+    }
+  }, [versionYamlTemplate, selectedVersionId]);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<SimulationFormData>({
