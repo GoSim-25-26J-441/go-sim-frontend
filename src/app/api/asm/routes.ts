@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "@/lib/api-client/http";
+
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE;
 
 interface SimulationRequirements {
@@ -258,11 +260,12 @@ export interface RunCandidateItem {
   s3_path?: string;
 }
 
-// Fetch candidates for a simulation run
+// Fetch candidates for a simulation run (uses auth for 401 avoidance)
 export const fetchRunCandidates = async (runId: string) => {
   try {
-    const response = await fetch(
+    const response = await authenticatedFetch(
       `${BASE_URL}/api/v1/simulation/runs/${encodeURIComponent(runId)}/candidates`,
+      { method: "GET" },
     );
     if (!response.ok) {
       throw new Error(
