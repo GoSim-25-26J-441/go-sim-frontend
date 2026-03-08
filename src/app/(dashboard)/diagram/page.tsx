@@ -55,6 +55,8 @@ interface DiagramEdge {
 
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 60;
+const PAPER_WIDTH = 4000;
+const PAPER_HEIGHT = 3000;
 
 const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: any }[] = [
   { kind: "service", label: "Service", icon: S1 },
@@ -154,6 +156,9 @@ export default function DrawDiagram() {
   );
 
   const [zoom, setZoom] = useState<number>(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(
     null
@@ -191,13 +196,16 @@ export default function DrawDiagram() {
     setZoom((z) => clamp(Math.round((z + 0.1) * 10) / 10, 0.4, 2));
   const zoomOut = () =>
     setZoom((z) => clamp(Math.round((z - 0.1) * 10) / 10, 0.4, 2));
-  const zoomReset = () => setZoom(1);
+  const zoomReset = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
 
   const toDiagramCoords = (e: { clientX: number; clientY: number }) => {
     if (!canvasRef.current) return { x: 0, y: 0 };
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / zoom;
-    const y = (e.clientY - rect.top) / zoom;
+    const x = (e.clientX - rect.left - pan.x) / zoom;
+    const y = (e.clientY - rect.top - pan.y) / zoom;
     return { x, y };
   };
 
@@ -256,6 +264,13 @@ export default function DrawDiagram() {
     };
 
   const handleCanvasMouseMove = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    if (isPanning && panStartRef.current) {
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
     if (!draggingNodeId || !dragOffset) return;
 
     const { x, y } = toDiagramCoords(e);
@@ -278,12 +293,30 @@ export default function DrawDiagram() {
     setDragOffset(null);
   };
 
-  const handleCanvasMouseUp = () => {
+  const stopPanning = () => {
+    setIsPanning(false);
+    panStartRef.current = null;
+  };
+
+  const handleCanvasMouseDown = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    if (e.button === 0 && !(e.target as HTMLElement).closest("[data-edge]")) {
+      setIsPanning(true);
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleCanvasMouseUp = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.button === 0) stopPanning();
     stopDragging();
   };
 
   const handleCanvasMouseLeave = () => {
+    stopPanning();
     stopDragging();
+  };
+
+  const handleCanvasContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
   };
 
   // Wheel zoom – plain mouse wheel over canvas
@@ -1225,11 +1258,11 @@ export default function DrawDiagram() {
                 onClick={zoomReset}
                 className="ml-1 h-6 rounded border border-slate-600 bg-slate-900 px-2 text-[10px] text-slate-100"
               >
-                Reset
+                Reset view
               </button>
             </div>
             <div className="text-[10px] text-slate-500">
-              Hover canvas and scroll to zoom.
+              Left-drag on empty area to pan. Scroll to zoom.
             </div>
             {connectingFromId && (
               <div className="text-[11px] rounded-full border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-amber-200">
@@ -1241,19 +1274,33 @@ export default function DrawDiagram() {
 
         <div
           ref={canvasRef}
-          className="relative flex-1 rounded-xl border border-slate-800 bg-white overflow-auto"
+          className="relative flex-1 rounded-xl border border-slate-800 bg-slate-100 overflow-hidden"
           onDragOver={handleCanvasDragOver}
           onDrop={handleCanvasDrop}
+          onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={handleCanvasMouseUp}
           onMouseLeave={handleCanvasMouseLeave}
           onClick={handleCanvasClick}
+          onContextMenu={handleCanvasContextMenu}
           onWheel={handleCanvasWheel}
+          style={{ cursor: isPanning ? "grabbing" : undefined }}
         >
-          {/* zoom wrapper */}
+          {/* Large paper with grid - pan + zoom */}
           <div
-            className="absolute inset-0 origin-top-left"
-            style={{ transform: `scale(${zoom})`, transformOrigin: "0 0" }}
+            data-paper
+            className="absolute left-0 top-0 origin-top-left cursor-grab"
+            style={{
+              width: PAPER_WIDTH,
+              height: PAPER_HEIGHT,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              backgroundImage: `
+                linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+                linear-gradient(to bottom, #e2e8f0 1px, transparent 1px)
+              `,
+              backgroundSize: "24px 24px",
+              backgroundPosition: "0 0",
+            }}
           >
             {/* edges */}
             <svg className="absolute inset-0 h-full w-full">
@@ -1295,7 +1342,7 @@ export default function DrawDiagram() {
                 const isSelected = edge.id === selectedEdgeId;
 
                 return (
-                  <g key={edge.id}>
+                  <g key={edge.id} data-edge>
                     <line
                       x1={x1}
                       y1={y1}
