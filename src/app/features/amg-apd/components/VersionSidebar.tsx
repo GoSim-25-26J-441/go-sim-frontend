@@ -13,14 +13,7 @@ import type {
   AmgApdVersionSummary,
   AnalysisResult,
 } from "@/app/features/amg-apd/types";
-import {
-  ChevronDown,
-  Delete,
-  DeleteIcon,
-  LucideDelete,
-  PenLine,
-  Trash,
-} from "lucide-react";
+import { PenLine, Trash } from "lucide-react";
 
 export default function VersionSidebar({
   refreshTrigger = 0,
@@ -43,6 +36,7 @@ export default function VersionSidebar({
   const [confirmDeleteVersionId, setConfirmDeleteVersionId] = useState<
     string | null
   >(null);
+  const [lastVersionBlockOpen, setLastVersionBlockOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -156,6 +150,10 @@ export default function VersionSidebar({
   }
 
   async function handleDelete(id: string) {
+    if (versions.length <= 1) {
+      setLastVersionBlockOpen(true);
+      return;
+    }
     setConfirmDeleteVersionId(id);
   }
 
@@ -185,7 +183,7 @@ export default function VersionSidebar({
   function startRename(v: AmgApdVersionSummary) {
     setEditingId(v.id);
     setEditingTitle(
-      v.title || `Version ${String(v.version_number).padStart(2, "0")}`,
+      v.title || `diagramV${v.version_number}`,
     );
   }
 
@@ -239,37 +237,49 @@ export default function VersionSidebar({
     <div className="relative">
       {typeof document !== "undefined" &&
         createPortal(
-          <ConfirmModal
-            open={confirmDeleteVersionId !== null}
-            onClose={() => setConfirmDeleteVersionId(null)}
-            title="Delete version?"
-            message="This version will be permanently deleted. This action cannot be undone."
-            confirmLabel="Delete"
-            cancelLabel="Cancel"
-            variant="danger"
-            onConfirm={confirmDeleteVersion}
-          />,
+          <>
+            <ConfirmModal
+              open={confirmDeleteVersionId !== null}
+              onClose={() => setConfirmDeleteVersionId(null)}
+              title="Delete version?"
+              message="This version will be permanently deleted. This action cannot be undone."
+              confirmLabel="Delete"
+              cancelLabel="Cancel"
+              variant="danger"
+              onConfirm={confirmDeleteVersion}
+            />
+            <ConfirmModal
+              open={lastVersionBlockOpen}
+              onClose={() => setLastVersionBlockOpen(false)}
+              title="Cannot delete last version"
+              message="You must keep at least one version. Create another version before deleting this one."
+              confirmLabel="OK"
+              variant="warning"
+              alertOnly
+              onConfirm={() => setLastVersionBlockOpen(false)}
+            />
+          </>,
           document.body,
         )}
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="flex items-center gap-2 px-2 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-        title="View and switch versions"
-      >
-        <span>Versions</span>
-
+      <div className="relative inline-flex">
         {versions.length > 0 && (
-          <span className="flex items-center justify-center min-w-4.5 h-4.5 px-1 rounded-full bg-black text-white text-[10px] font-semibold leading-none">
+          <span
+            className="absolute -top-3 -right-3 z-10 inline-flex items-center justify-center min-w-[1rem] h-4 px-1.5 rounded-sm text-[10px] font-semibold tabular-nums bg-red-800 text-white ring-2 ring-black/30"
+            aria-label={`${versions.length} version(s)`}
+          >
             {versions.length}
           </span>
         )}
-
-        <ChevronDown
-          className={`transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+          title="View and switch versions"
+        >
+          Versions
+        </button>
+      </div>
 
       {open &&
         typeof document !== "undefined" &&

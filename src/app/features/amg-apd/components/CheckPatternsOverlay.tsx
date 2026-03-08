@@ -70,7 +70,51 @@ export default function CheckPatternsOverlay({ projectId, onClose }: Props) {
         };
 
         if (data.needs_analysis && data.yaml_content) {
-          // Backend has yaml but analysis missing/failed; run "Analyze & Visualize" flow.
+          // Update existing version in place when version_id is present (e.g. from chat); otherwise create new version.
+          const versionId = (data as { version_id?: string }).version_id;
+          if (versionId) {
+            const updateRes = await fetch("/api/amg-apd/update-version-analysis", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...getAmgApdHeaders({
+                  userId: userId ?? undefined,
+                  chatId: projectID,
+                }),
+              },
+              body: JSON.stringify({
+                version_id: versionId,
+                yaml: data.yaml_content,
+              }),
+            });
+
+            if (cancelled) return;
+
+            if (!updateRes.ok) {
+              const text = await updateRes.text();
+              let msg = text || "Update analysis failed";
+              try {
+                const j = JSON.parse(text);
+                if (j?.error) msg = j.error;
+              } catch {
+                // keep msg
+              }
+              setError(msg);
+              return;
+            }
+
+            const analyzeData: AnalysisResult = await updateRes.json();
+            if (!analyzeData?.graph) {
+              setError("Backend did not return a graph.");
+              return;
+            }
+            setLast(analyzeData);
+            setEditedYaml(data.yaml_content);
+            router.replace(`/project/${projectID}/patterns`);
+            return;
+          }
+
+          // No version_id: create new version via analyze-upload (e.g. first time from patterns).
           const blob = new Blob([data.yaml_content], { type: "text/yaml" });
           const fd = new FormData();
           fd.append("file", blob, "architecture.yaml");
