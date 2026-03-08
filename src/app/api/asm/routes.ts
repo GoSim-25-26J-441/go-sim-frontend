@@ -234,3 +234,79 @@ export const fetchDesignByProjectRun = async (
     throw new Error(error instanceof Error ? error.message : String(error));
   }
 };
+
+// Response from GET /api/v1/simulation/runs/:runId/candidates
+export interface RunCandidatesResponse {
+  best_candidate_id: string;
+  candidates: RunCandidateItem[];
+  project_id: string;
+  run_id: string;
+  simulation: { nodes: number };
+  user_id: string;
+}
+
+export interface RunCandidateItem {
+  id: string;
+  spec: { label: string; memory_gb: number; vcpu: number };
+  metrics: {
+    cpu_util_pct: number;
+    mem_util_pct: number;
+    [key: string]: unknown;
+  };
+  sim_workload: { concurrent_users: number; rate_rps?: number };
+  source: string;
+  s3_path?: string;
+}
+
+// Fetch candidates for a simulation run
+export const fetchRunCandidates = async (runId: string) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/simulation/runs/${encodeURIComponent(runId)}/candidates`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch run candidates: ${response.status} ${response.statusText}`,
+      );
+    }
+    return (await response.json()) as RunCandidatesResponse;
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Call suggest with run data
+export const fetchSuggestionsFromRun = async (
+  userId: string,
+  projectId: string,
+  runId: string,
+  simulation: SimulationRequirements,
+  candidates: CandidateDTO[],
+) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/suggest`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          project_id: projectId,
+          run_id: runId,
+          simulation,
+          candidates,
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get suggestions: ${response.status} ${response.statusText}`,
+      );
+    }
+    return await response.json();
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
