@@ -33,6 +33,7 @@ interface DesignQuestionsModalProps {
   onClose: () => void;
   onSubmit: (design: DesignAnswers) => void;
   onSkip: () => void;
+  onDesignLoaded?: (design: Record<string, any>) => void;
   initialDesign?: Record<string, any>;
   projectId?: string;
   userId?: string;
@@ -108,6 +109,7 @@ export default function DesignQuestionsModal({
   onClose,
   onSubmit,
   onSkip,
+  onDesignLoaded,
   initialDesign,
   projectId,
   userId,
@@ -162,7 +164,11 @@ export default function DesignQuestionsModal({
       initialDesign ??
       undefined;
     setAnswers(answersFromDesign(design, questions));
-  }, [questions, designByRunData?.request?.design, initialDesign]);
+    // Notify parent when design is loaded from DB so Design info badge can show
+    if (design && Object.keys(design).length > 0 && onDesignLoaded) {
+      onDesignLoaded(design);
+    }
+  }, [questions, designByRunData?.request?.design, initialDesign, onDesignLoaded]);
 
   const handleChange = (questionId: string, value: string, type: string) => {
     if (type === "number") {
