@@ -36,7 +36,6 @@ interface DesignQuestionsModalProps {
   initialDesign?: Record<string, any>;
   projectId?: string;
   userId?: string;
-  runId?: string;
 }
 
 // Icon map for known question IDs
@@ -111,7 +110,6 @@ export default function DesignQuestionsModal({
   initialDesign,
   projectId,
   userId,
-  runId,
 }: DesignQuestionsModalProps) {
   const [answers, setAnswers] = useState<DesignAnswers>({});
   const [enabled, setEnabled] = useState(false);
@@ -148,11 +146,11 @@ export default function DesignQuestionsModal({
     setEnabled(questions.length > 0);
   }, [isOpen, questions.length]);
 
-  // When modal opens and we have project/user/run, fetch saved design to prefill form
+  // When modal opens and we have project/user, fetch saved design to prefill form
   useEffect(() => {
-    if (!isOpen || !userId || !projectId || !runId) return;
-    fetchDesignByProjectRun({ userId, projectId, runId });
-  }, [isOpen, userId, projectId, runId, fetchDesignByProjectRun]);
+    if (!isOpen || !userId || !projectId) return;
+    fetchDesignByProjectRun({ userId, projectId });
+  }, [isOpen, userId, projectId, fetchDesignByProjectRun]);
 
   // Populate answers: prefer designByRunData, then initialDesign, else empty
   useEffect(() => {
@@ -197,7 +195,6 @@ export default function DesignQuestionsModal({
           user_id: userId,
           project_id: projectId,
           design,
-          ...(runId ? { run_id: runId } : {}),
         }).unwrap();
       } catch {
         // Save failed – still proceed with onSubmit per requirements
