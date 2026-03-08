@@ -26,11 +26,9 @@ export default function ProjectPatternsPage({
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <div>
-            <h1 className="text-md font-bold text-white flex items-center gap-2">
-              Architecture Model Generator & Anti-Pattern Detector
-            </h1>
-          </div>
+          <h1 className="text-md font-bold text-white flex items-center gap-2">
+            Architecture Model Generator & Anti-Pattern Detector
+          </h1>
         </div>
         <button
           onClick={() => router.push(`/project/${projectId}/chat`)}
