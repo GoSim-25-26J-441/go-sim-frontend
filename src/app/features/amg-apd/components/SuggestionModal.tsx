@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import BeforeAfterPreview from "./BeforeAfterPreview";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
+import { X } from "lucide-react";
 
 export type Suggestion = {
   id?: string;
@@ -61,22 +62,22 @@ export default function SuggestionModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-md">
+      <div className="relative flex flex-col w-full max-w-2xl mx-4 overflow-hidden rounded-md shadow-xl bg-[#1F1F1F]">
+        <div className="flex items-start justify-between gap-3 px-5 py-4" >
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">
+            <h2 className="text-md font-semibold text-white">
               Fix anti-patterns
             </h2>
-            <p className="mt-0.5 text-sm text-slate-500">
+            <p className="mt-0.5 text-xs text-white/40">
               Choose fixes to apply, then click Apply.
             </p>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-white hover:border-slate-300 transition-colors"
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
           >
-            Close
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -178,11 +179,11 @@ export default function SuggestionModal({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-4 border-t border-slate-200 bg-slate-50/80 px-5 py-4">
-          <span className="text-sm text-slate-500">
+        <div className="flex items-center justify-between gap-4 bg-black/50 px-5 py-4">
+          <span className="text-sm text-white">
             {hasSelection ? (
               <>
-                <span className="font-medium text-slate-700">
+                <span className="font-md text-white/30">
                   {selectedIds.size}
                 </span>{" "}
                 of {suggestions.length} selected
@@ -194,7 +195,7 @@ export default function SuggestionModal({
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
             >
               Cancel
             </button>
@@ -203,7 +204,7 @@ export default function SuggestionModal({
               disabled={
                 disabledApply || applyLoading || !hasSelection || loading
               }
-              className="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}
             </button>

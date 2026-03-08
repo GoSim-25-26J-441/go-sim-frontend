@@ -57,11 +57,11 @@ export default function ControlPanel({
   } = stats;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold text-[#9AA4B2]">Layout:</span>
         <select
-          className="rounded-lg border border-white/15 bg-gray-800 px-3 py-1.5 text-xs text-white [color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
           value={layoutName}
           onChange={(e) => onLayoutChange(e.target.value as LayoutName)}
         >
@@ -73,7 +73,7 @@ export default function ControlPanel({
         <button
           type="button"
           onClick={onFit}
-          className="rounded-lg border border-white/15 bg-gray-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 transition-colors"
+          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
         >
           Fit to Screen
         </button>
@@ -114,23 +114,24 @@ export default function ControlPanel({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onToggleEdit}
-              className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
-                editMode
-                  ? "bg-amber-500 text-white hover:bg-amber-600"
-                  : "bg-[#9AA4B2] text-white hover:bg-[#9AA4B2]/90"
-              }`}
-            >
-              {editMode ? "Exit Edit Mode" : "Edit Graph"}
-            </button>
-            <button
-              type="button"
               onClick={onSaveChanges}
               disabled={!editMode || isGenerating}
               style={{ visibility: editMode ? "visible" : "hidden" }}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 transition-colors"
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 text-white hover:bg-emerald-400"
             >
               {isGenerating ? "Generating…" : "Generate Graph"}
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleEdit}
+              className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150  ${
+                editMode
+                  ? "bg-red-500 text-white hover:bg-red-600"
+                  : "bg-white text-black hover:bg-gray-200"
+              }`}
+            >
+              {editMode ? "Exit Edit Mode" : "Edit Graph"}
             </button>
           </div>
         )}

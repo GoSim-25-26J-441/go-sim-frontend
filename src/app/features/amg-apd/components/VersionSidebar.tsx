@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -10,6 +11,14 @@ import type {
   AmgApdVersionSummary,
   AnalysisResult,
 } from "@/app/features/amg-apd/types";
+import {
+  ChevronDown,
+  Delete,
+  DeleteIcon,
+  LucideDelete,
+  PenLine,
+  Trash,
+} from "lucide-react";
 
 export default function VersionSidebar({
   refreshTrigger = 0,
@@ -114,7 +123,8 @@ export default function VersionSidebar({
       const v = await versionRes.json();
       const yamlContent = v?.yaml_content;
       const graph = v?.graph;
-      if (!yamlContent || !graph) throw new Error("Version has no YAML or graph content");
+      if (!yamlContent || !graph)
+        throw new Error("Version has no YAML or graph content");
 
       // Load this version into the canvas without creating a new version (no analyze-upload).
       const data: AnalysisResult = {
@@ -154,7 +164,9 @@ export default function VersionSidebar({
 
   function startRename(v: AmgApdVersionSummary) {
     setEditingId(v.id);
-    setEditingTitle(v.title || `Version ${String(v.version_number).padStart(2, "0")}`);
+    setEditingTitle(
+      v.title || `Version ${String(v.version_number).padStart(2, "0")}`,
+    );
   }
 
   async function saveRename() {
@@ -205,20 +217,20 @@ export default function VersionSidebar({
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="rounded-2xl border border-white/15 bg-card/80 px-5 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200 flex items-center gap-2"
+        className="flex items-center gap-2 px-2 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
         title="View and switch versions"
       >
         <span>Versions</span>
+
         {versions.length > 0 && (
-          <span className="rounded-full bg-[#9AA4B2]/30 px-2 py-0.5 text-xs font-semibold text-white/90 min-w-[1.5rem] text-center">
+          <span className="flex items-center justify-center min-w-4.5 h-4.5 px-1 rounded-full bg-black text-white text-[10px] font-semibold leading-none">
             {versions.length}
           </span>
         )}
-        <span
-          className={`text-white/50 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-        >
-          ▼
-        </span>
+
+        <ChevronDown
+          className={`transition-transform ${open ? "rotate-180" : ""}`}
+        />
       </button>
 
       {open &&
@@ -226,11 +238,11 @@ export default function VersionSidebar({
         createPortal(
           <div
             id="versions-dropdown-portal"
-            className="fixed z-[99999] w-80 rounded-2xl border border-white/15 bg-gray-900 shadow-2xl shadow-black/50 overflow-hidden"
+            className="fixed z-99999 w-80 rounded-md  bg-black text-white shadow-2xl shadow-black/50 overflow-hidden"
             style={{ top: position.top, left: position.left }}
           >
-            <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-white/5 px-4 py-3">
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/80">
+            <div className="flex items-center justify-between gap-2 bg-black/10 px-4 py-3">
+              <span className="text-xs font-semibold uppercase tracking-wider">
                 Versions
               </span>
               <Link
@@ -239,7 +251,7 @@ export default function VersionSidebar({
                     ? `/project/${projectId}/patterns/compare`
                     : "/dashboard/patterns/compare"
                 }
-                className="text-xs text-[#9AA4B2] hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
+                className="text-xs hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
                 onClick={closePanel}
               >
                 Compare
@@ -267,7 +279,7 @@ export default function VersionSidebar({
                 {versions.map((v) => (
                   <li
                     key={v.id}
-                    className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs hover:bg-white/[0.07] transition-colors"
+                    className="rounded-md border border-white/10 bg-white/5 p-3 text-xs hover:bg-white/[0.07] transition-colors"
                   >
                     {editingId === v.id ? (
                       <div className="space-y-2">
@@ -289,7 +301,9 @@ export default function VersionSidebar({
                           <button
                             type="button"
                             onClick={() => void saveRename()}
-                            disabled={savingTitleId === v.id || !editingTitle.trim()}
+                            disabled={
+                              savingTitleId === v.id || !editingTitle.trim()
+                            }
                             className="rounded-lg bg-[#9AA4B2] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {savingTitleId === v.id ? "Saving…" : "Save"}
@@ -318,30 +332,26 @@ export default function VersionSidebar({
                           <button
                             type="button"
                             onClick={() => handleMoveToVersion(v.id)}
-                            className="rounded-lg bg-[rgb(34,76,135)] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[rgb(8,38,150)]/90 transition-colors"
+                            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
                           >
                             Move to this version
                           </button>
                           <button
                             type="button"
                             onClick={() => startRename(v)}
-                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-white/10 hover:text-white/90 transition-colors"
+                            className="flex items-center gap-2 transition-all duration-150 text-white mx-4"
                             title="Rename version"
                           >
-                            Rename
+                            <PenLine className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDelete(v.id)}
                             disabled={deletingId === v.id}
-                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 disabled:opacity-50 transition-colors"
+                            className="flex items-center transition-all duration-150 text-red-800"
                             title="Delete version"
                           >
-                            {deletingId === v.id ? (
-                              <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              "Delete"
-                            )}
+                            <Trash className="w-4 h-4" />
                           </button>
                         </div>
                       </>
