@@ -312,7 +312,11 @@ export default function GraphCanvas({
       const c = cyRef.current;
       if (!c || !cyAlive(c)) return null;
       try {
-        return c.png({ scale: 2 });
+        return c.png({
+          full: true,
+          scale: 2,
+          bg: "#ffffff",
+        });
       } catch {
         return null;
       }
@@ -557,27 +561,27 @@ export default function GraphCanvas({
       <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden">
         {!readOnly &&
           editMode &&
-          (leftPanelCollapsed ? (
+            (leftPanelCollapsed ? (
             <button
               type="button"
               onClick={() => setLeftPanelCollapsed(false)}
               title="Show edit tools"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-slate-800 bg-slate-950/80 hover:bg-slate-900/90 text-slate-400 hover:text-slate-200 transition-colors"
+              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
             >
               <Wrench className="h-4 w-4 shrink-0" />
               <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden relative z-10">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden relative z-10 shadow-xl shadow-black/20">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
                   Edit tools
                 </span>
                 <button
                   type="button"
                   onClick={() => setLeftPanelCollapsed(true)}
                   title="Minimize edit tools"
-                  className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors"
+                  className="p-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors"
                 >
                   <PanelLeftClose className="h-4 w-4" />
                 </button>
@@ -604,7 +608,7 @@ export default function GraphCanvas({
 
         <div
           ref={containerRef}
-          className="relative flex-1 min-h-[600px] min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 z-0"
+          className="relative flex-1 min-h-[600px] min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner"
         >
           <CytoscapeComponent
             cy={(c) => {
@@ -641,22 +645,22 @@ export default function GraphCanvas({
               type="button"
               onClick={() => setRightPanelCollapsed(false)}
               title="Show details"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-slate-800 bg-slate-950/80 hover:bg-slate-900/90 text-slate-400 hover:text-slate-200 transition-colors"
+              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
             >
               <Info className="h-4 w-4 shrink-0" />
               <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-72 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+            <aside className="w-72 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
                   Details
                 </span>
                 <button
                   type="button"
                   onClick={() => setRightPanelCollapsed(true)}
                   title="Minimize details"
-                  className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors"
+                  className="p-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors"
                 >
                   <PanelRightClose className="h-4 w-4" />
                 </button>

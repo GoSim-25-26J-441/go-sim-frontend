@@ -98,12 +98,12 @@ export default function SelectedDetails({
   };
 
   const connectionsBlock = editMode && onToolChange && onDefaultCallChange && (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-3 space-y-3">
+    <div className="rounded-xl border border-white/10 bg-gray-800/60 px-3 py-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
           Connections
         </div>
-        <span className="text-[10px] text-slate-500">
+        <span className="text-[10px] text-white/40">
           Edit mode tools
         </span>
       </div>
@@ -111,10 +111,10 @@ export default function SelectedDetails({
       <button
         type="button"
         className={[
-          "w-full rounded-md px-3 py-1.5 text-[11px] flex items-center justify-between border transition-colors",
+          "w-full rounded-lg px-3 py-1.5 text-[11px] flex items-center justify-between border transition-colors",
           currentTool === "connect-calls"
-            ? "bg-sky-500 text-white border-sky-400 shadow-sm shadow-sky-500/40"
-            : "bg-slate-900 text-slate-200 border-slate-700 hover:bg-slate-800",
+            ? "bg-[#9AA4B2]/30 text-white border-[#9AA4B2]/50 shadow-sm"
+            : "bg-gray-900/80 text-white/90 border-white/10 hover:bg-white/5",
         ].join(" ")}
         onClick={() =>
           onToolChange(currentTool === "connect-calls" ? "select" : "connect-calls")
@@ -127,16 +127,16 @@ export default function SelectedDetails({
       </button>
 
       {currentTool === "connect-calls" && (
-        <div className="mt-2 rounded-md border border-slate-700 bg-slate-900/90 p-2.5 space-y-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+        <div className="mt-2 rounded-lg border border-white/10 bg-gray-900/80 p-2.5 space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
             New call defaults
           </div>
           <div>
-            <label className="block text-[10px] text-slate-400 mb-0.5">
+            <label className="block text-[10px] text-white/50 mb-0.5">
               Protocol
             </label>
             <select
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-full rounded-lg border border-white/15 bg-gray-900 px-2 py-1.5 text-[11px] text-white focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
               value={defaultCallProtocol}
               onChange={(e) =>
                 onDefaultCallChange(
@@ -154,7 +154,7 @@ export default function SelectedDetails({
             <input
               id="default-call-sync-right"
               type="checkbox"
-              className="h-3 w-3 rounded border-slate-600 bg-slate-950"
+              className="h-3 w-3 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
               checked={defaultCallSync}
               onChange={(e) =>
                 onDefaultCallChange(defaultCallProtocol, e.target.checked)
@@ -162,7 +162,7 @@ export default function SelectedDetails({
             />
             <label
               htmlFor="default-call-sync-right"
-              className="text-[11px] text-slate-300 cursor-pointer"
+              className="text-[11px] text-white/70 cursor-pointer"
             >
               Synchronous (uncheck for async)
             </label>
@@ -174,14 +174,14 @@ export default function SelectedDetails({
 
   if (!selected) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-4 text-sm text-slate-50 space-y-4">
+      <div className="rounded-xl border border-white/10 bg-gray-800/60 px-4 py-4 text-sm text-white/90 space-y-4">
         <div>
-          <p className="text-slate-200 leading-relaxed">
-            Click on a <strong className="font-semibold">node</strong> or{" "}
-            <strong className="font-semibold">connection</strong> in the graph
+          <p className="text-white/80 leading-relaxed">
+            Click on a <strong className="font-semibold text-white">node</strong> or{" "}
+            <strong className="font-semibold text-white">connection</strong> in the graph
             to see more details here.
           </p>
-          <p className="mt-2 text-[11px] text-slate-400">
+          <p className="mt-2 text-[11px] text-white/50">
             Select a service, database, or edge to view its properties and linked anti-patterns.
           </p>
         </div>
@@ -253,7 +253,7 @@ export default function SelectedDetails({
           }}
         >
           {Object.keys(nodeAttrs).length > 0 && (
-            <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+            <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
               <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
                 Extra information
               </div>
@@ -344,7 +344,7 @@ export default function SelectedDetails({
         </div>
 
         {kind === "CALLS" && (
-          <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+          <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
               Call type
             </div>
@@ -353,7 +353,7 @@ export default function SelectedDetails({
                 <div>
                   <label className="block text-[10px] text-white/60 mb-0.5">Protocol</label>
                   <select
-                    className="w-full rounded border border-white/15 bg-gray-900 px-2 py-1.5 text-xs text-white"
+                    className="w-full rounded-lg border border-white/15 bg-gray-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
                     value={callProtocol}
                     onChange={(e) => {
                       const k = e.target.value as CallProtocol;
@@ -369,7 +369,7 @@ export default function SelectedDetails({
                   <input
                     id="edge-sync-edit"
                     type="checkbox"
-                    className="h-3.5 w-3.5 rounded border-white/20 bg-gray-900"
+                    className="h-3.5 w-3.5 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
                     checked={callSync}
                     onChange={(e) =>
                       onUpdateEdge(selected.data.id as string, { kind: callProtocol, sync: e.target.checked })
@@ -390,7 +390,7 @@ export default function SelectedDetails({
         )}
 
         {hasCallMeta && (
-          <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+          <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
               Call details
             </div>
@@ -407,7 +407,7 @@ export default function SelectedDetails({
         )}
 
         {Object.keys(attrs).length > 0 && (
-          <div className="mb-3 rounded-lg bg-white/5 border border-white/5 px-3 py-2">
+          <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
               Extra information
             </div>

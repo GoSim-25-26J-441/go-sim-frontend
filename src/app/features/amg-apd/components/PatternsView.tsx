@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
@@ -500,6 +501,25 @@ export default function PatternsView({
         disabledApply={!hasDetections || loadingSug}
       />
 
+      {typeof document !== "undefined" &&
+        createPortal(
+          <ConfirmModal
+            open={duplicateNameForModal !== null}
+            onClose={() => setDuplicateNameForModal(null)}
+            title="Duplicate name"
+            message={
+              duplicateNameForModal
+                ? `A node named "${duplicateNameForModal}" already exists. Please choose a different name.`
+                : ""
+            }
+            confirmLabel="OK"
+            variant="warning"
+            alertOnly
+            onConfirm={() => setDuplicateNameForModal(null)}
+          />,
+          document.body,
+        )}
+
       <div className="sticky top-0 z-20 p-3 shadow-xl shadow-black/20 overflow-hidden shrink-0">
         <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-white/10">
           <VersionSidebar
@@ -511,7 +531,11 @@ export default function PatternsView({
             type="button"
             onClick={openSuggestions}
             disabled={!hasDetections || !editedYaml}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+              hasDetections && editedYaml
+                ? "bg-white text-black hover:bg-gray-200"
+                : "bg-gray-500/50 text-white/60 cursor-not-allowed"
+            }`}
             title={
               !editedYaml
                 ? "No current YAML available"
