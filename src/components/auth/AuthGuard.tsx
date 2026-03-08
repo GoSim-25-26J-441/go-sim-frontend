@@ -17,8 +17,18 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   // Show nothing while loading or redirecting
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-6">
+        <div className="text-xl font-bold text-white tracking-wide">
+          ArcFind
+        </div>
+
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent"></div>
+
+          <p className="text-sm text-white/60">
+            Redirecting to your dashboard...
+          </p>
+        </div>
       </div>
     );
   }
@@ -30,4 +40,3 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
-
