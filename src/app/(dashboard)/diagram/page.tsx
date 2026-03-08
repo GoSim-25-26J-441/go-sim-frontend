@@ -12,6 +12,7 @@ import React, {
   WheelEvent as ReactWheelEvent,
 } from "react";
 import { useSearchParams } from "next/navigation";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
@@ -168,6 +169,8 @@ export default function DrawDiagram() {
     y: number;
   } | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [showToolbox, setShowToolbox] = useState(true);
+  const [showInspector, setShowInspector] = useState(true);
   const [copiedNode, setCopiedNode] = useState<{
     kind: NodeKind;
     name: string;
@@ -1189,33 +1192,44 @@ export default function DrawDiagram() {
         </div>
       )}
 
-      <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
-      {/* Toolbox */}
-      <aside className="w-60 shrink-0 rounded-xl border border-slate-800 bg-slate-950/60 p-3 flex flex-col">
-        <div className="text-sm font-semibold mb-2">Toolbox</div>
-        <div className="text-xs text-slate-400 mb-3">
-          Drag components onto the canvas.
-        </div>
-        <div className="flex-1 space-y-2 overflow-auto">
-          {TOOLBOX_ITEMS.map((item) => (
+      <div className="flex h-[calc(100vh-4rem)] gap-2 p-3 sm:gap-4 sm:p-4">
+      {/* Toolbox - collapsible, compact width */}
+      {showToolbox ? (
+        <aside className="w-44 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 p-2 flex flex-col sm:w-48 sm:p-3">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-xs font-semibold truncate sm:text-sm">Toolbox</span>
+            <button
+              type="button"
+              onClick={() => setShowToolbox(false)}
+              className="shrink-0 p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+              aria-label="Hide toolbox"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="text-[10px] text-slate-500 mb-2 sm:text-xs sm:mb-3">
+            Drag onto canvas.
+          </div>
+          <div className="flex-1 space-y-1.5 overflow-auto sm:space-y-2">
+            {TOOLBOX_ITEMS.map((item) => (
             <div
               key={item.kind}
               draggable
               onDragStart={handleToolboxDragStart(item.kind)}
-              className="flex items-center gap-2 rounded-lg border border-black bg-white px-2 py-1.5 text-xs cursor-grab active:cursor-grabbing hover:bg-white/80"
+              className="flex items-center gap-1.5 rounded-lg border border-black bg-white px-1.5 py-1 text-[10px] cursor-grab active:cursor-grabbing hover:bg-white/80 sm:gap-2 sm:px-2 sm:py-1.5 sm:text-xs"
             >
               <Image
-                width={40}
-                height={40}
+                width={32}
+                height={32}
                 src={item.icon}
                 alt={item.label}
-                className="object-contain"
+                className="shrink-0 object-contain sm:w-10 sm:h-10"
               />
-              <div className="flex flex-col">
-                <span className="text-black font-bold text-xs">
+              <div className="flex flex-col min-w-0">
+                <span className="text-black font-bold text-[10px] truncate sm:text-xs">
                   {item.label}
                 </span>
-                <span className="text-[10px] text-black/80">
+                <span className="text-[9px] text-black/80 sm:text-[10px]">
                   Drag to canvas
                 </span>
               </div>
@@ -1223,14 +1237,29 @@ export default function DrawDiagram() {
           ))}
         </div>
       </aside>
+      ) : (
+        <div className="w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2">
+          <button
+            type="button"
+            onClick={() => setShowToolbox(true)}
+            className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+            aria-label="Show toolbox"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <span className="mt-2 text-[9px] text-slate-500" style={{ writingMode: "vertical-rl" }}>
+            Toolbox
+          </span>
+        </div>
+      )}
 
       {/* Canvas */}
-      <main className="flex-1 flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-semibold">Diagram canvas</div>
-            <div className="text-xs text-slate-400">
-              Drag components here, move them around, and connect services.
+      <main className="flex-1 flex flex-col gap-2 min-w-0">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold truncate sm:text-sm">Diagram canvas</div>
+            <div className="text-[10px] text-slate-400 truncate sm:text-xs">
+              Drag, move, connect. Left-drag empty to pan.
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -1500,9 +1529,20 @@ export default function DrawDiagram() {
         </div>
       </main>
 
-      {/* Inspector + export */}
-      <aside className="w-72 shrink-0 rounded-xl border border-slate-800 bg-slate-950/60 p-3 flex flex-col overflow-auto">
-        <div className="text-sm font-semibold mb-2">Inspector</div>
+      {/* Inspector - collapsible, compact width */}
+      {showInspector ? (
+      <aside className="w-52 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 p-2 flex flex-col overflow-auto sm:w-56 sm:p-3">
+        <div className="flex items-center justify-between gap-1 mb-2">
+          <span className="text-xs font-semibold truncate sm:text-sm">Inspector</span>
+          <button
+            type="button"
+            onClick={() => setShowInspector(false)}
+            className="shrink-0 p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+            aria-label="Hide inspector"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
 
         {!selectedNode && !selectedEdge && (
           <div className="text-xs text-slate-500 mb-3">
@@ -1730,11 +1770,25 @@ export default function DrawDiagram() {
             </button>
           </div>
           <p className="text-[10px] text-slate-500">
-            JSON is copied to your clipboard. Paste it into your chat page to
-            analyse this architecture.
+            JSON copied to clipboard. Paste into chat to analyse.
           </p>
         </div>
       </aside>
+      ) : (
+        <div className="w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2">
+          <button
+            type="button"
+            onClick={() => setShowInspector(true)}
+            className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+            aria-label="Show inspector"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="mt-2 text-[9px] text-slate-500" style={{ writingMode: "vertical-rl" }}>
+            Inspector
+          </span>
+        </div>
+      )}
     </div>
     </React.Fragment>
   );
