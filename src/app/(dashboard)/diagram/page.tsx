@@ -92,6 +92,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function isNameDuplicate(
+  nodes: DiagramNode[],
+  name: string,
+  kind: NodeKind,
+  excludeNodeId: string
+): boolean {
+  const trimmed = name.trim().toLowerCase();
+  if (!trimmed) return false;
+  return nodes.some(
+    (n) =>
+      n.id !== excludeNodeId &&
+      n.kind === kind &&
+      n.name.trim().toLowerCase() === trimmed
+  );
+}
+
 // simple colors for export SVG – no fancy lab/oklch
 function colorForKind(kind: NodeKind): string {
   switch (kind) {
@@ -138,6 +154,22 @@ export default function DrawDiagram() {
   );
 
   const [zoom, setZoom] = useState<number>(1);
+
+  const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(
+    null
+  );
+  const [contextMenuPosition, setContextMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [copiedNode, setCopiedNode] = useState<{
+    kind: NodeKind;
+    name: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [saveDiagram] = useSaveDiagramMutation();
@@ -274,6 +306,8 @@ export default function DrawDiagram() {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setConnectingFromId(null);
+    setContextMenuNodeId(null);
+    setContextMenuPosition(null);
   };
 
   const handleNodeClick =
@@ -304,6 +338,8 @@ export default function DrawDiagram() {
       } else {
         setSelectedNodeId(nodeId);
         setSelectedEdgeId(null);
+        setContextMenuNodeId(null);
+        setContextMenuPosition(null);
       }
     };
 
@@ -321,6 +357,9 @@ export default function DrawDiagram() {
 
   const handleSelectedNodeNameChange = (value: string) => {
     if (!selectedNode) return;
+    if (isNameDuplicate(nodes, value, selectedNode.kind, selectedNode.id)) {
+      return;
+    }
     setNodes((prev) =>
       prev.map((n) => (n.id === selectedNode.id ? { ...n, name: value } : n))
     );
@@ -333,6 +372,138 @@ export default function DrawDiagram() {
     );
     setSelectedEdgeId(null);
   };
+
+  const startConnectionFromNodeId = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setConnectingFromId(nodeId);
+    setSelectedEdgeId(null);
+    setContextMenuNodeId(null);
+    setContextMenuPosition(null);
+  };
+
+  const openRenameForNode = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setEditingNodeId(nodeId);
+    setContextMenuNodeId(null);
+    setContextMenuPosition(null);
+  };
+
+  const copySelectedNode = () => {
+    const node = contextMenuNodeId
+      ? nodes.find((n) => n.id === contextMenuNodeId)
+      : selectedNode;
+    if (!node) return;
+    setCopiedNode({ kind: node.kind, name: node.name, x: node.x, y: node.y });
+    setContextMenuNodeId(null);
+    setContextMenuPosition(null);
+  };
+
+  const pasteNode = () => {
+    if (!copiedNode) return;
+    const node = contextMenuNodeId
+      ? nodes.find((n) => n.id === contextMenuNodeId)
+      : selectedNode;
+    const baseX = node ? node.x + 50 : 100;
+    const baseY = node ? node.y + 50 : 100;
+    const newName = createNodeName(copiedNode.kind, nodes);
+    const newNode: DiagramNode = {
+      id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: newName,
+      kind: copiedNode.kind,
+      x: baseX,
+      y: baseY,
+    };
+    setNodes((prev) => [...prev, newNode]);
+    setSelectedNodeId(newNode.id);
+    setSelectedEdgeId(null);
+    setContextMenuNodeId(null);
+    setContextMenuPosition(null);
+  };
+
+  // Delete / Copy / Paste with keyboard
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const inInput =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement;
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (inInput) return;
+        if (selectedNodeId) {
+          e.preventDefault();
+          const node = nodes.find((n) => n.id === selectedNodeId);
+          if (node) {
+            setNodes((prev) => prev.filter((n) => n.id !== selectedNodeId));
+            setEdges((prev) =>
+              prev.filter(
+                (edge) =>
+                  edge.fromId !== selectedNodeId && edge.toId !== selectedNodeId
+              )
+            );
+            setSelectedNodeId(null);
+            setConnectingFromId(null);
+          }
+        } else if (selectedEdgeId) {
+          e.preventDefault();
+          setEdges((prev) => prev.filter((e) => e.id !== selectedEdgeId));
+          setSelectedEdgeId(null);
+        }
+      } else if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
+        if (inInput) return;
+        e.preventDefault();
+        const node = selectedNodeId
+          ? nodes.find((n) => n.id === selectedNodeId)
+          : null;
+        if (node) {
+          setCopiedNode({
+            kind: node.kind,
+            name: node.name,
+            x: node.x,
+            y: node.y,
+          });
+        }
+      } else if (e.key === "v" && (e.ctrlKey || e.metaKey)) {
+        if (inInput) return;
+        e.preventDefault();
+        if (copiedNode) {
+          const node = selectedNodeId
+            ? nodes.find((n) => n.id === selectedNodeId)
+            : null;
+          const baseX = node ? node.x + 50 : 100;
+          const baseY = node ? node.y + 50 : 100;
+          const newName = createNodeName(copiedNode.kind, nodes);
+          const newNode: DiagramNode = {
+            id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            name: newName,
+            kind: copiedNode.kind,
+            x: baseX,
+            y: baseY,
+          };
+          setNodes((prev) => [...prev, newNode]);
+          setSelectedNodeId(newNode.id);
+          setSelectedEdgeId(null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedNodeId, selectedEdgeId, nodes, copiedNode]);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    if (!contextMenuNodeId) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        contextMenuRef.current &&
+        !contextMenuRef.current.contains(e.target as Node)
+      ) {
+        setContextMenuNodeId(null);
+        setContextMenuPosition(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [contextMenuNodeId]);
 
   // Delete node (and its edges)
   const handleDeleteSelectedNode = () => {
@@ -941,6 +1112,50 @@ export default function DrawDiagram() {
   return (
     <React.Fragment>
       <LoaderModal isOpen={opening} message={loadingMessage || "Loading..."} />
+
+      {/* Right-click context menu for nodes */}
+      {contextMenuNodeId && contextMenuPosition && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-[200] min-w-[160px] rounded-lg border border-slate-700 bg-slate-900 shadow-xl py-1"
+          style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
+        >
+          <button
+            type="button"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800"
+            onClick={() => {
+              const node = nodes.find((n) => n.id === contextMenuNodeId);
+              if (node) startConnectionFromNodeId(node.id);
+            }}
+          >
+            Make connection
+          </button>
+          <button
+            type="button"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800"
+            onClick={() => openRenameForNode(contextMenuNodeId)}
+          >
+            Rename
+          </button>
+          <div className="my-1 border-t border-slate-700" />
+          <button
+            type="button"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800"
+            onClick={copySelectedNode}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={pasteNode}
+            disabled={!copiedNode}
+          >
+            Paste
+          </button>
+        </div>
+      )}
+
       <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
       {/* Toolbox */}
       <aside className="w-60 shrink-0 rounded-xl border border-slate-800 bg-slate-950/60 p-3 flex flex-col">
@@ -1045,13 +1260,23 @@ export default function DrawDiagram() {
               <defs>
                 <marker
                   id="arrowhead"
-                  markerWidth="10"
-                  markerHeight="7"
-                  refX="8"
-                  refY="3.5"
+                  markerWidth="12"
+                  markerHeight="9"
+                  refX="10"
+                  refY="4.5"
                   orient="auto"
                 >
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+                  <polygon points="0 0, 12 4.5, 0 9" fill="#475569" />
+                </marker>
+                <marker
+                  id="arrowhead-selected"
+                  markerWidth="12"
+                  markerHeight="9"
+                  refX="10"
+                  refY="4.5"
+                  orient="auto"
+                >
+                  <polygon points="0 0, 12 4.5, 0 9" fill="#0ea5e9" />
                 </marker>
               </defs>
               {edges.map((edge) => {
@@ -1076,25 +1301,44 @@ export default function DrawDiagram() {
                       y1={y1}
                       x2={x2}
                       y2={y2}
-                      stroke={isSelected ? "#0ea5e9" : "#64748b"}
-                      strokeWidth={isSelected ? 2 : 1.5}
-                      strokeOpacity={0.9}
-                      markerEnd="url(#arrowhead)"
+                      stroke={isSelected ? "#0ea5e9" : "#475569"}
+                      strokeWidth={isSelected ? 3 : 2.5}
+                      strokeOpacity={1}
+                      markerEnd={
+                        isSelected
+                          ? "url(#arrowhead-selected)"
+                          : "url(#arrowhead)"
+                      }
                       onClick={handleEdgeClick(edge.id)}
                       style={{ cursor: "pointer" }}
                     />
-                    {edge.label && (
+                    {edge.label ? (
                       <text
                         x={midX}
-                        y={midY - 4}
+                        y={midY - 6}
                         textAnchor="middle"
                         className="pointer-events-none select-none"
-                        fontSize={10}
+                        fontSize={12}
+                        fontWeight={500}
                         fill={isSelected ? "#0f172a" : "#334155"}
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
                         {edge.label} ({edge.kind}
                         {edge.sync ? ", sync" : ", async"})
+                      </text>
+                    ) : (
+                      <text
+                        x={midX}
+                        y={midY - 6}
+                        textAnchor="middle"
+                        className="pointer-events-none select-none"
+                        fontSize={12}
+                        fontWeight={500}
+                        fill={isSelected ? "#0f172a" : "#334155"}
+                        fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+                      >
+                        {edge.kind}
+                        {edge.sync ? " (sync)" : " (async)"}
                       </text>
                     )}
                   </g>
@@ -1125,6 +1369,19 @@ export default function DrawDiagram() {
                   ].join(" ")}
                   onMouseDown={handleNodeMouseDown(node.id)}
                   onClick={handleNodeClick(node.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSelectedNodeId(node.id);
+                    setSelectedEdgeId(null);
+                    setContextMenuNodeId(node.id);
+                    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setEditingNodeId(node.id);
+                    setSelectedNodeId(node.id);
+                  }}
                 >
                   <div className="flex items-center gap-1">
                     <Image
@@ -1134,10 +1391,56 @@ export default function DrawDiagram() {
                       alt={node.kind}
                       className="w-8 h-8 object-contain flex-shrink-0"
                     />
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-semibold text-black">
-                        {node.name}
-                      </div>
+                    <div className="min-w-0 flex-1">
+                      {editingNodeId === node.id ? (
+                        <input
+                          type="text"
+                          value={node.name}
+                          autoFocus
+                          className="w-full text-xs font-semibold text-black bg-slate-100 border border-sky-400 rounded px-1 outline-none"
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!isNameDuplicate(nodes, v, node.kind, node.id)) {
+                              setNodes((prev) =>
+                                prev.map((n) =>
+                                  n.id === node.id ? { ...n, name: v } : n
+                                )
+                              );
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v && !isNameDuplicate(nodes, v, node.kind, node.id)) {
+                              setNodes((prev) =>
+                                prev.map((n) =>
+                                  n.id === node.id ? { ...n, name: v } : n
+                                )
+                              );
+                            } else if (!v) {
+                              setNodes((prev) =>
+                                prev.map((n) =>
+                                  n.id === node.id
+                                    ? { ...n, name: createNodeName(node.kind, prev) }
+                                    : n
+                                )
+                              );
+                            }
+                            setEditingNodeId(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <div className="truncate text-xs font-semibold text-black">
+                          {node.name}
+                        </div>
+                      )}
                       <div className="text-[10px] text-black/80">
                         {getNodeLabel(node.kind)}
                       </div>
@@ -1187,7 +1490,28 @@ export default function DrawDiagram() {
                 className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-50 outline-none focus:border-sky-500"
                 value={selectedNode.name}
                 onChange={(e) => handleSelectedNodeNameChange(e.target.value)}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (!v) return;
+                  if (isNameDuplicate(nodes, v, selectedNode.kind, selectedNode.id)) {
+                    setNodes((prev) =>
+                      prev.map((n) =>
+                        n.id === selectedNode.id ? { ...n, name: createNodeName(selectedNode.kind, prev) } : n
+                      )
+                    );
+                  }
+                }}
               />
+              {nodes.some(
+                (n) =>
+                  n.id !== selectedNode.id &&
+                  n.kind === selectedNode.kind &&
+                  n.name.trim().toLowerCase() === selectedNode.name.trim().toLowerCase()
+              ) && (
+                <p className="text-[10px] text-amber-400">
+                  Another {getNodeLabel(selectedNode.kind).toLowerCase()} has this name.
+                </p>
+              )}
               <p className="text-[10px] text-slate-500">
                 This name is used in the exported JSON.
               </p>
