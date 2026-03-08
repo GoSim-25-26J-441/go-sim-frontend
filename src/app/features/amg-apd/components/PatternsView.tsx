@@ -65,7 +65,7 @@ export default function PatternsView({
     string | null
   >(null);
 
-  const exportImageRef = useRef<(() => string | null) | null>(null);
+  const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
   const restoreStartedRef = useRef(false);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
