@@ -2,7 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { fetchSuggestions, fetchDesignByProjectRun } from '@/app/api/asm/routes';
+import {
+    fetchSuggestions,
+    fetchDesignByProjectRun,
+    fetchRunCandidates,
+    fetchSuggestionsFromRun,
+    type RunCandidateItem,
+} from '@/app/api/asm/routes';
 import { Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
@@ -116,6 +122,25 @@ type SuggestPageProps = {
     projectId?: string;
 };
 
+function mapRunCandidatesToSuggest(candidates: RunCandidateItem[]): Candidate[] {
+    return candidates.map((c) => ({
+        id: c.id,
+        spec: {
+            vcpu: c.spec.vcpu,
+            memory_gb: c.spec.memory_gb,
+            label: c.spec.label ?? c.id,
+        },
+        metrics: {
+            cpu_util_pct: c.metrics.cpu_util_pct,
+            mem_util_pct: c.metrics.mem_util_pct,
+        },
+        sim_workload: {
+            concurrent_users: c.sim_workload?.concurrent_users ?? 0,
+        },
+        source: c.source ?? 'export',
+    }));
+}
+
 export default function SuggestPage({ projectId: projectIdProp }: SuggestPageProps = {}) {
     const [loading, setLoading] = useState(false);
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
@@ -139,12 +164,47 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
             setLoading(true);
             setError(null);
 
-            try {
-                const projectId = searchParams.get('projectId') || '';
-                const runId = searchParams.get('runId') || '';
-                const candidatesParam = searchParams.get('candidates');
+            const runIdFromQuery = searchParams.get('run_id') ?? searchParams.get('runId') ?? '';
+            const candidatesParam = searchParams.get('candidates');
+            const resolvedProjectId = projectIdProp ?? searchParams.get('projectId') ?? '';
 
-                if (!runId || !candidatesParam) {
+            try {
+                if (resolvedProjectId && runIdFromQuery && !candidatesParam) {
+                    const runData = await fetchRunCandidates(runIdFromQuery);
+                    const mappedCandidates = mapRunCandidatesToSuggest(runData.candidates ?? []);
+                    if (mappedCandidates.length === 0) {
+                        setError('No candidates found for this run');
+                        setDesign(DUMMY_DESIGN);
+                        setSimulation(runData.simulation ?? DUMMY_SIMULATION);
+                        setSuggestionData(null);
+                        setLoading(false);
+                        return;
+                    }
+                    setCandidates(mappedCandidates);
+                    const sim = runData.simulation ?? { nodes: 0 };
+                    setSimulation(sim);
+                    setDesign({
+                        ...DUMMY_DESIGN,
+                        preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
+                        preferred_memory_gb: mappedCandidates[0]?.spec.memory_gb ?? 0,
+                        workload: {
+                            concurrent_users: mappedCandidates[0]?.sim_workload.concurrent_users ?? 0,
+                        },
+                    });
+                    const data = await fetchSuggestionsFromRun(
+                        firebaseUid,
+                        resolvedProjectId,
+                        runIdFromQuery,
+                        sim,
+                        mappedCandidates,
+                    );
+                    setSuggestionData(data);
+                    setLoading(false);
+                    return;
+                }
+
+                // Flow 2: runId + candidates in URL (existing flow with design from stored request)
+                if (!runIdFromQuery || !candidatesParam) {
                     setDesign(DUMMY_DESIGN);
                     setSimulation(DUMMY_SIMULATION);
                     setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
@@ -159,8 +219,8 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
 
                 const stored = await fetchDesignByProjectRun(
                     firebaseUid,
-                    projectId,
-                    runId,
+                    resolvedProjectId,
+                    runIdFromQuery,
                 );
 
                 const storedRequest = stored.request as {
@@ -180,8 +240,8 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     resolvedDesign,
                     resolvedSimulation,
                     decodedCandidates,
-                    projectId,
-                    runId,
+                    resolvedProjectId,
+                    runIdFromQuery,
                 );
                 setSuggestionData(data);
             } catch (err) {
@@ -541,7 +601,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                         {error && (
                             <div className="bg-card border border-red-600 rounded-lg p-4">
                                 <div className="flex items-start gap-2">
-                                    <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                                    <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
                                     <div>
                                         <p className="text-red-500">Note: {error}</p>
                                         <p className="text-red-600 text-sm mt-1">Showing demo data instead.</p>

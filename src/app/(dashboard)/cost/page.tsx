@@ -159,6 +159,10 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
     );
   }
 
+  const runsWithRunId = runs.filter(
+    (run) => run.run_id != null && run.run_id !== ""
+  );
+
   return (
     <div className="p-6 space-y-4">
       {/* Header Section */}
@@ -196,7 +200,7 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Runs list */}
         <div className="mb-8">
-          {runs.length === 0 ? (
+          {runsWithRunId.length === 0 ? (
             <div className="text-center py-16 border-2 border-dashed border-border rounded-2xl bg-card">
               <FileText className="w-16 h-16 opacity-50 mx-auto mb-4" />
               <h3 className="text-xl font-semibold opacity-80 mb-3">
@@ -217,7 +221,9 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                 <h2 className="text-2xl font-bold">Runs</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {runs.map((run, index) => (
+                {runs
+                  .filter((run) => run.run_id != null && run.run_id !== "")
+                  .map((run, index) => (
                   <div
                     key={run.id}
                     className="group bg-card border border-border rounded-xl p-6 hover:bg-surface cursor-pointer transition-all duration-300 hover:border-white/20"
@@ -343,7 +349,7 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
         <div className="mt-12 pt-6 border-t border-border">
           <div className="text-center">
             <p className="text-sm opacity-60">
-              Showing {runs.length} run{runs.length !== 1 ? "s" : ""}
+              Showing {runsWithRunId.length} run{runsWithRunId.length !== 1 ? "s" : ""}
             </p>
             <p className="text-xs opacity-50 mt-2">
               Select any run to analyze cloud provider costs, compare pricing
