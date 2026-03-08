@@ -25,6 +25,7 @@ import DesignQuestionsModal from "./comp/DesignQuestionsModal";
 import Dropdown from "./comp/DropDown";
 import MessageBubble from "./comp/MessageBubble";
 import CheckPatternsOverlay from "@/app/features/amg-apd/components/CheckPatternsOverlay";
+import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
@@ -49,9 +50,11 @@ export default function ClientChat({ id }: Props) {
     useState(false);
   const [designSuggestionDismissed, setDesignSuggestionDismissed] =
     useState(false);
+  const [showImagesModal, setShowImagesModal] = useState(false);
+  
   const projectLabel = id ? `${id.slice(0, 18)}…` : "Unknown project";
   const threadLabel = threadId ? `${threadId.slice(0, 14)}…` : null;
-  
+
   const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
     useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -69,7 +72,7 @@ export default function ClientChat({ id }: Props) {
     error: messagesErrorPayload,
   } = useGetMessagesQuery(
     { projectId: id, threadId: threadId! },
-    { skip: !threadId }
+    { skip: !threadId },
   );
 
   const [sendMessage, { isLoading: sendLoading }] = useSendMessageMutation();
@@ -113,7 +116,14 @@ export default function ClientChat({ id }: Props) {
       setThreadId(null);
       setCheckingThread(false);
     }
-  }, [id, urlThreadId, projectThreadSuccess, projectThreadError, projectThreadId, router]);
+  }, [
+    id,
+    urlThreadId,
+    projectThreadSuccess,
+    projectThreadError,
+    projectThreadId,
+    router,
+  ]);
 
   useEffect(() => {
     if (messagesData) {
@@ -124,9 +134,10 @@ export default function ClientChat({ id }: Props) {
   useEffect(() => {
     if (messagesError && messagesErrorPayload) {
       setErr(
-        typeof messagesErrorPayload === "object" && "message" in messagesErrorPayload
+        typeof messagesErrorPayload === "object" &&
+          "message" in messagesErrorPayload
           ? String((messagesErrorPayload as Error).message)
-          : "Failed to load history"
+          : "Failed to load history",
       );
     } else if (!loadingHistory && !messagesError) {
       setErr(null);
@@ -233,6 +244,12 @@ export default function ClientChat({ id }: Props) {
         runId={threadId ?? undefined}
       />
 
+      <DiagramImagesModal
+        projectId={id}
+        isOpen={showImagesModal}
+        onClose={() => setShowImagesModal(false)}
+      />
+
       <div
         className="flex flex-col"
         style={{
@@ -302,7 +319,7 @@ export default function ClientChat({ id }: Props) {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {}}
+              onClick={() => setShowImagesModal(true)}
               className="flex items-center px-2 py-1 rounded-md text-white/80 hover:text-white transition-colors shadow-md gap-2"
             >
               <Upload className="w-4 h-4" />
@@ -322,16 +339,9 @@ export default function ClientChat({ id }: Props) {
 
               {Object.keys(designAnswers).length === 0 &&
                 !designSuggestionDismissed && (
-                  <div
-                    className="absolute left-0 top-full mt-1.5 z-20 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs min-w-[240px] max-w-[280px]"
-                    style={{
-                      backgroundColor: "rgba(251,191,36,0.15)",
-                      border: "1px solid rgba(251,191,36,0.3)",
-                      color: "#fcd34d",
-                    }}
-                  >
+                  <div className="absolute left-0 top-full mt-3 z-20 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs min-w-60 max-w-70 bg-white opacity-45 text-black">
                     <span className="flex items-center gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-600" />
                       Please fill the design form to use Check Anti-Patterns.
                     </span>
                     <button
