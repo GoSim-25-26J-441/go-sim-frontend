@@ -53,7 +53,7 @@ export const fetchCostData = async (
   }
 };
 
-//Fetch region data
+// Fetch all regions for a provide
 export const fetchRegions = async (provider: string) => {
   try {
     const response = await fetch(
@@ -61,6 +61,25 @@ export const fetchRegions = async (provider: string) => {
     );
     if (!response.ok) {
       throw new Error("Failed to fetch regions");
+    }
+    const data = await response.json();
+    return data.regions || [];
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Fetch regions
+export const fetchRegionsForRequest = async (
+  requestId: string,
+  provider: string,
+) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/cost/${requestId}/regions/${provider}`,
+    );
+    if (!response.ok) {
+      throw new Error("Failed to fetch regions for request");
     }
     const data = await response.json();
     return data.regions || [];
