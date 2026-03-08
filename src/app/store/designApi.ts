@@ -88,24 +88,33 @@ export const designApi = createApi({
       invalidatesTags: ["DesignByProjectRun"],
     }),
 
-    // Fetch design by project and run (for prefilling form when modal loads)
+    // Fetch design by project
     getDesignByProjectRun: b.query<
       DesignByProjectRunResponse,
-      { userId: string; projectId: string; runId?: string }
+      { userId: string; projectId: string }
     >({
-      query: ({ userId, projectId, runId }) => {
+      query: ({ userId, projectId }) => {
         const params = new URLSearchParams({
           user_id: userId,
           project_id: projectId,
         });
-        if (runId) params.set("run_id", runId);
         return {
           url: `${env.BACKEND_BASE}/api/v1/analysis-suggestions/requests/by-project-run?${params.toString()}`,
           method: "GET",
         };
       },
-      providesTags: (_res, _err, { projectId, runId }) => [
-        { type: "DesignByProjectRun", id: `${projectId}-${runId ?? "latest"}` },
+      transformResponse: (raw: unknown) => {
+        const data = raw as Record<string, unknown>;
+        if (data?.request != null) return data as DesignByProjectRunResponse;
+        if (data?.design != null)
+          return {
+            ...data,
+            request: { design: data.design },
+          } as DesignByProjectRunResponse;
+        return data as DesignByProjectRunResponse;
+      },
+      providesTags: (_res, _err, { projectId }) => [
+        { type: "DesignByProjectRun", id: projectId },
       ],
     }),
   }),
