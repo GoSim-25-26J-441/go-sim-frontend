@@ -91,21 +91,21 @@ export const designApi = createApi({
     // Fetch design by project and run (for prefilling form when modal loads)
     getDesignByProjectRun: b.query<
       DesignByProjectRunResponse,
-      { userId: string; projectId: string; runId: string }
+      { userId: string; projectId: string; runId?: string }
     >({
       query: ({ userId, projectId, runId }) => {
         const params = new URLSearchParams({
           user_id: userId,
           project_id: projectId,
-          run_id: runId,
         });
+        if (runId) params.set("run_id", runId);
         return {
           url: `${env.BACKEND_BASE}/api/v1/analysis-suggestions/requests/by-project-run?${params.toString()}`,
           method: "GET",
         };
       },
       providesTags: (_res, _err, { projectId, runId }) => [
-        { type: "DesignByProjectRun", id: `${projectId}-${runId}` },
+        { type: "DesignByProjectRun", id: `${projectId}-${runId ?? "latest"}` },
       ],
     }),
   }),
