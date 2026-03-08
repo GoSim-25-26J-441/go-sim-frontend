@@ -172,10 +172,19 @@ interface MetricsSummary {
   total_duration_ms?: number;
 }
 
+/** Per-service metrics from metrics_snapshot or GET /runs/{id}/metrics */
+interface ServiceMetricSnapshot {
+  service_name: string;
+  request_count?: number;
+  concurrent_requests?: number;
+  [key: string]: unknown;
+}
+
 interface MetricsResponse {
   run_id: string;
   summary?: MetricsSummary;
   timeseries?: MetricTimeseries[];
+  metrics?: { service_metrics?: ServiceMetricSnapshot[] };
 }
 
 export interface SsePanelHandle {
@@ -318,7 +327,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
         <h2 className="text-sm font-semibold text-white">
           Request count
           <span className="ml-2 text-xs font-normal text-white/40">
-            per service · live{windowLabel ? ` · ${windowLabel}` : ""}
+            per service · cumulative · live{windowLabel ? ` · ${windowLabel}` : ""}
           </span>
         </h2>
         <button
@@ -331,7 +340,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
 
       {services.length === 0 ? (
         <div className="flex items-center justify-center h-40 text-white/20 text-xs select-none">
-          Waiting for request_count metrics…
+          Waiting for metrics…
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={260}>
@@ -807,6 +816,9 @@ export default function SimulationRunPage() {
   const seriesBufferRef = useRef<ServiceSeries>({});
   const knownServicesRef = useRef<Set<string>>(new Set());
   const [chartSeries, setChartSeries] = useState<ServiceSeries>({});
+  // Concurrent requests (gauge): per-instance ref, per-service state for "current load" display
+  const concurrentByInstanceRef = useRef<Record<string, number>>({});
+  const [concurrentRequestsByService, setConcurrentRequestsByService] = useState<Record<string, number>>({});
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -874,7 +886,7 @@ export default function SimulationRunPage() {
           metric?: string;
           value?: number;
           timestamp?: string;
-          labels?: { service?: string; endpoint?: string; [key: string]: unknown };
+          labels?: { service?: string; instance?: string; endpoint?: string; [key: string]: unknown };
         }
         const outer = JSON.parse(data) as MetricPayload & { data?: MetricPayload };
         // Backend wraps the metric inside a "data" field: { data: {...}, event, run_id }
@@ -890,6 +902,38 @@ export default function SimulationRunPage() {
           if (!buf[svc]) buf[svc] = [];
           buf[svc].push(pt);
           if (buf[svc].length > MAX_POINTS) buf[svc] = buf[svc].slice(-MAX_POINTS);
+        }
+
+        if (m.metric === "concurrent_requests" && svc && m.value != null) {
+          const instance = (m.labels?.instance as string) ?? "default";
+          const key = `${svc}::${instance}`;
+          concurrentByInstanceRef.current[key] = m.value;
+          // Recompute per-service aggregate (sum of latest per instance)
+          const bySvc: Record<string, number> = {};
+          for (const [k, v] of Object.entries(concurrentByInstanceRef.current)) {
+            const s = k.split("::")[0];
+            bySvc[s] = (bySvc[s] ?? 0) + v;
+          }
+          setConcurrentRequestsByService(bySvc);
+        }
+      } catch { /* malformed — ignore */ }
+    }
+
+    if (type === "metrics_snapshot") {
+      try {
+        const parsed = JSON.parse(data) as { metrics?: { service_metrics?: ServiceMetricSnapshot[] } };
+        const list = parsed.metrics?.service_metrics;
+        if (Array.isArray(list) && list.length > 0) {
+          const bySvc: Record<string, number> = {};
+          for (const sm of list) {
+            const name = sm?.service_name;
+            if (name != null && typeof sm.concurrent_requests === "number") {
+              bySvc[name] = sm.concurrent_requests;
+            }
+          }
+          if (Object.keys(bySvc).length > 0) {
+            setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
+          }
         }
       } catch { /* malformed — ignore */ }
     }
@@ -947,6 +991,17 @@ export default function SimulationRunPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as MetricsResponse;
       setMetricsData(data);
+      if (data.metrics?.service_metrics?.length) {
+        const bySvc: Record<string, number> = {};
+        for (const sm of data.metrics.service_metrics) {
+          if (sm.service_name != null && typeof sm.concurrent_requests === "number") {
+            bySvc[sm.service_name] = sm.concurrent_requests;
+          }
+        }
+        if (Object.keys(bySvc).length > 0) {
+          setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
+        }
+      }
     } catch (e) {
       setMetricsError((e as Error).message);
     } finally {
@@ -954,11 +1009,13 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
-  // Clear chart data
+  // Clear chart data and concurrent-requests state
   const clearChart = useCallback(() => {
     seriesBufferRef.current = {};
     knownServicesRef.current.clear();
     setChartSeries({});
+    concurrentByInstanceRef.current = {};
+    setConcurrentRequestsByService({});
   }, []);
 
   // ── On mount ────────────────────────────────────────────────────────────────
@@ -1319,6 +1376,27 @@ export default function SimulationRunPage() {
         )}
       </div>
 
+      {/* Current load (concurrent_requests) — shown when we have at least one value */}
+      {Object.keys(concurrentRequestsByService).length > 0 && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-2">
+          <h2 className="text-sm font-semibold text-white">
+            Concurrent requests
+            <span className="ml-2 text-xs font-normal text-white/40">current load per service</span>
+          </h2>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(concurrentRequestsByService).map(([svc, count]) => (
+              <div
+                key={svc}
+                className="rounded-lg border border-border bg-black/20 px-3 py-2 flex items-center gap-2"
+              >
+                <span className="text-xs text-white/60 truncate max-w-[120px]" title={svc}>{svc}</span>
+                <span className="text-sm font-mono font-semibold text-white tabular-nums">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Request count chart */}
       <RequestCountChart series={chartSeries} onClear={clearChart} />
 
@@ -1620,6 +1698,26 @@ export default function SimulationRunPage() {
                         ? `${(metricsData.summary.total_duration_ms / 1000).toFixed(1)}s`
                         : "—"}
                     </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Concurrent requests from GET response (snapshot) */}
+              {metricsData.metrics?.service_metrics && metricsData.metrics.service_metrics.some((sm) => typeof sm.concurrent_requests === "number") && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Concurrent requests (at snapshot)</h3>
+                  <div className="flex flex-wrap gap-3">
+                    {metricsData.metrics.service_metrics.map((sm) =>
+                      typeof sm.concurrent_requests === "number" ? (
+                        <div
+                          key={sm.service_name}
+                          className="rounded-lg border border-border bg-black/20 px-3 py-2 flex items-center gap-2"
+                        >
+                          <span className="text-xs text-white/60 truncate max-w-[120px]" title={sm.service_name}>{sm.service_name}</span>
+                          <span className="text-sm font-mono font-semibold text-white tabular-nums">{sm.concurrent_requests}</span>
+                        </div>
+                      ) : null
+                    )}
                   </div>
                 </div>
               )}
