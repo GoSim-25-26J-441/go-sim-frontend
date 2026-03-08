@@ -197,6 +197,21 @@ interface ServiceMetricSnapshot {
   [key: string]: unknown;
 }
 
+/** Run-level + service_metrics from SSE metrics_snapshot.data.metrics */
+interface SnapshotMetrics {
+  total_requests?: number;
+  total_errors?: number;
+  total_duration_ms?: number;
+  failed_requests?: number;
+  successful_requests?: number;
+  throughput_rps?: number;
+  latency_p50_ms?: number;
+  latency_p95_ms?: number;
+  latency_p99_ms?: number;
+  latency_mean_ms?: number;
+  service_metrics?: ServiceMetricSnapshot[];
+}
+
 interface MetricsResponse {
   run_id: string;
   summary?: MetricsSummary;
@@ -835,6 +850,8 @@ export default function SimulationRunPage() {
   const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
+  // Live metrics from SSE metrics_snapshot (used while run is running)
+  const [liveMetricsData, setLiveMetricsData] = useState<MetricsResponse | null>(null);
   // Best-candidate topology (from same candidates API response)
   const [bestCandidate, setBestCandidate] = useState<{ best_candidate_id: string; best_candidate?: BestCandidateTopology } | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
@@ -951,8 +968,14 @@ export default function SimulationRunPage() {
 
     if (type === "metrics_snapshot") {
       try {
-        const parsed = JSON.parse(data) as { metrics?: { service_metrics?: ServiceMetricSnapshot[] } };
-        const list = parsed.metrics?.service_metrics;
+        const parsed = JSON.parse(data) as {
+          data?: { metrics?: SnapshotMetrics };
+          metrics?: SnapshotMetrics;
+        };
+        const metrics = parsed.data?.metrics ?? parsed.metrics;
+        if (!metrics || typeof metrics !== "object") return;
+
+        const list = metrics.service_metrics;
         if (Array.isArray(list) && list.length > 0) {
           const bySvc: Record<string, number> = {};
           for (const sm of list) {
@@ -965,9 +988,32 @@ export default function SimulationRunPage() {
             setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
           }
         }
+
+        const num = (v: unknown): number | undefined =>
+          typeof v === "number" && Number.isFinite(v) ? v : undefined;
+        const totalRequests = num(metrics.total_requests);
+        if (totalRequests == null && !list?.length) return;
+
+        const summary: MetricsSummary = {
+          total_requests: totalRequests ?? undefined,
+          total_errors: num(metrics.total_errors) ?? num(metrics.failed_requests),
+          total_duration_ms: num(metrics.total_duration_ms),
+          successful_requests: num(metrics.successful_requests),
+          failed_requests: num(metrics.failed_requests),
+          throughput_rps: num(metrics.throughput_rps),
+          latency_p50_ms: num(metrics.latency_p50_ms),
+          latency_p95_ms: num(metrics.latency_p95_ms),
+          latency_p99_ms: num(metrics.latency_p99_ms),
+          latency_mean_ms: num(metrics.latency_mean_ms),
+        };
+        setLiveMetricsData({
+          run_id: runId,
+          summary,
+          metrics: Array.isArray(list) && list.length > 0 ? { service_metrics: list } : undefined,
+        });
       } catch { /* malformed — ignore */ }
     }
-  }, []);
+  }, [runId]);
 
   // Fallback: re-fetch from API (used on stream close / legacy terminal events)
   const refreshStatus = useCallback(() => { fetchRunInfoRef.current(); }, []);
@@ -1234,6 +1280,8 @@ export default function SimulationRunPage() {
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+  const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
+  const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
 
   // Auto-fetch persisted metrics + candidates (includes best-candidate) once the run is terminal
   useEffect(() => {
@@ -1241,6 +1289,14 @@ export default function SimulationRunPage() {
     if (isTerminal && candidates === null && !candidatesLoading) fetchCandidates();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTerminal]);
+
+  // Clear live metrics when run becomes terminal or runId changes (so UI uses persisted data / fresh run)
+  useEffect(() => {
+    if (isTerminal) setLiveMetricsData(null);
+  }, [isTerminal]);
+  useEffect(() => {
+    setLiveMetricsData(null);
+  }, [runId]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -1781,26 +1837,31 @@ export default function SimulationRunPage() {
         )}
       </div>
 
-      {/* Persisted metrics — shown once run is terminal */}
-      {isTerminal && (
+      {/* Metrics — live from stream when running, persisted when terminal */}
+      {showMetricsSection && (
         <div className="bg-card border border-border rounded-lg p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">
               Metrics
-              {metricsData?.summary?.total_requests != null && (
+              {status === "running" && liveMetricsData && (
+                <span className="ml-2 text-xs font-normal text-emerald-400">Live</span>
+              )}
+              {displayMetrics?.summary?.total_requests != null && (
                 <span className="ml-2 text-xs font-normal text-white/40">
-                  {metricsData.summary.total_requests.toLocaleString()} requests
+                  {displayMetrics.summary.total_requests.toLocaleString()} requests
                 </span>
               )}
             </h2>
-            <button
-              onClick={fetchMetrics}
-              disabled={metricsLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
-              {metricsData === null ? "Load metrics" : "Refresh"}
-            </button>
+            {isTerminal && (
+              <button
+                onClick={fetchMetrics}
+                disabled={metricsLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
+                {metricsData === null ? "Load metrics" : "Refresh"}
+              </button>
+            )}
           </div>
 
           {metricsError && (
@@ -1809,85 +1870,85 @@ export default function SimulationRunPage() {
             </p>
           )}
 
-          {metricsLoading && (
+          {isTerminal && metricsLoading && (
             <div className="flex items-center gap-2 text-xs text-white/50 py-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading metrics…
             </div>
           )}
 
-          {metricsData && !metricsLoading && (
+          {displayMetrics && !(isTerminal && metricsLoading) && (
             <>
               {/* Summary stats / KPI cards */}
-              {metricsData.summary && (
+              {displayMetrics.summary && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Total requests</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.total_requests?.toLocaleString() ?? "—"}
+                      {displayMetrics.summary.total_requests?.toLocaleString() ?? "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Total errors</p>
-                    <p className={`text-lg font-mono font-semibold ${(metricsData.summary.total_errors ?? 0) > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                      {metricsData.summary.total_errors?.toLocaleString() ?? "0"}
+                    <p className={`text-lg font-mono font-semibold ${(displayMetrics.summary.total_errors ?? 0) > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      {displayMetrics.summary.total_errors?.toLocaleString() ?? "0"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Duration</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.total_duration_ms != null
-                        ? `${(metricsData.summary.total_duration_ms / 1000).toFixed(1)}s`
+                      {displayMetrics.summary.total_duration_ms != null
+                        ? `${(displayMetrics.summary.total_duration_ms / 1000).toFixed(1)}s`
                         : "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Successful requests</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.successful_requests?.toLocaleString() ?? "—"}
+                      {displayMetrics.summary.successful_requests?.toLocaleString() ?? "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Failed requests</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.failed_requests?.toLocaleString() ?? "—"}
+                      {displayMetrics.summary.failed_requests?.toLocaleString() ?? "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Throughput (RPS)</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.throughput_rps != null ? metricsData.summary.throughput_rps.toFixed(1) : "—"}
+                      {displayMetrics.summary.throughput_rps != null ? displayMetrics.summary.throughput_rps.toFixed(1) : "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency P50 (ms)</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.latency_p50_ms != null ? metricsData.summary.latency_p50_ms.toFixed(0) : "—"}
+                      {displayMetrics.summary.latency_p50_ms != null ? displayMetrics.summary.latency_p50_ms.toFixed(0) : "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency P95 (ms)</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.latency_p95_ms != null ? metricsData.summary.latency_p95_ms.toFixed(0) : "—"}
+                      {displayMetrics.summary.latency_p95_ms != null ? displayMetrics.summary.latency_p95_ms.toFixed(0) : "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency P99 (ms)</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.latency_p99_ms != null ? metricsData.summary.latency_p99_ms.toFixed(0) : "—"}
+                      {displayMetrics.summary.latency_p99_ms != null ? displayMetrics.summary.latency_p99_ms.toFixed(0) : "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency mean (ms)</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.latency_mean_ms != null ? metricsData.summary.latency_mean_ms.toFixed(0) : "—"}
+                      {displayMetrics.summary.latency_mean_ms != null ? displayMetrics.summary.latency_mean_ms.toFixed(0) : "—"}
                     </p>
                   </div>
                 </div>
               )}
 
               {/* Error rate / Success vs failure */}
-              {metricsData.summary && (() => {
-                const s = metricsData.summary;
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
                 const success = s.successful_requests ?? (s.total_requests != null && s.total_errors != null ? s.total_requests - s.total_errors : null);
                 const failed = s.failed_requests ?? s.total_errors ?? null;
                 const total = s.total_requests ?? (success != null && failed != null ? success + failed : null);
@@ -1948,7 +2009,7 @@ export default function SimulationRunPage() {
               })()}
 
               {/* Per-service comparison table */}
-              {metricsData.metrics?.service_metrics && metricsData.metrics.service_metrics.length > 0 && (
+              {displayMetrics.metrics?.service_metrics && displayMetrics.metrics.service_metrics.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Per-service metrics</h3>
                   <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
@@ -1966,7 +2027,7 @@ export default function SimulationRunPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {metricsData.metrics.service_metrics.map((sm) => {
+                        {displayMetrics.metrics.service_metrics.map((sm) => {
                           const cpu = sm.cpu_utilization;
                           const mem = sm.memory_utilization;
                           const cpuVal = typeof cpu === "number" ? (cpu <= 1 ? (cpu * 100).toFixed(1) : cpu.toFixed(1)) : "—";
@@ -1991,8 +2052,8 @@ export default function SimulationRunPage() {
               )}
 
               {/* Latency distribution (run-level) */}
-              {metricsData.summary && (() => {
-                const s = metricsData.summary;
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
                 const barData = [
                   s.latency_p50_ms != null && { name: "P50", value: s.latency_p50_ms },
                   s.latency_p95_ms != null && { name: "P95", value: s.latency_p95_ms },
@@ -2023,8 +2084,8 @@ export default function SimulationRunPage() {
               })()}
 
               {/* Resource utilization (CPU / Memory gauges per service) */}
-              {metricsData.metrics?.service_metrics && (() => {
-                const withUtil = metricsData.metrics.service_metrics.filter(
+              {displayMetrics.metrics?.service_metrics && (() => {
+                const withUtil = displayMetrics.metrics.service_metrics.filter(
                   (sm) => typeof sm.cpu_utilization === "number" || typeof sm.memory_utilization === "number"
                 );
                 if (withUtil.length === 0) return null;
@@ -2091,11 +2152,11 @@ export default function SimulationRunPage() {
               })()}
 
               {/* Concurrent requests from GET response (snapshot) */}
-              {metricsData.metrics?.service_metrics && metricsData.metrics.service_metrics.some((sm) => typeof sm.concurrent_requests === "number") && (
+              {displayMetrics.metrics?.service_metrics && displayMetrics.metrics.service_metrics.some((sm) => typeof sm.concurrent_requests === "number") && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Concurrent requests (at snapshot)</h3>
                   <div className="flex flex-wrap gap-3">
-                    {metricsData.metrics.service_metrics.map((sm) =>
+                    {displayMetrics.metrics.service_metrics.map((sm) =>
                       typeof sm.concurrent_requests === "number" ? (
                         <div
                           key={sm.service_name}
@@ -2111,8 +2172,8 @@ export default function SimulationRunPage() {
               )}
 
               {/* Timeseries charts (from persisted metrics response) */}
-              {(metricsData.timeseries?.length ?? 0) > 0 ? (
-                <MetricsTimeseriesChart timeseries={metricsData.timeseries!} />
+              {(displayMetrics.timeseries?.length ?? 0) > 0 ? (
+                <MetricsTimeseriesChart timeseries={displayMetrics.timeseries!} />
               ) : (
                 <p className="text-xs text-white/30 italic">No timeseries data available.</p>
               )}
