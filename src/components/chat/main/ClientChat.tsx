@@ -241,7 +241,6 @@ export default function ClientChat({ id }: Props) {
         initialDesign={designAnswers}
         projectId={id}
         userId={userId ?? undefined}
-        runId={threadId ?? undefined}
       />
 
       <DiagramImagesModal
