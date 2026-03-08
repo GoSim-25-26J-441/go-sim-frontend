@@ -4,6 +4,7 @@ import { use } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import PatternsView from "@/app/features/amg-apd/components/PatternsView";
+import { useReturnToChatFromPatterns } from "@/modules/di/useReturnToChatFromPatterns";
 
 export default function ProjectPatternsPage({
   params,
@@ -12,6 +13,7 @@ export default function ProjectPatternsPage({
 }) {
   const { id: projectId } = use(params);
   const router = useRouter();
+  const { returnToChat, returning } = useReturnToChatFromPatterns(projectId);
 
   return (
     <div className="p-6 space-y-4 min-w-0">
@@ -34,14 +36,16 @@ export default function ProjectPatternsPage({
           onClick={() => router.push(`/project/${projectId}/chat`)}
           className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
         >
-          Return to Chat
+          {returning ? "Opening chat…" : "Return to Chat"}
         </button>
       </div>
 
-      <PatternsView
-        projectId={projectId}
-        onReturnToChat={() => router.push(`/project/${projectId}/chat`)}
-      />
+      <div className="min-w-0">
+        <PatternsView
+          projectId={projectId}
+          onReturnToChat={() => returnToChat()}
+        />
+      </div>
     </div>
   );
 }
