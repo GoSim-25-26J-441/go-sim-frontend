@@ -1086,7 +1086,6 @@ export default function DrawDiagram() {
     try {
       let imageObjectKey: string | undefined;
 
-      // First, render and upload the diagram image
       try {
         setLoadingMessage("Rendering diagram image...");
         const imageBlob = await buildExportPngBlob();
@@ -1097,16 +1096,13 @@ export default function DrawDiagram() {
         }).unwrap();
         if (uploadResult?.image_object_key) {
           imageObjectKey = String(uploadResult.image_object_key);
-          console.log("Diagram image uploaded with key:", imageObjectKey);
         } else {
           console.log("Diagram image uploaded (no image_object_key in response).");
         }
       } catch (imageError) {
         console.error("Failed to upload diagram image:", imageError);
-        // Continue even if image upload fails
       }
 
-      // Save diagram to backend first
       try {
         const backendFormat = transformToBackendFormat();
         setLoadingMessage("Saving diagram definition...");
@@ -1119,17 +1115,14 @@ export default function DrawDiagram() {
         console.log("Diagram saved successfully");
       } catch (saveError) {
         console.error("Failed to save diagram:", saveError);
-        // Continue even if save fails - user can still open chat
       }
 
-      // Copy JSON to clipboard
       try {
         await navigator.clipboard.writeText(exportJson);
       } catch {
         // ignore clipboard errors
       }
 
-      // Create chat thread and send initial message
       setLoadingMessage("Creating chat thread...");
       await openInChat(projectId, {
         onLoadingChange: (loading, message) => {
@@ -1149,11 +1142,10 @@ export default function DrawDiagram() {
     <React.Fragment>
       <LoaderModal isOpen={opening} message={loadingMessage || "Loading..."} />
 
-      {/* Right-click context menu for nodes */}
       {contextMenuNodeId && contextMenuPosition && (
         <div
           ref={contextMenuRef}
-          className="fixed z-[200] min-w-[160px] rounded-lg border border-slate-700 bg-slate-900 shadow-xl py-1"
+          className="fixed z-200 min-w-40 rounded-lg border border-slate-700 bg-slate-900 shadow-xl py-1"
           style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
         >
           <button
@@ -1193,7 +1185,6 @@ export default function DrawDiagram() {
       )}
 
       <div className="flex h-[calc(100vh-4rem)] gap-2 p-3 sm:gap-4 sm:p-4">
-      {/* Toolbox - collapsible, compact width */}
       {showToolbox ? (
         <aside className="w-44 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 p-2 flex flex-col sm:w-48 sm:p-3">
           <div className="flex items-center justify-between gap-1 mb-2">
@@ -1253,7 +1244,6 @@ export default function DrawDiagram() {
         </div>
       )}
 
-      {/* Canvas */}
       <main className="flex-1 flex flex-col gap-2 min-w-0">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="min-w-0">
@@ -1315,7 +1305,6 @@ export default function DrawDiagram() {
           onWheel={handleCanvasWheel}
           style={{ cursor: isPanning ? "grabbing" : undefined }}
         >
-          {/* Large paper with grid - pan + zoom */}
           <div
             data-paper
             className="absolute left-0 top-0 origin-top-left cursor-grab"
@@ -1331,7 +1320,6 @@ export default function DrawDiagram() {
               backgroundPosition: "0 0",
             }}
           >
-            {/* edges */}
             <svg className="absolute inset-0 h-full w-full">
               <defs>
                 <marker
@@ -1422,7 +1410,6 @@ export default function DrawDiagram() {
               })}
             </svg>
 
-            {/* nodes */}
             {nodes.map((node) => {
               const isSelected = node.id === selectedNodeId;
               const isConnectingFrom = node.id === connectingFromId;
@@ -1529,7 +1516,6 @@ export default function DrawDiagram() {
         </div>
       </main>
 
-      {/* Inspector - collapsible, compact width */}
       {showInspector ? (
       <aside className="w-52 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 p-2 flex flex-col overflow-auto sm:w-56 sm:p-3">
         <div className="flex items-center justify-between gap-1 mb-2">
@@ -1550,7 +1536,6 @@ export default function DrawDiagram() {
           </div>
         )}
 
-        {/* node inspector */}
         {selectedNode && (
           <div className="space-y-3 text-xs mb-4">
             <div className="flex items-center gap-2">
@@ -1639,7 +1624,6 @@ export default function DrawDiagram() {
           </div>
         )}
 
-        {/* edge inspector */}
         {selectedEdge && !selectedNode && (
           <div className="space-y-3 text-xs mb-4">
             <div>
@@ -1710,7 +1694,6 @@ export default function DrawDiagram() {
           </div>
         )}
 
-        {/* Export + chat */}
         <div className="pt-3 border-t border-slate-800 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400">Export JSON</span>

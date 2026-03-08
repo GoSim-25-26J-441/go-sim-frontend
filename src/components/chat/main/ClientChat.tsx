@@ -190,7 +190,6 @@ export default function ClientChat({ id }: Props) {
           },
         ]);
       }
-      // Show toast when user has left the chat page so they see the response
       const isOnChatPage =
         typeof window !== "undefined" &&
         window.location.pathname.includes("/chat");
