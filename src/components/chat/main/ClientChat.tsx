@@ -54,6 +54,9 @@ export default function ClientChat({ id }: Props) {
   const [checkingThread, setCheckingThread] = useState(!urlThreadId);
   const [showDesignModal, setShowDesignModal] = useState(false);
   const [designAnswers, setDesignAnswers] = useState<Record<string, any>>({});
+  const projectLabel = id ? `${id.slice(0, 18)}…` : "Unknown project";
+  const threadLabel = threadId ? `${threadId.slice(0, 14)}…` : null;
+  
   const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
     useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -277,7 +280,7 @@ export default function ClientChat({ id }: Props) {
         >
           <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={() => router.back()}
+              onClick={() => router.push(`/project/${id}/summary`)}
               className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
               aria-label="Go back"
             >
@@ -288,12 +291,11 @@ export default function ClientChat({ id }: Props) {
               style={{ color: "rgba(255,255,255,0.35)" }}
             >
               Chat for Project ·{" "}
-              <span className="font-mono">{id.slice(0, 18)}…</span>
-              {threadId && (
+              <span className="font-mono">{projectLabel}</span>
+              {threadLabel && (
                 <>
                   {" "}
-                  · Thread ID:{" "}
-                  <span className="font-mono">{threadId.slice(0, 14)}…</span>
+                  · Thread ID: <span className="font-mono">{threadLabel}</span>
                 </>
               )}
             </span>
