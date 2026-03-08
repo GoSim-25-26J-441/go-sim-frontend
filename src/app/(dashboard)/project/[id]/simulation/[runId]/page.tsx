@@ -29,7 +29,16 @@ import {
 } from "recharts";
 import { env } from "@/lib/env";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
-import { startSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
+import {
+  patchRunConfiguration,
+  patchRunWorkload,
+  startSimulationRun,
+  stopSimulationRun,
+  type PatchRunConfigurationBody,
+  type PatchRunConfigurationService,
+  type PatchRunConfigurationWorkloadItem,
+  type PatchRunConfigurationPolicies,
+} from "@/lib/api-client/simulation";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +52,30 @@ interface OptimizationStepConfig {
   services?: ServiceConfig[];
   workload?: unknown[];
   hosts?: unknown[];
+}
+
+/** Editable config for Live config panel; matches PATCH shape. */
+interface LiveConfig {
+  services: PatchRunConfigurationService[];
+  workload: PatchRunConfigurationWorkloadItem[];
+  policies?: PatchRunConfigurationPolicies;
+}
+
+function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | null {
+  if (!cfg) return null;
+  const services: PatchRunConfigurationService[] = (cfg.services ?? []).map((s) => ({
+    id: s.id,
+    replicas: s.replicas,
+    cpu_cores: typeof (s as PatchRunConfigurationService).cpu_cores === "number" ? (s as PatchRunConfigurationService).cpu_cores : undefined,
+    memory_mb: typeof (s as PatchRunConfigurationService).memory_mb === "number" ? (s as PatchRunConfigurationService).memory_mb : undefined,
+  }));
+  const workload: PatchRunConfigurationWorkloadItem[] = Array.isArray(cfg.workload)
+    ? cfg.workload
+        .filter((w): w is PatchRunConfigurationWorkloadItem => typeof w === "object" && w !== null && "pattern_key" in w && "rate_rps" in w)
+        .map((w) => ({ pattern_key: w.pattern_key, rate_rps: Number(w.rate_rps) }))
+    : [];
+  if (services.length === 0 && workload.length === 0) return null;
+  return { services, workload };
 }
 
 interface OptimizationStep {
@@ -866,6 +899,10 @@ export default function SimulationRunPage() {
   const [timeseriesApiMetric, setTimeseriesApiMetric] = useState<string>("request_latency_ms");
   const [timeseriesApiLoading, setTimeseriesApiLoading] = useState(false);
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
+  // Live config (online mode) — editable form state; synced from optimization_step
+  const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
+  const [configUpdateLoading, setConfigUpdateLoading] = useState(false);
+  const [configUpdateError, setConfigUpdateError] = useState<string | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -884,7 +921,11 @@ export default function SimulationRunPage() {
       setRunInfo(data.run);
       setRunError(null);
       if (data.run.metadata?.optimization_history?.length) {
-        setOptSteps(data.run.metadata.optimization_history);
+        const history = data.run.metadata.optimization_history as OptimizationStep[];
+        setOptSteps(history);
+        const last = history[history.length - 1];
+        const fromStep = configFromStep(last?.current_config);
+        if (fromStep) setLiveConfig(fromStep);
       }
       // scenario_yaml is a top-level sibling of "run" in the response
       if (data.scenario_yaml) {
@@ -906,9 +947,13 @@ export default function SimulationRunPage() {
     setRunInfo(run);
     setRunError(null);
     setRunLoading(false);
-    // Seed timeline from persisted optimization_history (present on load / reload)
+    // Seed timeline and live config from persisted optimization_history (present on load / reload)
     if (run.metadata?.optimization_history?.length) {
-      setOptSteps(run.metadata.optimization_history);
+      const history = run.metadata.optimization_history as OptimizationStep[];
+      setOptSteps(history);
+      const last = history[history.length - 1];
+      const fromStep = configFromStep(last?.current_config);
+      if (fromStep) setLiveConfig(fromStep);
     }
   }, []);
 
@@ -923,6 +968,8 @@ export default function SimulationRunPage() {
             const exists = prev.some((s) => s.iteration_index === step.iteration_index);
             return exists ? prev : [...prev, step];
           });
+          const fromStep = configFromStep(step.current_config);
+          if (fromStep) setLiveConfig(fromStep);
         }
       } catch { /* malformed — ignore */ }
     }
@@ -1274,12 +1321,75 @@ export default function SimulationRunPage() {
     }
   };
 
+  // ── Live config apply (online mode) ─────────────────────────────────────────
+
+  const applyServices = useCallback(async () => {
+    if (!liveConfig?.services?.length) return;
+    setConfigUpdateLoading(true);
+    setConfigUpdateError(null);
+    try {
+      await patchRunConfiguration(runId, { services: liveConfig.services });
+    } catch (e) {
+      setConfigUpdateError((e as Error).message);
+    } finally {
+      setConfigUpdateLoading(false);
+    }
+  }, [runId, liveConfig?.services]);
+
+  const applyWorkload = useCallback(async () => {
+    if (!liveConfig?.workload?.length) return;
+    setConfigUpdateLoading(true);
+    setConfigUpdateError(null);
+    try {
+      if (liveConfig.workload.length === 1) {
+        const { pattern_key, rate_rps } = liveConfig.workload[0];
+        if (rate_rps <= 0) {
+          setConfigUpdateError("rate_rps must be greater than 0");
+          return;
+        }
+        await patchRunWorkload(runId, { pattern_key, rate_rps });
+      } else {
+        const invalid = liveConfig.workload.find((w) => w.rate_rps <= 0);
+        if (invalid) {
+          setConfigUpdateError("All rate_rps must be greater than 0");
+          return;
+        }
+        await patchRunConfiguration(runId, { workload: liveConfig.workload });
+      }
+    } catch (e) {
+      setConfigUpdateError((e as Error).message);
+    } finally {
+      setConfigUpdateLoading(false);
+    }
+  }, [runId, liveConfig?.workload]);
+
+  const applyPolicies = useCallback(async () => {
+    if (!liveConfig) return;
+    const policies = liveConfig.policies ?? { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } };
+    if (!policies.autoscaling) return;
+    setConfigUpdateLoading(true);
+    setConfigUpdateError(null);
+    try {
+      await patchRunConfiguration(runId, { policies });
+    } catch (e) {
+      setConfigUpdateError((e as Error).message);
+    } finally {
+      setConfigUpdateLoading(false);
+    }
+  }, [runId, liveConfig]);
+
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   const status = runInfo?.status ?? "pending";
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+  const isOnlineMode =
+    status === "running" &&
+    (runInfo?.metadata?.mode === "online" ||
+      runInfo?.metadata?.mode === "online_optimization" ||
+      (runInfo?.metadata?.optimization_history?.length ?? 0) > 0 ||
+      optSteps.length > 0);
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
 
@@ -1296,6 +1406,15 @@ export default function SimulationRunPage() {
   }, [isTerminal]);
   useEffect(() => {
     setLiveMetricsData(null);
+  }, [runId]);
+
+  // Clear live config when run leaves online mode or runId changes
+  useEffect(() => {
+    if (!isOnlineMode) setLiveConfig(null);
+  }, [isOnlineMode]);
+  useEffect(() => {
+    setLiveConfig(null);
+    setConfigUpdateError(null);
   }, [runId]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -1371,7 +1490,7 @@ export default function SimulationRunPage() {
           </>
         )}
 
-        {status === "completed" && (
+        {isTerminal && (
           <Link
             href={`/project/${projectId}/cost/suggest?run_id=${runId}`}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
@@ -1509,6 +1628,282 @@ export default function SimulationRunPage() {
           </>
         ) : null}
       </div>
+
+      {/* Live config — online mode only, realtime PATCH configuration / workload */}
+      {isOnlineMode && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+          <h2 className="text-sm font-semibold text-white">Live config</h2>
+          {configUpdateError && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {configUpdateError}
+            </p>
+          )}
+
+          {!liveConfig ? (
+            <p className="text-xs text-white/40 italic">
+              No configuration data yet. Configuration will appear after the first optimization step.
+            </p>
+          ) : (
+            <>
+              {/* Services */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
+                  <button
+                    type="button"
+                    onClick={applyServices}
+                    disabled={configUpdateLoading || !liveConfig.services.length}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {configUpdateLoading ? "Applying…" : "Apply services"}
+                  </button>
+                </div>
+                {liveConfig.services.length === 0 ? (
+                  <p className="text-xs text-white/30 italic">No services in config.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-border bg-white/5 text-white/40 text-left">
+                          <th className="px-3 py-2 font-medium">Service ID</th>
+                          <th className="px-3 py-2 font-medium">Replicas</th>
+                          <th className="px-3 py-2 font-medium">CPU cores</th>
+                          <th className="px-3 py-2 font-medium">Mem (MB)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liveConfig.services.map((s, i) => (
+                          <tr key={`${s.id}-${i}`} className="border-b border-border/50">
+                            <td className="px-3 py-2 text-white/80">{s.id}</td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={s.replicas ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
+                                  setLiveConfig((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          services: prev.services.map((svc, j) =>
+                                            j === i ? { ...svc, replicas: Number.isFinite(v) ? v : undefined } : svc
+                                          ),
+                                        }
+                                      : prev
+                                  );
+                                }}
+                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.1}
+                                value={s.cpu_cores ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                  setLiveConfig((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          services: prev.services.map((svc, j) =>
+                                            j === i ? { ...svc, cpu_cores: Number.isFinite(v) ? v : undefined } : svc
+                                          ),
+                                        }
+                                      : prev
+                                  );
+                                }}
+                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={s.memory_mb ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                  setLiveConfig((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          services: prev.services.map((svc, j) =>
+                                            j === i ? { ...svc, memory_mb: Number.isFinite(v) ? v : undefined } : svc
+                                          ),
+                                        }
+                                      : prev
+                                  );
+                                }}
+                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Workload */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Workload</h3>
+                  <button
+                    type="button"
+                    onClick={applyWorkload}
+                    disabled={configUpdateLoading || !liveConfig.workload.length}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {configUpdateLoading ? "Applying…" : "Apply workload"}
+                  </button>
+                </div>
+                {liveConfig.workload.length === 0 ? (
+                  <p className="text-xs text-white/30 italic">No workload patterns in config.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {liveConfig.workload.map((w, i) => (
+                      <div key={`${w.pattern_key}-${i}`} className="flex items-center gap-3 flex-wrap">
+                        <span className="text-xs font-mono text-white/60 w-32 truncate" title={w.pattern_key}>
+                          {w.pattern_key}
+                        </span>
+                        <input
+                          type="number"
+                          min={0.01}
+                          step={0.1}
+                          value={w.rate_rps}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setLiveConfig((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    workload: prev.workload.map((item, j) =>
+                                      j === i ? { ...item, rate_rps: Number.isFinite(v) ? v : 0 } : item
+                                    ),
+                                  }
+                                : prev
+                            );
+                          }}
+                          className="w-24 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                          placeholder="RPS"
+                        />
+                        <span className="text-xs text-white/40">RPS</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Policies */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Policies</h3>
+                  <button
+                    type="button"
+                    onClick={applyPolicies}
+                    disabled={configUpdateLoading}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {configUpdateLoading ? "Applying…" : "Apply policies"}
+                  </button>
+                </div>
+                {(() => {
+                  const autoscaling = liveConfig.policies?.autoscaling ?? {
+                    enabled: false,
+                    target_cpu_util: 70,
+                    scale_step: 1,
+                  };
+                  return (
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        <input
+                          type="checkbox"
+                          checked={autoscaling.enabled}
+                          onChange={(e) =>
+                            setLiveConfig((prev) => ({
+                              ...prev!,
+                              policies: {
+                                autoscaling: {
+                                  ...(prev?.policies?.autoscaling ?? {
+                                    enabled: false,
+                                    target_cpu_util: 70,
+                                    scale_step: 1,
+                                  }),
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            }))
+                          }
+                          className="rounded border-white/20"
+                        />
+                        Autoscaling enabled
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        Target CPU %
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={autoscaling.target_cpu_util ?? 70}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            setLiveConfig((prev) => ({
+                              ...prev!,
+                              policies: {
+                                autoscaling: {
+                                  ...(prev?.policies?.autoscaling ?? {
+                                    enabled: false,
+                                    target_cpu_util: 70,
+                                    scale_step: 1,
+                                  }),
+                                  target_cpu_util: Number.isFinite(v) ? v : 70,
+                                },
+                              },
+                            }));
+                          }}
+                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        Scale step
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={autoscaling.scale_step ?? 1}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            setLiveConfig((prev) => ({
+                              ...prev!,
+                              policies: {
+                                autoscaling: {
+                                  ...(prev?.policies?.autoscaling ?? {
+                                    enabled: false,
+                                    target_cpu_util: 70,
+                                    scale_step: 1,
+                                  }),
+                                  scale_step: Number.isFinite(v) && v >= 1 ? v : 1,
+                                },
+                              },
+                            }));
+                          }}
+                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                        />
+                      </label>
+                    </div>
+                  );
+                })()}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Scenario YAML viewer — data comes from the main run fetch */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">

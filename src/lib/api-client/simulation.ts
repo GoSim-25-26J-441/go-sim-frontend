@@ -46,6 +46,87 @@ export interface CreateProjectRunResponse {
   run: CreateProjectRunResponseRun;
 }
 
+// --- Realtime config (online mode) ---
+
+export interface PatchRunConfigurationService {
+  id: string;
+  replicas?: number;
+  cpu_cores?: number;
+  memory_mb?: number;
+}
+
+export interface PatchRunConfigurationWorkloadItem {
+  pattern_key: string;
+  rate_rps: number;
+}
+
+export interface PatchRunConfigurationPolicies {
+  autoscaling?: {
+    enabled: boolean;
+    target_cpu_util?: number;
+    scale_step?: number;
+  };
+}
+
+/** At least one of services, workload, or policies must be sent. */
+export interface PatchRunConfigurationBody {
+  services?: PatchRunConfigurationService[];
+  workload?: PatchRunConfigurationWorkloadItem[];
+  policies?: PatchRunConfigurationPolicies;
+}
+
+export interface PatchRunConfigurationResponse {
+  message: string;
+  run_id: string;
+}
+
+export interface PatchRunWorkloadBody {
+  pattern_key: string;
+  rate_rps: number;
+}
+
+/**
+ * Full configuration update for a running simulation (online mode).
+ * Backend: PATCH /api/v1/simulation/runs/:id/configuration
+ */
+export async function patchRunConfiguration(
+  runId: string,
+  body: PatchRunConfigurationBody
+): Promise<PatchRunConfigurationResponse> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(runId)}/configuration`;
+  const response = await authenticatedFetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Configuration update failed" }));
+    throw new Error((err as { error?: string }).error ?? `Configuration update failed (${response.status})`);
+  }
+  return response.json() as Promise<PatchRunConfigurationResponse>;
+}
+
+/**
+ * Workload-only update for a running simulation (online mode).
+ * Backend: PATCH /api/v1/simulation/runs/:id/workload
+ */
+export async function patchRunWorkload(
+  runId: string,
+  body: PatchRunWorkloadBody
+): Promise<{ message: string; run_id?: string }> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(runId)}/workload`;
+  const response = await authenticatedFetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Workload update failed" }));
+    throw new Error((err as { error?: string }).error ?? `Workload update failed (${response.status})`);
+  }
+  return response.json() as Promise<{ message: string; run_id?: string }>;
+}
+
 /**
  * Get all simulation runs
  * TODO: Replace with actual backend call when endpoint is available
@@ -196,44 +277,20 @@ export async function stopSimulationRun(
 }
 
 /**
- * Update workload rate for a running simulation
- * Updates the request rate (RPS) for a specific workload pattern
+ * Update workload rate for a running simulation (online mode).
+ * Thin wrapper around patchRunWorkload.
  */
 export async function updateWorkloadRate(
   runId: string,
   patternKey: string,
   rateRps: number
 ): Promise<{ message: string; run_id: string; pattern_key: string }> {
-  try {
-    // When backend is ready, uncomment this:
-    // const response = await authenticatedFetch(`${BASE_URL}/runs/${runId}/workload`, {
-    //   method: "PATCH",
-    //   headers: {
-    //     "Content-Type": "application/json",
-    //   },
-    //   body: JSON.stringify({
-    //     pattern_key: patternKey,
-    //     rate_rps: rateRps,
-    //   }),
-    // });
-    // if (!response.ok) {
-    //   const error = await response.json().catch(() => ({ error: "Failed to update workload rate" }));
-    //   throw new Error(error.error || "Failed to update workload rate");
-    // }
-    // const data = await response.json();
-    // return data;
-
-    // For now, simulate API call (log for debugging)
-    console.log(`[Simulated] Updating workload rate for ${runId}: ${patternKey} = ${rateRps} RPS`);
-    return {
-      message: "workload updated successfully",
-      run_id: runId,
-      pattern_key: patternKey,
-    };
-  } catch (error) {
-    console.error("Error updating workload rate:", error);
-    throw error;
-  }
+  const res = await patchRunWorkload(runId, { pattern_key: patternKey, rate_rps: rateRps });
+  return {
+    message: res.message,
+    run_id: res.run_id ?? runId,
+    pattern_key: patternKey,
+  };
 }
 
 /**
