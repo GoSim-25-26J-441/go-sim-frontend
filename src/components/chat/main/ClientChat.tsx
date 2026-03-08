@@ -3,7 +3,6 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { useAuth } from "@/providers/auth-context";
 import {
   Send,
@@ -13,28 +12,23 @@ import {
   Upload,
   Check,
   ArrowLeft,
+  X,
 } from "lucide-react";
-import { getProjectThreadId } from "@/modules/di/getProjectThread";
+import {
+  useGetProjectThreadIdQuery,
+  useGetMessagesQuery,
+  useSendMessageMutation,
+  type ChatMessageItem,
+} from "@/app/store/chatApi";
+import { useToast } from "@/hooks/useToast";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
 import Dropdown from "./comp/DropDown";
 import MessageBubble from "./comp/MessageBubble";
 import CheckPatternsOverlay from "@/app/features/amg-apd/components/CheckPatternsOverlay";
+import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  message: string;
-  ts?: number;
-}
-
-interface ChatResponse {
-  answer?: string;
-  message?: string;
-  source?: "rag" | "llm" | "assistant";
-  [key: string]: unknown;
-}
 
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
@@ -45,21 +39,53 @@ export default function ClientChat({ id }: Props) {
 
   const [threadId, setThreadId] = useState<string | null>(urlThreadId);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>("default");
   const [thinkingDetail, setThinkingDetail] = useState<string>("high");
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [checkingThread, setCheckingThread] = useState(!urlThreadId);
   const [showDesignModal, setShowDesignModal] = useState(false);
   const [designAnswers, setDesignAnswers] = useState<Record<string, any>>({});
+  const [openCheckPatternsAfterDesign, setOpenCheckPatternsAfterDesign] =
+    useState(false);
+  const [designSuggestionDismissed, setDesignSuggestionDismissed] =
+    useState(false);
+  const [showImagesModal, setShowImagesModal] = useState(false);
+  
   const projectLabel = id ? `${id.slice(0, 18)}…` : "Unknown project";
   const threadLabel = threadId ? `${threadId.slice(0, 14)}…` : null;
-  
+
   const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
     useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const {
+    data: projectThreadId,
+    isSuccess: projectThreadSuccess,
+    isError: projectThreadError,
+  } = useGetProjectThreadIdQuery(id, { skip: !!urlThreadId });
+
+  const {
+    data: messagesData,
+    isLoading: loadingHistory,
+    isError: messagesError,
+    error: messagesErrorPayload,
+  } = useGetMessagesQuery(
+    { projectId: id, threadId: threadId! },
+    { skip: !threadId },
+  );
+
+  const [sendMessage, { isLoading: sendLoading }] = useSendMessageMutation();
+  const loading = sendLoading;
+  const showToast = useToast((s) => s.showToast);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -79,20 +105,44 @@ export default function ClientChat({ id }: Props) {
       setCheckingThread(false);
       return;
     }
-    if (!checkingThread) return;
+    if (projectThreadSuccess) {
+      const tid = projectThreadId ?? null;
+      setThreadId(tid);
+      if (tid) {
+        router.replace(`/project/${id}/chat?thread=${tid}`, { scroll: false });
+      }
+      setCheckingThread(false);
+    } else if (projectThreadError) {
+      setThreadId(null);
+      setCheckingThread(false);
+    }
+  }, [
+    id,
+    urlThreadId,
+    projectThreadSuccess,
+    projectThreadError,
+    projectThreadId,
+    router,
+  ]);
 
-    getProjectThreadId(id)
-      .then((tid) => {
-        if (tid) {
-          setThreadId(tid);
-          router.replace(`/project/${id}/chat?thread=${tid}`, {
-            scroll: false,
-          });
-        } else setThreadId(null);
-      })
-      .catch(() => setThreadId(null))
-      .finally(() => setCheckingThread(false));
-  }, [id, urlThreadId, checkingThread, router]);
+  useEffect(() => {
+    if (messagesData) {
+      setMessages(messagesData.filter((m) => m.message.trim()));
+    }
+  }, [messagesData]);
+
+  useEffect(() => {
+    if (messagesError && messagesErrorPayload) {
+      setErr(
+        typeof messagesErrorPayload === "object" &&
+          "message" in messagesErrorPayload
+          ? String((messagesErrorPayload as Error).message)
+          : "Failed to load history",
+      );
+    } else if (!loadingHistory && !messagesError) {
+      setErr(null);
+    }
+  }, [messagesError, messagesErrorPayload, loadingHistory]);
 
   useEffect(() => {
     if (
@@ -107,55 +157,6 @@ export default function ClientChat({ id }: Props) {
     }
   }, [messages.length, loadingHistory, checkingThread, threadId]);
 
-  useEffect(() => {
-    if (!threadId) return;
-    let alive = true;
-    setLoadingHistory(true);
-    setErr(null);
-
-    (async () => {
-      try {
-        const token = await getFirebaseIdToken();
-        if (!token) throw new Error("No authentication token");
-
-        const res = await fetch(
-          `/api/projects/${id}/chats/${threadId}/messages`,
-          {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-store",
-          },
-        );
-        if (!res.ok) throw new Error(`Failed to load history: ${res.status}`);
-
-        const data = await res.json();
-        const arr = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.messages)
-            ? data.messages
-            : [];
-
-        if (alive) {
-          const parsed: ChatMessage[] = arr.map((m: any) => ({
-            role: m.role === "user" ? "user" : "assistant",
-            message: m.message || m.text || m.content || "",
-            ts: m.ts || m.timestamp || Date.now(),
-          }));
-          setMessages(parsed.filter((m) => m.message.trim()));
-        }
-      } catch (e) {
-        if (alive)
-          setErr(e instanceof Error ? e.message : "Failed to load history");
-      } finally {
-        if (alive) setLoadingHistory(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [id, threadId]);
-
   async function handleSend() {
     const text = input.trim();
     if (!text || !threadId || loading) return;
@@ -165,57 +166,42 @@ export default function ClientChat({ id }: Props) {
       { role: "user", message: text, ts: Date.now() },
     ]);
     setInput("");
-    setLoading(true);
     setErr(null);
 
     try {
-      const token = await getFirebaseIdToken();
-      if (!token) throw new Error("No authentication token");
+      const response = await sendMessage({
+        projectId: id,
+        threadId,
+        message: text,
+        mode,
+        ...(mode === "thinking" ? { detail: thinkingDetail } : {}),
+        ...(Object.keys(designAnswers).length > 0
+          ? { design: designAnswers }
+          : {}),
+      }).unwrap();
 
-      const res = await fetch(
-        `/api/projects/${id}/chats/${threadId}/messages`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+      if (aliveRef.current) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            message: response.answer || response.message || "No response",
+            ts: Date.now(),
           },
-          body: JSON.stringify({
-            message: text,
-            mode,
-            ...(mode === "thinking" ? { detail: thinkingDetail } : {}),
-            ...(Object.keys(designAnswers).length > 0
-              ? { design: designAnswers }
-              : {}),
-          }),
-        },
-      );
-
-      if (!res.ok) {
-        const txt = await res.text();
-        let msg = `Failed to send message: ${res.status}`;
-        try {
-          msg = JSON.parse(txt)?.error || msg;
-        } catch {
-          if (txt) msg = txt.slice(0, 200);
-        }
-        throw new Error(msg);
+        ]);
       }
-
-      const response: ChatResponse = await res.json();
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          message: response.answer || response.message || "No response",
-          ts: Date.now(),
-        },
-      ]);
+      // Show toast when user has left the chat page so they see the response
+      const isOnChatPage =
+        typeof window !== "undefined" &&
+        window.location.pathname.includes("/chat");
+      if (!isOnChatPage) {
+        showToast("Chat received a response", "chat");
+      }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed to send");
-      setMessages((prev) => prev.slice(0, -1));
-    } finally {
-      setLoading(false);
+      if (aliveRef.current) {
+        setErr(e instanceof Error ? e.message : "Failed to send");
+        setMessages((prev) => prev.slice(0, -1));
+      }
     }
   }
 
@@ -235,16 +221,32 @@ export default function ClientChat({ id }: Props) {
     <>
       <DesignQuestionsModal
         isOpen={showDesignModal}
-        onClose={() => setShowDesignModal(false)}
+        onClose={() => {
+          setShowDesignModal(false);
+          setOpenCheckPatternsAfterDesign(false);
+        }}
         onSubmit={(d) => {
           setDesignAnswers(d);
           setShowDesignModal(false);
+          if (openCheckPatternsAfterDesign) {
+            setShowCheckPatternsOverlay(true);
+            setOpenCheckPatternsAfterDesign(false);
+          }
         }}
-        onSkip={() => setShowDesignModal(false)}
+        onDesignLoaded={(d) => setDesignAnswers(d)}
+        onSkip={() => {
+          setShowDesignModal(false);
+          setOpenCheckPatternsAfterDesign(false);
+        }}
         initialDesign={designAnswers}
         projectId={id}
         userId={userId ?? undefined}
-        runId={threadId ?? undefined}
+      />
+
+      <DiagramImagesModal
+        projectId={id}
+        isOpen={showImagesModal}
+        onClose={() => setShowImagesModal(false)}
       />
 
       <div
@@ -309,14 +311,14 @@ export default function ClientChat({ id }: Props) {
                 }}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-[#34d399]" />
-                Design info
+                Requirements filled
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {}}
+              onClick={() => setShowImagesModal(true)}
               className="flex items-center px-2 py-1 rounded-md text-white/80 hover:text-white transition-colors shadow-md gap-2"
             >
               <Upload className="w-4 h-4" />
@@ -325,13 +327,32 @@ export default function ClientChat({ id }: Props) {
               </span>
             </button>
 
-            <button
-              onClick={() => setShowDesignModal(true)}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              Design
-            </button>
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setShowDesignModal(true)}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+                Requirements Settings
+              </button>
+
+              {Object.keys(designAnswers).length === 0 &&
+                !designSuggestionDismissed && (
+                  <div className="absolute left-0 top-full mt-3 z-20 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs min-w-60 max-w-70 bg-white opacity-45 text-black">
+                     <span className="flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-600" />
+                      Please fill the design form to use Check Anti-Patterns.
+                    </span>
+                    <button
+                      onClick={() => setDesignSuggestionDismissed(true)}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+                      aria-label="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+            </div>
 
             <Dropdown
               label="Mode"
@@ -350,7 +371,14 @@ export default function ClientChat({ id }: Props) {
             )}
 
             <button
-              onClick={() => setShowCheckPatternsOverlay(true)}
+              onClick={() => {
+                if (Object.keys(designAnswers).length === 0) {
+                  setOpenCheckPatternsAfterDesign(true);
+                  setShowDesignModal(true);
+                } else {
+                  setShowCheckPatternsOverlay(true);
+                }
+              }}
               className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
             >
               <Check className="w-3.5 h-3.5" />

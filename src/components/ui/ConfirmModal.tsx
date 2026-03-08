@@ -76,7 +76,7 @@ export function ConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       role="dialog"
       aria-modal="true"
@@ -84,7 +84,7 @@ export function ConfirmModal({
       aria-describedby="confirm-modal-desc"
     >
       <div
-        className={`w-full max-w-md rounded-2xl border shadow-2xl shadow-black/40 overflow-hidden animate-in zoom-in-95 duration-200 ${style.box}`}
+        className={`w-full max-w-md rounded-2xl border-2 shadow-2xl shadow-black/50 overflow-hidden animate-in zoom-in-95 duration-200 bg-gray-900/95 ${style.box}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-6">
