@@ -95,8 +95,8 @@ export default function GraphCanvas({
   readOnly?: boolean;
   isGenerating?: boolean;
   onGenerateGraph?: (yaml: string) => void | Promise<void>;
-  /** Called when cy is ready; pass a function that returns PNG data URL or null */
-  onExportImageReady?: (exportPng: () => string | null) => void;
+  /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
+  onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
   onDuplicateName?: (name: string) => void;
 }) {
@@ -306,16 +306,40 @@ export default function GraphCanvas({
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
 
+  const EXPORT_PADDING = 64;
+
   useEffect(() => {
     if (!onExportImageReady || !cyAlive(cy)) return;
     onExportImageReady(() => {
       const c = cyRef.current;
       if (!c || !cyAlive(c)) return null;
       try {
-        return c.png({
+        const pngDataUrl = c.png({
           full: true,
           scale: 2,
           bg: "#ffffff",
+        });
+        return new Promise<string | null>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const pad = EXPORT_PADDING;
+            const w = img.width + 2 * pad;
+            const h = img.height + 2 * pad;
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(pngDataUrl);
+              return;
+            }
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, pad, pad);
+            resolve(canvas.toDataURL("image/png"));
+          };
+          img.onerror = () => resolve(pngDataUrl);
+          img.src = pngDataUrl;
         });
       } catch {
         return null;

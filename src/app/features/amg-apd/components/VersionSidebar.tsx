@@ -183,7 +183,7 @@ export default function VersionSidebar({
   function startRename(v: AmgApdVersionSummary) {
     setEditingId(v.id);
     setEditingTitle(
-      v.title || `Version ${String(v.version_number).padStart(2, "0")}`,
+      v.title || `diagramV${v.version_number}`,
     );
   }
 

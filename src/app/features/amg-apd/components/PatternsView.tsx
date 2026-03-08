@@ -91,7 +91,7 @@ export default function PatternsView({
               ),
             );
       const nextNum = maxVersionNumber + 1;
-      versionTitle = `Version ${String(nextNum).padStart(2, "0")}`;
+      versionTitle = `diagramV${nextNum}`;
     }
 
     const blob = new Blob([yamlContent], { type: "text/yaml" });
@@ -277,8 +277,16 @@ export default function PatternsView({
     showToast("JSON downloaded", "success");
   }
 
-  function handleDownloadImage() {
-    const dataUrl = exportImageRef.current?.();
+  async function handleDownloadImage() {
+    const fn = exportImageRef.current;
+    if (!fn) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    const dataUrl = await Promise.resolve(fn());
     if (!dataUrl) {
       showToast(
         "Graph is not ready to export. Wait for the diagram to load.",
@@ -435,13 +443,13 @@ export default function PatternsView({
     <div className="space-y-6 max-w-400 mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
       {simulationModalOpen && (
         <div
-          className="fixed inset-0 z-99999 flex items-center justify-center p-4 "
+          className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           onClick={(e) =>
             e.target === e.currentTarget && setSimulationModalOpen(false)
           }
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-white/15 bg-gray-900 p-6 shadow-2xl"
+            className="w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-sm p-6 shadow-xl shadow-black/30"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-white mb-1">
@@ -473,7 +481,7 @@ export default function PatternsView({
               <button
                 type="button"
                 onClick={() => setSimulationModalOpen(false)}
-                className="rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors"
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
               >
                 Cancel
               </button>
@@ -481,7 +489,7 @@ export default function PatternsView({
                 type="button"
                 onClick={handleSimulationConfirm}
                 disabled={!simulationSelectedVersion}
-                className="rounded-lg bg-[#9AA4B2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Proceed
               </button>
@@ -520,7 +528,7 @@ export default function PatternsView({
           document.body,
         )}
 
-      <div className="sticky top-0 z-20 p-3 shadow-xl shadow-black/20 overflow-hidden shrink-0">
+      <div className="sticky top-0 z-20 p-3 shadow-xl shadow-black/20 overflow-hidden shrink-0 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
         <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-white/10">
           <VersionSidebar
             refreshTrigger={versionsRefreshTrigger}

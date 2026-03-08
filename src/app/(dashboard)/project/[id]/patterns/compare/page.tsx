@@ -2,9 +2,11 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, GitCompare } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
+import Legend from "@/app/features/amg-apd/components/Legend";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
 import type {
@@ -35,6 +37,7 @@ export default function ProjectPatternsComparePage({
   params: Promise<{ id: string }>;
 }) {
   const { id: projectId } = use(params);
+  const router = useRouter();
   const { userId } = useAuth();
   const showToast = useToast((s) => s.showToast);
   const headers = () =>
@@ -50,6 +53,8 @@ export default function ProjectPatternsComparePage({
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [simulationModalOpen, setSimulationModalOpen] = useState(false);
+  const [simulationSelectedVersion, setSimulationSelectedVersion] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -117,37 +122,50 @@ export default function ProjectPatternsComparePage({
       }
     : null;
 
+  const patternsHref = projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns";
+
+  function handleSimulationConfirm() {
+    if (projectId && simulationSelectedVersion) {
+      router.push(
+        `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
+      );
+    } else {
+      showToast("Please select a version first", "warning");
+    }
+    setSimulationModalOpen(false);
+    setSimulationSelectedVersion("");
+  }
+
   return (
     <div className="p-6 space-y-4 min-w-0">
-      <div className="flex items-center justify-between gap-3 flex-shrink-0 py-4 px-1">
+      <div
+        className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+      >
         <div className="flex items-center gap-3 min-w-0">
           <Link
-            href={projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns"}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors inline-flex"
+            href={patternsHref}
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
           >
-            <ArrowLeft className="w-5 h-5 text-white" />
+            <ArrowLeft className="w-4 h-4" />
           </Link>
-          <div>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <GitCompare className="w-5 h-5" />
-              Compare Architecture Model Versions
-            </h1>
-            <p className="text-sm text-white/60 mt-1">
-              Project <span className="font-mono text-xs">{projectId}</span>
-            </p>
-          </div>
+          <h1 className="text-md font-bold text-white flex items-center gap-2">
+            <GitCompare className="w-5 h-5 text-white/90" />
+            Compare Architecture Model Versions
+          </h1>
         </div>
-        <Link
-          href={projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns"}
-          className="flex-shrink-0 rounded-2xl border border-white/15 bg-card/80 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+        <button
+          type="button"
+          onClick={() => router.push(patternsHref)}
+          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
         >
-          Back to graph
-        </Link>
+          Back to Graph
+        </button>
       </div>
 
       <div className="min-w-0 flex flex-col gap-6 flex-1 min-h-[calc(100dvh-280px)] max-w-[1600px] mx-auto">
-        <div className="rounded-3xl border border-white/10 bg-gray-900/80 backdrop-blur-sm p-6 shadow-xl shadow-black/20 flex-shrink-0">
-          <div className="flex flex-wrap items-end gap-5">
+        <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-6 shadow-xl shadow-black/20 flex-shrink-0">
+          <div className="flex flex-wrap items-end justify-center gap-5">
             <div className="flex flex-col gap-2">
               <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
                 Left version
@@ -194,12 +212,80 @@ export default function ProjectPatternsComparePage({
                 !rightId ||
                 leftId === rightId
               }
-              className="rounded-2xl bg-[#9AA4B2] px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#9AA4B2]/20 hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+              className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
             >
               {loadingCompare ? "Loading…" : "Compare"}
             </button>
           </div>
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 pb-1 border-b border-white/10">
+          <Legend versionCount={versions.length} />
+          <button
+            type="button"
+            onClick={() => setSimulationModalOpen(true)}
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+          >
+            Proceed to Performance Simulator
+          </button>
+        </div>
+
+      {simulationModalOpen && (
+        <div
+          className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={(e) =>
+            e.target === e.currentTarget && setSimulationModalOpen(false)
+          }
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-sm p-6 shadow-xl shadow-black/30"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-1">
+              Proceed to Performance Simulation
+            </h3>
+            <p className="text-sm text-white/60 mb-4">
+              Select which version to use for the simulation.
+            </p>
+
+            <div className="flex flex-col gap-2 mb-4">
+              <label className="text-xs font-semibold text-[#9AA4B2] uppercase tracking-wider">
+                Version
+              </label>
+              <select
+                className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white scheme-dark focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                value={simulationSelectedVersion}
+                onChange={(e) => setSimulationSelectedVersion(e.target.value)}
+              >
+                <option value="">Select version…</option>
+                {versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    #{v.version_number} {v.title || "Untitled"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSimulationModalOpen(false)}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSimulationConfirm}
+                disabled={!simulationSelectedVersion}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300 flex-shrink-0">
@@ -209,8 +295,8 @@ export default function ProjectPatternsComparePage({
 
       {compareResult && leftData && rightData && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
-          <div className="rounded-3xl border border-white/10 bg-gray-900/80 overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
-            <div className="border-b border-white/10 bg-[#9AA4B2]/20 px-5 py-3 flex-shrink-0">
+          <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
+            <div className="border-b border-white/10 bg-white/5 px-5 py-3 flex-shrink-0">
               <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
                 Left
               </span>
@@ -223,8 +309,8 @@ export default function ProjectPatternsComparePage({
               <GraphCanvas data={leftData} readOnly />
             </div>
           </div>
-          <div className="rounded-3xl border border-white/10 bg-gray-900/80 overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
-            <div className="border-b border-white/10 bg-[#9AA4B2]/20 px-5 py-3 flex-shrink-0">
+          <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
+            <div className="border-b border-white/10 bg-white/5 px-5 py-3 flex-shrink-0">
               <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
                 Right
               </span>

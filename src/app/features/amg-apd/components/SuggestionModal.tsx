@@ -72,7 +72,7 @@ export default function SuggestionModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
       <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40">
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0">
           <div>
@@ -84,7 +84,12 @@ export default function SuggestionModal({
             </p>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
             className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150 bg-white/10 text-white/80 hover:bg-white/20 hover:text-white border border-white/10"
           >
             <X className="w-4 h-4" />
