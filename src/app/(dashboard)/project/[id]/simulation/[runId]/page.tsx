@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, BarChart2, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -1115,6 +1115,16 @@ export default function SimulationRunPage() {
               Cancel
             </button>
           </>
+        )}
+
+        {status === "completed" && (
+          <Link
+            href={`/project/${projectId}/cost/suggest?run_id=${runId}`}
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+          >
+            <BarChart2 className="w-4 h-4" />
+            Go to analysis
+          </Link>
         )}
 
         <button
