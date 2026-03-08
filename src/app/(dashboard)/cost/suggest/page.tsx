@@ -9,7 +9,7 @@ import {
     fetchSuggestionsFromRun,
     type RunCandidateItem,
 } from '@/app/api/asm/routes';
-import { Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
+import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -286,9 +286,9 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
 
     return (
         <div className="p-6 space-y-4">
-            <div className="max-w-7xl mx-auto">
+            <div className="p-6 space-y-4">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-8">
+                {/* <div className="flex justify-between items-center mb-8">
                     <div>
                         <h1 className="text-3xl font-bold">Metrices Analysis</h1>
                     </div>
@@ -300,6 +300,36 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             View Cost Analysis
                         </button>
                     )}
+                </div> */}
+                <div
+                    className=" flex items-center justify-between"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                    <div className='px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap'>
+                        <button
+                            onClick={() => router.back()}
+                            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                            aria-label="Go back"
+                        >
+                            <ArrowLeft className="w-4 h-4" />
+                        </button>
+
+                        <div>
+                            <h1 className="text-md font-bold text-white flex items-center gap-2">
+                                Metrices Analysis
+                            </h1>
+                        </div>
+                    </div>
+                    <div>
+                        {suggestionData && (
+                            <button
+                                onClick={handleViewCostAnalysis}
+                                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                            >
+                                View Cost Analysis
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Requirements Summary */}
