@@ -195,7 +195,7 @@ export default function ClientChat({ id }: Props) {
         typeof window !== "undefined" &&
         window.location.pathname.includes("/chat");
       if (!isOnChatPage) {
-        showToast("Chat received a response", "info");
+        showToast("Chat received a response", "chat");
       }
     } catch (e) {
       if (aliveRef.current) {
@@ -340,7 +340,7 @@ export default function ClientChat({ id }: Props) {
               {Object.keys(designAnswers).length === 0 &&
                 !designSuggestionDismissed && (
                   <div className="absolute left-0 top-full mt-3 z-20 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs min-w-60 max-w-70 bg-white opacity-45 text-black">
-                    <span className="flex items-center gap-1.5">
+                     <span className="flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-600" />
                       Please fill the design form to use Check Anti-Patterns.
                     </span>
