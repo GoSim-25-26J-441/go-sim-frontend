@@ -1386,10 +1386,7 @@ export default function SimulationRunPage() {
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
   const isOnlineMode =
     status === "running" &&
-    (runInfo?.metadata?.mode === "online" ||
-      runInfo?.metadata?.mode === "online_optimization" ||
-      (runInfo?.metadata?.optimization_history?.length ?? 0) > 0 ||
-      optSteps.length > 0);
+    (runInfo?.metadata?.mode === "online" || runInfo?.metadata?.mode === "online_optimization");
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
 

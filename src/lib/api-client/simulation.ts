@@ -19,6 +19,18 @@ export interface CreateProjectRunOptimization {
   control_interval_ms?: number;
   min_hosts?: number;
   max_hosts?: number;
+  /** Primary signal for scaling; default "p95_latency" if omitted */
+  optimization_target_primary?: "p95_latency" | "cpu_utilization" | "memory_utilization";
+  /** 0–1; used when primary is CPU or memory; default 0.7 */
+  target_util_high?: number;
+  /** 0–1; used when primary is CPU or memory; default 0.4 */
+  target_util_low?: number;
+  /** 0–1; 0 = not used */
+  scale_down_cpu_util_max?: number;
+  /** 0–1; 0 = not used */
+  scale_down_mem_util_max?: number;
+  /** 0–1; 0 = host scale-in disabled */
+  scale_down_host_cpu_util_max?: number;
 }
 
 export interface CreateProjectRunRequest {
