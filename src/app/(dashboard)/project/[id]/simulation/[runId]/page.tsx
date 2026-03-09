@@ -187,6 +187,14 @@ const LINE_COLORS  = [
   "#f472b6", "#facc15", "#60a5fa", "#f87171",
 ];
 
+/** Sort by timestamp and keep one point per t (latest value wins). Used so we don't mix or duplicate. */
+function sortAndDedupePoints(pts: TimePoint[]): TimePoint[] {
+  if (pts.length <= 1) return pts;
+  const byT = new Map<number, number>();
+  for (const p of pts) byT.set(p.t, p.v);
+  return Array.from(byT.entries()).sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t, v }));
+}
+
 // ── Persisted metrics types ───────────────────────────────────────────────────
 
 interface MetricPoint {
@@ -494,12 +502,12 @@ function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: Metric
     : timeseries.map((ts) => ({
         metric: ts.metric,
         rows: (() => {
-          const rowMap: Record<string, Record<string, number>> = {};
-          for (const p of ts.points) {
-            const key = p.time;
-            if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-            rowMap[key][p.service_id ?? "global"] = p.value;
-          }
+        const rowMap: Record<string, Record<string, number>> = {};
+        for (const p of ts.points) {
+          const key = p.time;
+          if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
+          rowMap[key][p.service_id ?? "global"] = p.value;
+        }
           return Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
         })(),
       }));
@@ -903,6 +911,8 @@ export default function SimulationRunPage() {
   // Best-candidate topology (from same candidates API response)
   const [bestCandidate, setBestCandidate] = useState<{ best_candidate_id: string; best_candidate?: BestCandidateTopology } | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
+  // One source per series: either metric_update or metrics_snapshot, never mixed
+  const seriesSourceRef = useRef<Record<string, "metric_update" | "metrics_snapshot">>({});
   const seriesBufferRef = useRef<ServiceSeries>({});
   const knownServicesRef = useRef<Set<string>>(new Set());
   const [chartSeries, setChartSeries] = useState<ServiceSeries>({});
@@ -1007,15 +1017,18 @@ export default function SimulationRunPage() {
         const svc = (m.labels?.service ?? m.service_id ?? m.service_name) as string | undefined;
         if (svc) knownServicesRef.current.add(svc);
 
-        if (m.metric === "request_count" && svc && m.value != null) {
+        // request_count: one source per series (metric_update or metrics_snapshot, never mixed)
+        if (m.metric === "request_count" && svc && m.value != null && seriesSourceRef.current[svc] !== "metrics_snapshot") {
+          seriesSourceRef.current[svc] = "metric_update";
           const t = m.timestamp ? new Date(m.timestamp).getTime() : Date.now();
-          const pt: TimePoint = { t, v: m.value };
+          const pt: TimePoint = { t, v: m.value }; // value is already cumulative, no accumulation
           const buf = seriesBufferRef.current;
           if (!buf[svc]) buf[svc] = [];
           buf[svc].push(pt);
           if (buf[svc].length > MAX_POINTS) buf[svc] = buf[svc].slice(-MAX_POINTS);
         }
 
+        // Gauges: use latest value directly (no accumulation)
         if (m.metric === "concurrent_requests" && svc && m.value != null) {
           const instance = (m.labels?.instance as string) ?? "default";
           const key = `${svc}::${instance}`;
@@ -1037,10 +1050,12 @@ export default function SimulationRunPage() {
       for (const sm of list) {
         const name = sm?.service_name;
         if (name != null && typeof sm.request_count === "number") {
+          if (seriesSourceRef.current[name] === "metric_update") continue; // already using metric_update for this service
+          seriesSourceRef.current[name] = "metrics_snapshot";
           knownServicesRef.current.add(name);
           const buf = seriesBufferRef.current;
           if (!buf[name]) buf[name] = [];
-          buf[name].push({ t, v: sm.request_count });
+          buf[name].push({ t, v: sm.request_count }); // total_requests / request_count already cumulative
           if (buf[name].length > MAX_POINTS) buf[name] = buf[name].slice(-MAX_POINTS);
         }
       }
@@ -1057,6 +1072,7 @@ export default function SimulationRunPage() {
 
         const list = metrics.service_metrics;
         if (Array.isArray(list) && list.length > 0) {
+          // Gauges (concurrent_requests, cpu_utilization, etc.): use latest value directly
           const bySvc: Record<string, number> = {};
           for (const sm of list) {
             const name = sm?.service_name;
@@ -1291,7 +1307,6 @@ export default function SimulationRunPage() {
           setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
         }
         // Fallback: seed Request count chart from persisted metrics when chart has no data
-        const serviceMetrics = data.metrics.service_metrics;
         const hasRequestCount = serviceMetrics.some(
           (sm) => sm.service_name != null && typeof sm.request_count === "number"
         );
@@ -1304,6 +1319,7 @@ export default function SimulationRunPage() {
             for (const sm of serviceMetrics) {
               if (sm.service_name != null && typeof sm.request_count === "number") {
                 next[sm.service_name] = [{ t, v: sm.request_count }];
+                seriesSourceRef.current[sm.service_name] = "metrics_snapshot";
               }
             }
             return Object.keys(next).length > 0 ? next : prev;
@@ -1394,6 +1410,7 @@ export default function SimulationRunPage() {
 
   // Clear chart data and concurrent-requests state
   const clearChart = useCallback(() => {
+    seriesSourceRef.current = {};
     seriesBufferRef.current = {};
     knownServicesRef.current.clear();
     setChartSeries({});
@@ -1428,7 +1445,7 @@ export default function SimulationRunPage() {
           const next = { ...prev };
           for (const [svc, pts] of Object.entries(buf)) {
             const existing = next[svc] ?? [];
-            const merged = [...existing, ...pts].slice(-MAX_POINTS);
+            const merged = sortAndDedupePoints([...existing, ...pts]).slice(-MAX_POINTS);
             next[svc] = merged;
           }
           for (const svc of knownServicesRef.current) {
@@ -2407,14 +2424,14 @@ export default function SimulationRunPage() {
               )}
             </h2>
             {isTerminal && (
-              <button
-                onClick={fetchMetrics}
-                disabled={metricsLoading}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
-                {metricsData === null ? "Load metrics" : "Refresh"}
-              </button>
+            <button
+              onClick={fetchMetrics}
+              disabled={metricsLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
+              {metricsData === null ? "Load metrics" : "Refresh"}
+            </button>
             )}
           </div>
 
