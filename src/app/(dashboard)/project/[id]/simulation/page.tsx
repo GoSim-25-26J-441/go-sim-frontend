@@ -355,7 +355,10 @@ export default function ProjectSimulationPage() {
                             <span className="text-white/20">Best score </span>
                             <span className="font-mono text-amber-300/80">
                               {typeof run.metadata.best_score === "number"
-                                ? run.metadata.best_score.toFixed(4)
+                                ? (run.metadata.objective === "cpu_utilization" ||
+                                  run.metadata.objective === "memory_utilization")
+                                  ? `${(run.metadata.best_score * 100).toFixed(2)}%`
+                                  : run.metadata.best_score.toFixed(4)
                                 : String(run.metadata.best_score)}
                             </span>
                           </span>

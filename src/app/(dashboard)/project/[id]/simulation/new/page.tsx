@@ -428,23 +428,42 @@ workload:
   const [configYaml, setConfigYaml] = useState("");
   const [seed, setSeed] = useState(0);
   const [optimization, setOptimization] = useState<{
-    objective: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost";
+    objective: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost" | "cpu_utilization" | "memory_utilization";
     max_iterations: number;
+    max_evaluations: number | null;
+    batch_target_util_low: number | null;
+    batch_target_util_high: number | null;
     step_size: number;
     evaluation_duration_ms: number;
     target_p95_latency_ms: number;
     control_interval_ms: number;
     min_hosts: number;
     max_hosts: number;
+    optimization_target_primary: "p95_latency" | "cpu_utilization" | "memory_utilization";
+    target_util_high: number;
+    target_util_low: number;
+    scale_down_cpu_util_max: number;
+    scale_down_mem_util_max: number;
+    scale_down_host_cpu_util_max: number;
   }>({
     objective: "p95_latency_ms",
     max_iterations: 10,
+    max_evaluations: null,
+    /** Batch only: optional utilization band (0–1). When both set and low < high, sent for cpu_utilization/memory_utilization; else omit = minimize utilization. */
+    batch_target_util_low: null as number | null,
+    batch_target_util_high: null as number | null,
     step_size: 1.0,
     evaluation_duration_ms: 5000,
     target_p95_latency_ms: 200.0,
     control_interval_ms: 1000,
     min_hosts: 1,
     max_hosts: 3,
+    optimization_target_primary: "p95_latency",
+    target_util_high: 0.7,
+    target_util_low: 0.4,
+    scale_down_cpu_util_max: 0,
+    scale_down_mem_util_max: 0,
+    scale_down_host_cpu_util_max: 0,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -614,6 +633,19 @@ workload:
         newErrors.config = "Max iterations must be at least 1";
       } else if (optimization.evaluation_duration_ms <= 0) {
         newErrors.config = "Evaluation duration must be greater than 0";
+      } else if (
+        (optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization") &&
+        (optimization.batch_target_util_low != null || optimization.batch_target_util_high != null)
+      ) {
+        const low = optimization.batch_target_util_low ?? 0;
+        const high = optimization.batch_target_util_high ?? 0;
+        if (optimization.batch_target_util_low == null || optimization.batch_target_util_high == null) {
+          newErrors.config = "Set both target utilization low and high, or clear both for minimize behavior";
+        } else if (low < 0 || high > 1) {
+          newErrors.config = "Target utilization band must be between 0 and 1";
+        } else if (low >= high) {
+          newErrors.config = "Target utilization low must be less than high";
+        }
       }
     }
 
@@ -624,6 +656,12 @@ workload:
         newErrors.config = "Min hosts must be at least 1";
       } else if (optimization.max_hosts < optimization.min_hosts) {
         newErrors.config = "Max hosts must be >= min hosts";
+      } else if (
+        (optimization.optimization_target_primary === "cpu_utilization" ||
+          optimization.optimization_target_primary === "memory_utilization") &&
+        optimization.target_util_low >= optimization.target_util_high
+      ) {
+        newErrors.config = "Scale-down utilization must be less than scale-up utilization";
       }
     }
 
@@ -644,9 +682,24 @@ workload:
       // Build optimization payload based on run mode
       let optimizationPayload: Record<string, unknown> | undefined;
       if (runMode === "batch_optimization") {
+        const isUtilObjective =
+          optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization";
+        const low = optimization.batch_target_util_low;
+        const high = optimization.batch_target_util_high;
+        const validBand =
+          isUtilObjective &&
+          low != null &&
+          high != null &&
+          low >= 0 &&
+          high <= 1 &&
+          low < high;
         optimizationPayload = {
           objective: optimization.objective,
           max_iterations: optimization.max_iterations,
+          ...(optimization.max_evaluations != null && optimization.max_evaluations > 0
+            ? { max_evaluations: optimization.max_evaluations }
+            : {}),
+          ...(validBand ? { target_util_low: low, target_util_high: high } : {}),
           step_size: optimization.step_size,
           evaluation_duration_ms: optimization.evaluation_duration_ms,
           online: false,
@@ -655,10 +708,16 @@ workload:
         optimizationPayload = {
           objective: optimization.objective,
           online: true,
+          optimization_target_primary: optimization.optimization_target_primary || "p95_latency",
           target_p95_latency_ms: optimization.target_p95_latency_ms,
           control_interval_ms: optimization.control_interval_ms,
           min_hosts: optimization.min_hosts,
           max_hosts: optimization.max_hosts,
+          target_util_high: optimization.target_util_high,
+          target_util_low: optimization.target_util_low,
+          scale_down_cpu_util_max: optimization.scale_down_cpu_util_max,
+          scale_down_mem_util_max: optimization.scale_down_mem_util_max,
+          scale_down_host_cpu_util_max: optimization.scale_down_host_cpu_util_max,
         };
       }
 
@@ -1047,6 +1106,8 @@ workload:
                         <option value="throughput_rps">Throughput (rps)</option>
                         <option value="error_rate">Error rate</option>
                         <option value="cost">Cost</option>
+                        <option value="cpu_utilization">CPU utilization</option>
+                        <option value="memory_utilization">Memory utilization</option>
                       </select>
                     </div>
                     <div>
@@ -1063,6 +1124,26 @@ workload:
                         }
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Max evaluations</label>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Optional"
+                        value={optimization.max_evaluations ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          setOptimization((prev) => ({
+                            ...prev,
+                            max_evaluations: v === "" ? null : Math.max(1, Number(v) || 1),
+                          }));
+                        }}
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/30"
+                      />
+                      <p className="text-xs text-white/40 mt-0.5">
+                        Cap total runs to avoid too many evaluations (e.g. 25). Leave empty for no cap.
+                      </p>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-white/70 mb-1">Step size</label>
@@ -1098,6 +1179,51 @@ workload:
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
                     </div>
+                    {(optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization") && (
+                      <>
+                        <div className="col-span-full text-xs text-white/50 mt-1">
+                          Target utilization band (optional): aim for utilization within this range instead of minimizing. Leave empty for minimize behavior.
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">Band low (0–1)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            placeholder="e.g. 0.4"
+                            value={optimization.batch_target_util_low ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              setOptimization((prev) => ({
+                                ...prev,
+                                batch_target_util_low: v === "" ? null : Math.min(1, Math.max(0, Number(v) || 0)),
+                              }));
+                            }}
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">Band high (0–1)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            placeholder="e.g. 0.7"
+                            value={optimization.batch_target_util_high ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              setOptimization((prev) => ({
+                                ...prev,
+                                batch_target_util_high: v === "" ? null : Math.min(1, Math.max(0, Number(v) || 0)),
+                              }));
+                            }}
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/30"
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -1112,62 +1238,158 @@ workload:
                     A controller loop reads live metrics and continuously adjusts the deployment. The
                     run stays active until manually stopped.
                   </p>
+
+                  <div>
+                    <label className="block text-xs font-medium text-white/70 mb-1">
+                      Primary optimization target
+                    </label>
+                    <select
+                      value={optimization.optimization_target_primary}
+                      onChange={(e) =>
+                        setOptimization((prev) => ({
+                          ...prev,
+                          optimization_target_primary: e.target
+                            .value as typeof optimization.optimization_target_primary,
+                        }))
+                      }
+                      className="w-full max-w-xs px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    >
+                      <option value="p95_latency">P95 latency</option>
+                      <option value="cpu_utilization">CPU utilization</option>
+                      <option value="memory_utilization">Memory utilization</option>
+                    </select>
+                  </div>
+
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-white/70 mb-1">Objective</label>
-                      <select
-                        value={optimization.objective}
-                        onChange={(e) =>
-                          setOptimization((prev) => ({
-                            ...prev,
-                            objective: e.target.value as typeof optimization.objective,
-                          }))
-                        }
-                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
-                      >
-                        <option value="p95_latency_ms">p95 latency (ms)</option>
-                        <option value="p99_latency_ms">p99 latency (ms)</option>
-                        <option value="mean_latency_ms">Mean latency (ms)</option>
-                        <option value="throughput_rps">Throughput (rps)</option>
-                        <option value="error_rate">Error rate</option>
-                        <option value="cost">Cost</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-white/70 mb-1">
-                        Target p95 latency (ms)
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        value={optimization.target_p95_latency_ms}
-                        onChange={(e) =>
-                          setOptimization((prev) => ({
-                            ...prev,
-                            target_p95_latency_ms: Number(e.target.value) || 1,
-                          }))
-                        }
-                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-white/70 mb-1">
-                        Control interval (ms)
-                      </label>
-                      <input
-                        type="number"
-                        min={100}
-                        step={100}
-                        value={optimization.control_interval_ms}
-                        onChange={(e) =>
-                          setOptimization((prev) => ({
-                            ...prev,
-                            control_interval_ms: Number(e.target.value) || 100,
-                          }))
-                        }
-                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
-                      />
-                    </div>
+                    {optimization.optimization_target_primary === "p95_latency" ? (
+                      <>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Target p95 latency (ms)
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={optimization.target_p95_latency_ms}
+                            onChange={(e) =>
+                              setOptimization((prev) => ({
+                                ...prev,
+                                target_p95_latency_ms: Number(e.target.value) || 1,
+                              }))
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Control interval (ms)
+                          </label>
+                          <input
+                            type="number"
+                            min={100}
+                            step={100}
+                            value={optimization.control_interval_ms}
+                            onChange={(e) =>
+                              setOptimization((prev) => ({
+                                ...prev,
+                                control_interval_ms: Number(e.target.value) || 100,
+                              }))
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Scale-up when utilization above (%)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={Math.round(optimization.target_util_high * 100)}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setOptimization((prev) => ({
+                                ...prev,
+                                target_util_high: Math.min(1, Math.max(0, Number.isFinite(v) ? v / 100 : 0.7)),
+                              }));
+                            }}
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                            title="Scale up when CPU/memory utilization exceeds this."
+                          />
+                          <p className="text-[10px] text-white/40 mt-0.5">
+                            Scale up when utilization exceeds this.
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Scale-down when utilization below (%)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={Math.round(optimization.target_util_low * 100)}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setOptimization((prev) => ({
+                                ...prev,
+                                target_util_low: Math.min(1, Math.max(0, Number.isFinite(v) ? v / 100 : 0.4)),
+                              }));
+                            }}
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                            title="Scale down when utilization is below this (and P95 still within target)."
+                          />
+                          <p className="text-[10px] text-white/40 mt-0.5">
+                            Scale down when below this; P95 guardrail still applies.
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            P95 guardrail (ms)
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={optimization.target_p95_latency_ms}
+                            onChange={(e) =>
+                              setOptimization((prev) => ({
+                                ...prev,
+                                target_p95_latency_ms: Number(e.target.value) || 1,
+                              }))
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                          <p className="text-[10px] text-white/40 mt-0.5">
+                            Scale-down blocked if P95 would exceed this.
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">
+                            Control interval (ms)
+                          </label>
+                          <input
+                            type="number"
+                            min={100}
+                            step={100}
+                            value={optimization.control_interval_ms}
+                            onChange={(e) =>
+                              setOptimization((prev) => ({
+                                ...prev,
+                                control_interval_ms: Number(e.target.value) || 100,
+                              }))
+                            }
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          />
+                        </div>
+                      </>
+                    )}
+
                     <div>
                       <label className="block text-xs font-medium text-white/70 mb-1">Min hosts</label>
                       <input
@@ -1197,6 +1419,76 @@ workload:
                         }
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
+                    </div>
+                  </div>
+
+                  {/* Scale-down rules (optional) */}
+                  <div className="border-t border-sky-500/20 pt-4">
+                    <h4 className="text-xs font-medium text-sky-200/90 mb-3">Scale-down rules</h4>
+                    <p className="text-[10px] text-white/40 mb-3">
+                      Optional. 0 = off. Allow scale-down or host scale-in only when utilization is below the given %.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Allow scale-down only when service CPU below (%)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={Math.round(optimization.scale_down_cpu_util_max * 100)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setOptimization((prev) => ({
+                              ...prev,
+                              scale_down_cpu_util_max: Math.min(1, Math.max(0, Number.isFinite(v) ? v / 100 : 0)),
+                            }));
+                          }}
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Allow scale-down only when service memory below (%)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={Math.round(optimization.scale_down_mem_util_max * 100)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setOptimization((prev) => ({
+                              ...prev,
+                              scale_down_mem_util_max: Math.min(1, Math.max(0, Number.isFinite(v) ? v / 100 : 0)),
+                            }));
+                          }}
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-white/70 mb-1">
+                          Allow host scale-in only when host CPU below (%)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={Math.round(optimization.scale_down_host_cpu_util_max * 100)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setOptimization((prev) => ({
+                              ...prev,
+                              scale_down_host_cpu_util_max: Math.min(1, Math.max(0, Number.isFinite(v) ? v / 100 : 0)),
+                            }));
+                          }}
+                          className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2562,6 +2854,22 @@ workload:
                       <dt className="text-xs text-white/50">Max iterations</dt>
                       <dd className="text-white">{optimization.max_iterations}</dd>
                     </div>
+                    {optimization.max_evaluations != null && optimization.max_evaluations > 0 && (
+                      <div>
+                        <dt className="text-xs text-white/50">Max evaluations</dt>
+                        <dd className="text-white">{optimization.max_evaluations}</dd>
+                      </div>
+                    )}
+                    {optimization.batch_target_util_low != null &&
+                      optimization.batch_target_util_high != null &&
+                      optimization.batch_target_util_low < optimization.batch_target_util_high && (
+                        <div>
+                          <dt className="text-xs text-white/50">Target util band</dt>
+                          <dd className="text-white">
+                            {(optimization.batch_target_util_low * 100).toFixed(0)}%–{(optimization.batch_target_util_high * 100).toFixed(0)}%
+                          </dd>
+                        </div>
+                      )}
                     <div>
                       <dt className="text-xs text-white/50">Step size</dt>
                       <dd className="text-white">{optimization.step_size}</dd>
@@ -2580,8 +2888,14 @@ workload:
                   <h3 className="text-sm font-semibold text-sky-300 mb-3">Online optimization</h3>
                   <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
                     <div>
-                      <dt className="text-xs text-white/50">Objective</dt>
-                      <dd className="text-white">{optimization.objective}</dd>
+                      <dt className="text-xs text-white/50">Primary target</dt>
+                      <dd className="text-white capitalize">
+                        {optimization.optimization_target_primary === "p95_latency"
+                          ? "P95 latency"
+                          : optimization.optimization_target_primary === "cpu_utilization"
+                          ? "CPU utilization"
+                          : "Memory utilization"}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-xs text-white/50">Target p95 latency</dt>
@@ -2597,7 +2911,38 @@ workload:
                         {optimization.min_hosts} – {optimization.max_hosts}
                       </dd>
                     </div>
+                    {(optimization.optimization_target_primary === "cpu_utilization" ||
+                      optimization.optimization_target_primary === "memory_utilization") && (
+                      <>
+                        <div>
+                          <dt className="text-xs text-white/50">Scale-up above</dt>
+                          <dd className="text-white">{Math.round(optimization.target_util_high * 100)}%</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-white/50">Scale-down below</dt>
+                          <dd className="text-white">{Math.round(optimization.target_util_low * 100)}%</dd>
+                        </div>
+                      </>
+                    )}
                   </dl>
+                  {(optimization.scale_down_cpu_util_max > 0 ||
+                    optimization.scale_down_mem_util_max > 0 ||
+                    optimization.scale_down_host_cpu_util_max > 0) && (
+                    <div className="mt-3 pt-3 border-t border-sky-500/20">
+                      <span className="text-xs text-white/50 block mb-1">Scale-down rules</span>
+                      <div className="text-xs text-white/80 space-y-0.5">
+                        {optimization.scale_down_cpu_util_max > 0 && (
+                          <div>Service CPU below {Math.round(optimization.scale_down_cpu_util_max * 100)}%</div>
+                        )}
+                        {optimization.scale_down_mem_util_max > 0 && (
+                          <div>Service memory below {Math.round(optimization.scale_down_mem_util_max * 100)}%</div>
+                        )}
+                        {optimization.scale_down_host_cpu_util_max > 0 && (
+                          <div>Host CPU below {Math.round(optimization.scale_down_host_cpu_util_max * 100)}%</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
