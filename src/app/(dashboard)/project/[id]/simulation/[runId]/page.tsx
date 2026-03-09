@@ -15,6 +15,11 @@ import { ArrowLeft, BarChart2, Play, RefreshCw, Square, Wifi, WifiOff } from "lu
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -24,7 +29,16 @@ import {
 } from "recharts";
 import { env } from "@/lib/env";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
-import { startSimulationRun, stopSimulationRun } from "@/lib/api-client/simulation";
+import {
+  patchRunConfiguration,
+  patchRunWorkload,
+  startSimulationRun,
+  stopSimulationRun,
+  type PatchRunConfigurationBody,
+  type PatchRunConfigurationService,
+  type PatchRunConfigurationWorkloadItem,
+  type PatchRunConfigurationPolicies,
+} from "@/lib/api-client/simulation";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +52,30 @@ interface OptimizationStepConfig {
   services?: ServiceConfig[];
   workload?: unknown[];
   hosts?: unknown[];
+}
+
+/** Editable config for Live config panel; matches PATCH shape. */
+interface LiveConfig {
+  services: PatchRunConfigurationService[];
+  workload: PatchRunConfigurationWorkloadItem[];
+  policies?: PatchRunConfigurationPolicies;
+}
+
+function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | null {
+  if (!cfg) return null;
+  const services: PatchRunConfigurationService[] = (cfg.services ?? []).map((s) => ({
+    id: s.id,
+    replicas: s.replicas,
+    cpu_cores: typeof (s as PatchRunConfigurationService).cpu_cores === "number" ? (s as PatchRunConfigurationService).cpu_cores : undefined,
+    memory_mb: typeof (s as PatchRunConfigurationService).memory_mb === "number" ? (s as PatchRunConfigurationService).memory_mb : undefined,
+  }));
+  const workload: PatchRunConfigurationWorkloadItem[] = Array.isArray(cfg.workload)
+    ? cfg.workload
+        .filter((w): w is PatchRunConfigurationWorkloadItem => typeof w === "object" && w !== null && "pattern_key" in w && "rate_rps" in w)
+        .map((w) => ({ pattern_key: w.pattern_key, rate_rps: Number(w.rate_rps) }))
+    : [];
+  if (services.length === 0 && workload.length === 0) return null;
+  return { services, workload };
 }
 
 interface OptimizationStep {
@@ -170,21 +208,61 @@ interface MetricsSummary {
   total_requests?: number;
   total_errors?: number;
   total_duration_ms?: number;
+  successful_requests?: number;
+  failed_requests?: number;
+  throughput_rps?: number;
+  latency_p50_ms?: number;
+  latency_p95_ms?: number;
+  latency_p99_ms?: number;
+  latency_mean_ms?: number;
 }
 
 /** Per-service metrics from metrics_snapshot or GET /runs/{id}/metrics */
 interface ServiceMetricSnapshot {
   service_name: string;
   request_count?: number;
+  error_count?: number;
   concurrent_requests?: number;
+  latency_p95_ms?: number;
+  cpu_utilization?: number;   // 0–1 or 0–100
+  memory_utilization?: number; // 0–1 or 0–100
+  active_replicas?: number;
   [key: string]: unknown;
 }
+
+/** Run-level + service_metrics from SSE metrics_snapshot.data.metrics */
+interface SnapshotMetrics {
+  total_requests?: number;
+  total_errors?: number;
+  total_duration_ms?: number;
+  failed_requests?: number;
+  successful_requests?: number;
+  throughput_rps?: number;
+  latency_p50_ms?: number;
+  latency_p95_ms?: number;
+  latency_p99_ms?: number;
+  latency_mean_ms?: number;
+  service_metrics?: ServiceMetricSnapshot[];
+}
+
+/** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
+export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
 
 interface MetricsResponse {
   run_id: string;
   summary?: MetricsSummary;
   timeseries?: MetricTimeseries[];
+  /** When set, chart uses this instead of building rows from timeseries */
+  timeseriesProcessed?: TimeseriesProcessedItem[];
   metrics?: { service_metrics?: ServiceMetricSnapshot[] };
+}
+
+/** Point from GET /runs/{id}/metrics/timeseries */
+interface TimeseriesPoint {
+  timestamp: string;
+  metric: string;
+  value: number;
+  labels?: { service?: string; [key: string]: string | undefined };
 }
 
 export interface SsePanelHandle {
@@ -404,43 +482,53 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
 // ── MetricsTimeseriesChart: renders one chart per metric from persisted data ──
 
 interface MetricsTimeseriesChartProps {
-  timeseries: MetricTimeseries[];
+  timeseries?: MetricTimeseries[];
+  /** When provided, chart uses precomputed rows (from worker); no row building on main thread */
+  timeseriesProcessed?: TimeseriesProcessedItem[];
 }
 
-function MetricsTimeseriesChart({ timeseries }: MetricsTimeseriesChartProps) {
-  if (!timeseries.length) return (
+function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: MetricsTimeseriesChartProps) {
+  const useProcessed = (timeseriesProcessed?.length ?? 0) > 0;
+  const items = useProcessed
+    ? timeseriesProcessed!
+    : timeseries.map((ts) => ({
+        metric: ts.metric,
+        rows: (() => {
+          const rowMap: Record<string, Record<string, number>> = {};
+          for (const p of ts.points) {
+            const key = p.time;
+            if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
+            rowMap[key][p.service_id ?? "global"] = p.value;
+          }
+          return Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
+        })(),
+      }));
+
+  if (!items.length) return (
     <p className="text-sm text-white/40 py-4 text-center">No timeseries data available.</p>
   );
 
   return (
     <div className="space-y-6">
-      {timeseries.map((ts) => {
-        // Build per-service rows. Group points by service_id (or "global").
-        const serviceSet = new Set(ts.points.map((p) => p.service_id ?? "global"));
-        const services = Array.from(serviceSet);
-
-        // Build recharts row array indexed by time string
-        const rowMap: Record<string, Record<string, number>> = {};
-        for (const p of ts.points) {
-          const key = p.time;
-          if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-          rowMap[key][p.service_id ?? "global"] = p.value;
-        }
-        const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
-
+      {items.map((item) => {
+        const rows = item.rows;
         if (!rows.length) return null;
+
+        const services = useProcessed
+          ? Array.from(new Set(rows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))))
+          : Array.from(new Set((timeseries!.find((ts) => ts.metric === item.metric)?.points ?? []).map((p) => p.service_id ?? "global")));
 
         const tMin = rows[0]._t as number;
         const tMax = rows[rows.length - 1]._t as number;
-        const allVals = ts.points.map((p) => p.value);
+        const allVals = rows.flatMap((r) => Object.entries(r).filter(([k]) => k !== "_t").map(([, v]) => v as number));
         const vMaxRaw = Math.max(...allVals, 0) * 1.2;
         const vMax = vMaxRaw > 0 ? vMaxRaw : 1;
         const xDomainMin = tMin < tMax ? tMin : tMax - 60_000;
         const xDomainMax = tMin < tMax ? tMax : tMax;
 
         return (
-          <div key={ts.metric}>
-            <p className="text-xs text-white/50 mb-2 font-mono">{ts.metric}</p>
+          <div key={item.metric}>
+            <p className="text-xs text-white/50 mb-2 font-mono">{item.metric}</p>
             <ResponsiveContainer width="100%" height={160}>
               <LineChart data={rows} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -810,6 +898,8 @@ export default function SimulationRunPage() {
   const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
+  // Live metrics from SSE metrics_snapshot (used while run is running)
+  const [liveMetricsData, setLiveMetricsData] = useState<MetricsResponse | null>(null);
   // Best-candidate topology (from same candidates API response)
   const [bestCandidate, setBestCandidate] = useState<{ best_candidate_id: string; best_candidate?: BestCandidateTopology } | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
@@ -819,9 +909,19 @@ export default function SimulationRunPage() {
   // Concurrent requests (gauge): per-instance ref, per-service state for "current load" display
   const concurrentByInstanceRef = useRef<Record<string, number>>({});
   const [concurrentRequestsByService, setConcurrentRequestsByService] = useState<Record<string, number>>({});
+  // Timeseries from GET .../metrics/timeseries API (for line chart over time)
+  const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
+  const [timeseriesApiMetric, setTimeseriesApiMetric] = useState<string>("request_latency_ms");
+  const [timeseriesApiLoading, setTimeseriesApiLoading] = useState(false);
+  const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
+  // Live config (online mode) — editable form state; synced from optimization_step
+  const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
+  const [configUpdateLoading, setConfigUpdateLoading] = useState(false);
+  const [configUpdateError, setConfigUpdateError] = useState<string | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
+  const timeseriesWorkerRef = useRef<Worker | null>(null);
 
   // ── Run info fetch ──────────────────────────────────────────────────────────
 
@@ -837,7 +937,11 @@ export default function SimulationRunPage() {
       setRunInfo(data.run);
       setRunError(null);
       if (data.run.metadata?.optimization_history?.length) {
-        setOptSteps(data.run.metadata.optimization_history);
+        const history = data.run.metadata.optimization_history as OptimizationStep[];
+        setOptSteps(history);
+        const last = history[history.length - 1];
+        const fromStep = configFromStep(last?.current_config);
+        if (fromStep) setLiveConfig(fromStep);
       }
       // scenario_yaml is a top-level sibling of "run" in the response
       if (data.scenario_yaml) {
@@ -859,9 +963,13 @@ export default function SimulationRunPage() {
     setRunInfo(run);
     setRunError(null);
     setRunLoading(false);
-    // Seed timeline from persisted optimization_history (present on load / reload)
+    // Seed timeline and live config from persisted optimization_history (present on load / reload)
     if (run.metadata?.optimization_history?.length) {
-      setOptSteps(run.metadata.optimization_history);
+      const history = run.metadata.optimization_history as OptimizationStep[];
+      setOptSteps(history);
+      const last = history[history.length - 1];
+      const fromStep = configFromStep(last?.current_config);
+      if (fromStep) setLiveConfig(fromStep);
     }
   }, []);
 
@@ -876,6 +984,8 @@ export default function SimulationRunPage() {
             const exists = prev.some((s) => s.iteration_index === step.iteration_index);
             return exists ? prev : [...prev, step];
           });
+          const fromStep = configFromStep(step.current_config);
+          if (fromStep) setLiveConfig(fromStep);
         }
       } catch { /* malformed — ignore */ }
     }
@@ -938,8 +1048,14 @@ export default function SimulationRunPage() {
 
     if (type === "metrics_snapshot" || type === "metrics") {
       try {
-        const parsed = JSON.parse(data) as { metrics?: { service_metrics?: ServiceMetricSnapshot[] } };
-        const list = parsed.metrics?.service_metrics;
+        const parsed = JSON.parse(data) as {
+          data?: { metrics?: SnapshotMetrics };
+          metrics?: SnapshotMetrics;
+        };
+        const metrics = parsed.data?.metrics ?? parsed.metrics;
+        if (!metrics || typeof metrics !== "object") return;
+
+        const list = metrics.service_metrics;
         if (Array.isArray(list) && list.length > 0) {
           const bySvc: Record<string, number> = {};
           for (const sm of list) {
@@ -953,9 +1069,32 @@ export default function SimulationRunPage() {
           }
           pushRequestCountFromServiceMetrics(list);
         }
+
+        const num = (v: unknown): number | undefined =>
+          typeof v === "number" && Number.isFinite(v) ? v : undefined;
+        const totalRequests = num(metrics.total_requests);
+        if (totalRequests == null && !list?.length) return;
+
+        const summary: MetricsSummary = {
+          total_requests: totalRequests ?? undefined,
+          total_errors: num(metrics.total_errors) ?? num(metrics.failed_requests),
+          total_duration_ms: num(metrics.total_duration_ms),
+          successful_requests: num(metrics.successful_requests),
+          failed_requests: num(metrics.failed_requests),
+          throughput_rps: num(metrics.throughput_rps),
+          latency_p50_ms: num(metrics.latency_p50_ms),
+          latency_p95_ms: num(metrics.latency_p95_ms),
+          latency_p99_ms: num(metrics.latency_p99_ms),
+          latency_mean_ms: num(metrics.latency_mean_ms),
+        };
+        setLiveMetricsData({
+          run_id: runId,
+          summary,
+          metrics: Array.isArray(list) && list.length > 0 ? { service_metrics: list } : undefined,
+        });
       } catch { /* malformed — ignore */ }
     }
-  }, []);
+  }, [runId]);
 
   // Fallback: re-fetch from API (used on stream close / legacy terminal events)
   const refreshStatus = useCallback(() => { fetchRunInfoRef.current(); }, []);
@@ -1007,11 +1146,143 @@ export default function SimulationRunPage() {
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as MetricsResponse;
-      setMetricsData(data);
-      if (data.metrics?.service_metrics?.length) {
+      const data = (await res.json()) as MetricsResponse & Record<string, unknown>;
+      // Normalize summary from multiple possible backend shapes so KPI cards always have values
+      const raw = data.summary ?? {};
+      const fromSummaryMetrics =
+        raw && typeof raw === "object" && "metrics" in raw && raw.metrics && typeof raw.metrics === "object"
+          ? (raw.metrics as Record<string, unknown>)
+          : {};
+      const fromSummaryData =
+        raw && typeof raw === "object" && "summary_data" in raw && raw.summary_data && typeof raw.summary_data === "object"
+          ? (raw.summary_data as Record<string, unknown>)
+          : {};
+      const fromTopLevel = data as Record<string, unknown>;
+      const num = (v: unknown): number | undefined =>
+        typeof v === "number" && Number.isFinite(v) ? v : undefined;
+      const summary: MetricsSummary = {
+        ...raw,
+        total_requests:
+          num(fromSummaryMetrics.total_requests) ??
+          num(raw.total_requests) ??
+          num(fromSummaryData.total_requests) ??
+          num(fromTopLevel.total_requests),
+        total_errors:
+          num(fromSummaryMetrics.total_errors) ??
+          num(fromSummaryMetrics.failed_requests) ??
+          num(raw.total_errors) ??
+          num(fromSummaryData.total_errors) ??
+          num(fromTopLevel.total_errors),
+        total_duration_ms:
+          num(fromSummaryMetrics.total_duration_ms) ??
+          num(raw.total_duration_ms) ??
+          num(fromSummaryData.total_duration_ms) ??
+          num(fromTopLevel.total_duration_ms),
+        successful_requests:
+          num(fromSummaryMetrics.successful_requests) ??
+          num(raw.successful_requests) ??
+          num(fromSummaryData.successful_requests) ??
+          num(fromTopLevel.successful_requests),
+        failed_requests:
+          num(fromSummaryMetrics.failed_requests) ??
+          num(raw.failed_requests) ??
+          num(fromSummaryData.failed_requests) ??
+          num(fromTopLevel.failed_requests),
+        throughput_rps:
+          num(fromSummaryMetrics.throughput_rps) ??
+          num(raw.throughput_rps) ??
+          num(fromSummaryData.throughput_rps) ??
+          num(fromSummaryData.avg_rps) ??
+          num(fromTopLevel.throughput_rps) ??
+          num(fromTopLevel.avg_rps),
+        latency_p50_ms:
+          num(fromSummaryMetrics.latency_p50_ms) ??
+          num(raw.latency_p50_ms) ??
+          num(fromSummaryData.latency_p50_ms) ??
+          num(fromTopLevel.latency_p50_ms),
+        latency_p95_ms:
+          num(fromSummaryMetrics.latency_p95_ms) ??
+          num(raw.latency_p95_ms) ??
+          num(fromSummaryData.latency_p95_ms) ??
+          num(fromSummaryData.p95_latency_ms) ??
+          num(fromTopLevel.latency_p95_ms) ??
+          num(fromTopLevel.p95_latency_ms),
+        latency_p99_ms:
+          num(fromSummaryMetrics.latency_p99_ms) ??
+          num(raw.latency_p99_ms) ??
+          num(fromSummaryData.latency_p99_ms) ??
+          num(fromSummaryData.p99_latency_ms) ??
+          num(fromTopLevel.latency_p99_ms) ??
+          num(fromTopLevel.p99_latency_ms),
+        latency_mean_ms:
+          num(fromSummaryMetrics.latency_mean_ms) ??
+          num(raw.latency_mean_ms) ??
+          num(fromSummaryData.latency_mean_ms) ??
+          num(fromSummaryData.avg_latency_ms) ??
+          num(fromTopLevel.latency_mean_ms) ??
+          num(fromTopLevel.avg_latency_ms),
+      };
+      const serviceMetrics =
+        data.metrics?.service_metrics ??
+        (Array.isArray(fromSummaryMetrics.service_metrics) ? fromSummaryMetrics.service_metrics : undefined);
+      const metricsPayload =
+        serviceMetrics != null ? { ...data.metrics, service_metrics: serviceMetrics } : data.metrics;
+
+      if (data.timeseries && data.timeseries.length > 0 && typeof Worker !== "undefined") {
+        let worker: Worker | null = timeseriesWorkerRef.current;
+        if (!worker) {
+          try {
+            worker = new Worker(
+              new URL("../../../../../../workers/timeseries-processor.worker.ts", import.meta.url),
+              { type: "module" }
+            );
+            timeseriesWorkerRef.current = worker;
+          } catch {
+            worker = null;
+          }
+        }
+        if (worker) {
+          try {
+            const timeseriesProcessed = await new Promise<TimeseriesProcessedItem[]>((resolve, reject) => {
+              const onMsg = (e: MessageEvent<{ type: string; timeseriesProcessed?: TimeseriesProcessedItem[]; error?: string }>) => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                if (e.data?.type === "metricsResult" && Array.isArray(e.data.timeseriesProcessed)) resolve(e.data.timeseriesProcessed);
+                else if (e.data?.type === "error") reject(new Error(e.data.error ?? "Worker error"));
+                else reject(new Error("Unknown worker response"));
+              };
+              const onErr = () => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                reject(new Error("Worker error"));
+              };
+              worker.addEventListener("message", onMsg);
+              worker.addEventListener("error", onErr);
+              worker.postMessage({ type: "processMetrics", data });
+            });
+            setMetricsData({ ...data, summary, metrics: metricsPayload, timeseries: undefined, timeseriesProcessed });
+            if (serviceMetrics?.length) {
+              const bySvc: Record<string, number> = {};
+              for (const sm of serviceMetrics) {
+                if (sm.service_name != null && typeof sm.concurrent_requests === "number") {
+                  bySvc[sm.service_name] = sm.concurrent_requests;
+                }
+              }
+              if (Object.keys(bySvc).length > 0) {
+                setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
+              }
+            }
+            return;
+          } catch {
+            // fall back to main-thread path below
+          }
+        }
+      }
+
+      setMetricsData({ ...data, summary, metrics: metricsPayload });
+      if (serviceMetrics?.length) {
         const bySvc: Record<string, number> = {};
-        for (const sm of data.metrics.service_metrics) {
+        for (const sm of serviceMetrics) {
           if (sm.service_name != null && typeof sm.concurrent_requests === "number") {
             bySvc[sm.service_name] = sm.concurrent_requests;
           }
@@ -1046,6 +1317,81 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
+  const TIMESERIES_WORKER_THRESHOLD = 500;
+
+  // Fetch timeseries from GET .../metrics/timeseries (metric, optional service, start_time, end_time)
+  const fetchTimeseriesApi = useCallback(async () => {
+    setTimeseriesApiLoading(true);
+    setTimeseriesApiError(null);
+    try {
+      const token = await getFirebaseIdToken();
+      const params = new URLSearchParams({ metric: timeseriesApiMetric });
+      const url = `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/metrics/timeseries?${params}`;
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { points?: TimeseriesPoint[] };
+      const points = data.points ?? [];
+
+      if (points.length > TIMESERIES_WORKER_THRESHOLD && typeof Worker !== "undefined") {
+        let worker: Worker | null = timeseriesWorkerRef.current;
+        if (!worker) {
+          try {
+            worker = new Worker(
+              new URL("../../../../../../workers/timeseries-processor.worker.ts", import.meta.url),
+              { type: "module" }
+            );
+            timeseriesWorkerRef.current = worker;
+          } catch {
+            worker = null;
+          }
+        }
+        if (worker) {
+          try {
+            const rows = await new Promise<ChartRow[]>((resolve, reject) => {
+              const onMsg = (e: MessageEvent<{ type: string; rows?: ChartRow[]; error?: string }>) => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                if (e.data?.type === "timeseriesResult" && Array.isArray(e.data.rows)) resolve(e.data.rows);
+                else if (e.data?.type === "error") reject(new Error(e.data.error ?? "Worker error"));
+                else reject(new Error("Unknown worker response"));
+              };
+              const onErr = () => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                reject(new Error("Worker error"));
+              };
+              worker.addEventListener("message", onMsg);
+              worker.addEventListener("error", onErr);
+              worker.postMessage({ type: "processTimeseriesPoints", points });
+            });
+            setTimeseriesApiRows(rows);
+            setTimeseriesApiLoading(false);
+            return;
+          } catch {
+            // fall back to main-thread row building below
+          }
+        }
+      }
+
+      const rowMap: Record<number, Record<string, number>> = {};
+      for (const p of points) {
+        const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
+        if (!rowMap[t]) rowMap[t] = { _t: t };
+        const service = p.labels?.service ?? "global";
+        rowMap[t][service] = p.value;
+      }
+      const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
+      setTimeseriesApiRows(rows);
+    } catch (e) {
+      setTimeseriesApiError((e as Error).message);
+      setTimeseriesApiRows([]);
+    } finally {
+      setTimeseriesApiLoading(false);
+    }
+  }, [runId, timeseriesApiMetric]);
+
   // Clear chart data and concurrent-requests state
   const clearChart = useCallback(() => {
     seriesBufferRef.current = {};
@@ -1054,6 +1400,16 @@ export default function SimulationRunPage() {
     concurrentByInstanceRef.current = {};
     setConcurrentRequestsByService({});
   }, []);
+
+  // Terminate timeseries worker on unmount or runId change to avoid leaks
+  useEffect(() => {
+    return () => {
+      if (timeseriesWorkerRef.current) {
+        timeseriesWorkerRef.current.terminate();
+        timeseriesWorkerRef.current = null;
+      }
+    };
+  }, [runId]);
 
   // ── On mount ────────────────────────────────────────────────────────────────
 
@@ -1124,12 +1480,74 @@ export default function SimulationRunPage() {
     }
   };
 
+  // ── Live config apply (online mode) ─────────────────────────────────────────
+
+  const applyServices = useCallback(async () => {
+    if (!liveConfig?.services?.length) return;
+    setConfigUpdateLoading(true);
+    setConfigUpdateError(null);
+    try {
+      await patchRunConfiguration(runId, { services: liveConfig.services });
+    } catch (e) {
+      setConfigUpdateError((e as Error).message);
+    } finally {
+      setConfigUpdateLoading(false);
+    }
+  }, [runId, liveConfig?.services]);
+
+  const applyWorkload = useCallback(async () => {
+    if (!liveConfig?.workload?.length) return;
+    setConfigUpdateLoading(true);
+    setConfigUpdateError(null);
+    try {
+      if (liveConfig.workload.length === 1) {
+        const { pattern_key, rate_rps } = liveConfig.workload[0];
+        if (rate_rps <= 0) {
+          setConfigUpdateError("rate_rps must be greater than 0");
+          return;
+        }
+        await patchRunWorkload(runId, { pattern_key, rate_rps });
+      } else {
+        const invalid = liveConfig.workload.find((w) => w.rate_rps <= 0);
+        if (invalid) {
+          setConfigUpdateError("All rate_rps must be greater than 0");
+          return;
+        }
+        await patchRunConfiguration(runId, { workload: liveConfig.workload });
+      }
+    } catch (e) {
+      setConfigUpdateError((e as Error).message);
+    } finally {
+      setConfigUpdateLoading(false);
+    }
+  }, [runId, liveConfig?.workload]);
+
+  const applyPolicies = useCallback(async () => {
+    if (!liveConfig) return;
+    const policies = liveConfig.policies ?? { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } };
+    if (!policies.autoscaling) return;
+    setConfigUpdateLoading(true);
+    setConfigUpdateError(null);
+    try {
+      await patchRunConfiguration(runId, { policies });
+    } catch (e) {
+      setConfigUpdateError((e as Error).message);
+    } finally {
+      setConfigUpdateLoading(false);
+    }
+  }, [runId, liveConfig]);
+
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   const status = runInfo?.status ?? "pending";
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+  const isOnlineMode =
+    status === "running" &&
+    (runInfo?.metadata?.mode === "online" || runInfo?.metadata?.mode === "online_optimization");
+  const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
+  const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
 
   // Auto-fetch persisted metrics + candidates (includes best-candidate) once the run is terminal
   useEffect(() => {
@@ -1137,6 +1555,23 @@ export default function SimulationRunPage() {
     if (isTerminal && candidates === null && !candidatesLoading) fetchCandidates();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTerminal]);
+
+  // Clear live metrics when run becomes terminal or runId changes (so UI uses persisted data / fresh run)
+  useEffect(() => {
+    if (isTerminal) setLiveMetricsData(null);
+  }, [isTerminal]);
+  useEffect(() => {
+    setLiveMetricsData(null);
+  }, [runId]);
+
+  // Clear live config when run leaves online mode or runId changes
+  useEffect(() => {
+    if (!isOnlineMode) setLiveConfig(null);
+  }, [isOnlineMode]);
+  useEffect(() => {
+    setLiveConfig(null);
+    setConfigUpdateError(null);
+  }, [runId]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -1211,7 +1646,7 @@ export default function SimulationRunPage() {
           </>
         )}
 
-        {status === "completed" && (
+        {isTerminal && (
           <Link
             href={`/project/${projectId}/cost/suggest?run_id=${runId}`}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
@@ -1308,7 +1743,10 @@ export default function SimulationRunPage() {
                       <dt className="text-white/40 mb-0.5">Best score</dt>
                       <dd className="text-white/80 font-mono">
                         {typeof runInfo.metadata.best_score === "number"
-                          ? runInfo.metadata.best_score.toFixed(4)
+                          ? (runInfo.metadata.objective === "cpu_utilization" ||
+                            runInfo.metadata.objective === "memory_utilization")
+                            ? `${(runInfo.metadata.best_score * 100).toFixed(2)}%`
+                            : runInfo.metadata.best_score.toFixed(4)
                           : String(runInfo.metadata.best_score)}
                       </dd>
                     </div>
@@ -1349,6 +1787,282 @@ export default function SimulationRunPage() {
           </>
         ) : null}
       </div>
+
+      {/* Live config — online mode only, realtime PATCH configuration / workload */}
+      {isOnlineMode && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+          <h2 className="text-sm font-semibold text-white">Live config</h2>
+          {configUpdateError && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {configUpdateError}
+            </p>
+          )}
+
+          {!liveConfig ? (
+            <p className="text-xs text-white/40 italic">
+              No configuration data yet. Configuration will appear after the first optimization step.
+            </p>
+          ) : (
+            <>
+              {/* Services */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
+                  <button
+                    type="button"
+                    onClick={applyServices}
+                    disabled={configUpdateLoading || !liveConfig.services.length}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {configUpdateLoading ? "Applying…" : "Apply services"}
+                  </button>
+                </div>
+                {liveConfig.services.length === 0 ? (
+                  <p className="text-xs text-white/30 italic">No services in config.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-border bg-white/5 text-white/40 text-left">
+                          <th className="px-3 py-2 font-medium">Service ID</th>
+                          <th className="px-3 py-2 font-medium">Replicas</th>
+                          <th className="px-3 py-2 font-medium">CPU cores</th>
+                          <th className="px-3 py-2 font-medium">Mem (MB)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liveConfig.services.map((s, i) => (
+                          <tr key={`${s.id}-${i}`} className="border-b border-border/50">
+                            <td className="px-3 py-2 text-white/80">{s.id}</td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={s.replicas ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
+                                  setLiveConfig((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          services: prev.services.map((svc, j) =>
+                                            j === i ? { ...svc, replicas: Number.isFinite(v) ? v : undefined } : svc
+                                          ),
+                                        }
+                                      : prev
+                                  );
+                                }}
+                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.1}
+                                value={s.cpu_cores ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                  setLiveConfig((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          services: prev.services.map((svc, j) =>
+                                            j === i ? { ...svc, cpu_cores: Number.isFinite(v) ? v : undefined } : svc
+                                          ),
+                                        }
+                                      : prev
+                                  );
+                                }}
+                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={s.memory_mb ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                  setLiveConfig((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          services: prev.services.map((svc, j) =>
+                                            j === i ? { ...svc, memory_mb: Number.isFinite(v) ? v : undefined } : svc
+                                          ),
+                                        }
+                                      : prev
+                                  );
+                                }}
+                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Workload */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Workload</h3>
+                  <button
+                    type="button"
+                    onClick={applyWorkload}
+                    disabled={configUpdateLoading || !liveConfig.workload.length}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {configUpdateLoading ? "Applying…" : "Apply workload"}
+                  </button>
+                </div>
+                {liveConfig.workload.length === 0 ? (
+                  <p className="text-xs text-white/30 italic">No workload patterns in config.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {liveConfig.workload.map((w, i) => (
+                      <div key={`${w.pattern_key}-${i}`} className="flex items-center gap-3 flex-wrap">
+                        <span className="text-xs font-mono text-white/60 w-32 truncate" title={w.pattern_key}>
+                          {w.pattern_key}
+                        </span>
+                        <input
+                          type="number"
+                          min={0.01}
+                          step={0.1}
+                          value={w.rate_rps}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setLiveConfig((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    workload: prev.workload.map((item, j) =>
+                                      j === i ? { ...item, rate_rps: Number.isFinite(v) ? v : 0 } : item
+                                    ),
+                                  }
+                                : prev
+                            );
+                          }}
+                          className="w-24 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                          placeholder="RPS"
+                        />
+                        <span className="text-xs text-white/40">RPS</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Policies */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Policies</h3>
+                  <button
+                    type="button"
+                    onClick={applyPolicies}
+                    disabled={configUpdateLoading}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {configUpdateLoading ? "Applying…" : "Apply policies"}
+                  </button>
+                </div>
+                {(() => {
+                  const autoscaling = liveConfig.policies?.autoscaling ?? {
+                    enabled: false,
+                    target_cpu_util: 70,
+                    scale_step: 1,
+                  };
+                  return (
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        <input
+                          type="checkbox"
+                          checked={autoscaling.enabled}
+                          onChange={(e) =>
+                            setLiveConfig((prev) => ({
+                              ...prev!,
+                              policies: {
+                                autoscaling: {
+                                  ...(prev?.policies?.autoscaling ?? {
+                                    enabled: false,
+                                    target_cpu_util: 70,
+                                    scale_step: 1,
+                                  }),
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            }))
+                          }
+                          className="rounded border-white/20"
+                        />
+                        Autoscaling enabled
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        Target CPU %
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={autoscaling.target_cpu_util ?? 70}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            setLiveConfig((prev) => ({
+                              ...prev!,
+                              policies: {
+                                autoscaling: {
+                                  ...(prev?.policies?.autoscaling ?? {
+                                    enabled: false,
+                                    target_cpu_util: 70,
+                                    scale_step: 1,
+                                  }),
+                                  target_cpu_util: Number.isFinite(v) ? v : 70,
+                                },
+                              },
+                            }));
+                          }}
+                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        Scale step
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={autoscaling.scale_step ?? 1}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            setLiveConfig((prev) => ({
+                              ...prev!,
+                              policies: {
+                                autoscaling: {
+                                  ...(prev?.policies?.autoscaling ?? {
+                                    enabled: false,
+                                    target_cpu_util: 70,
+                                    scale_step: 1,
+                                  }),
+                                  scale_step: Number.isFinite(v) && v >= 1 ? v : 1,
+                                },
+                              },
+                            }));
+                          }}
+                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                        />
+                      </label>
+                    </div>
+                  );
+                })()}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Scenario YAML viewer — data comes from the main run fetch */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">
@@ -1677,26 +2391,31 @@ export default function SimulationRunPage() {
         )}
       </div>
 
-      {/* Persisted metrics — shown once run is terminal */}
-      {isTerminal && (
+      {/* Metrics — live from stream when running, persisted when terminal */}
+      {showMetricsSection && (
         <div className="bg-card border border-border rounded-lg p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">
               Metrics
-              {metricsData?.summary?.total_requests != null && (
+              {status === "running" && liveMetricsData && (
+                <span className="ml-2 text-xs font-normal text-emerald-400">Live</span>
+              )}
+              {displayMetrics?.summary?.total_requests != null && (
                 <span className="ml-2 text-xs font-normal text-white/40">
-                  {metricsData.summary.total_requests.toLocaleString()} requests
+                  {displayMetrics.summary.total_requests.toLocaleString()} requests
                 </span>
               )}
             </h2>
-            <button
-              onClick={fetchMetrics}
-              disabled={metricsLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
-              {metricsData === null ? "Load metrics" : "Refresh"}
-            </button>
+            {isTerminal && (
+              <button
+                onClick={fetchMetrics}
+                disabled={metricsLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
+                {metricsData === null ? "Load metrics" : "Refresh"}
+              </button>
+            )}
           </div>
 
           {metricsError && (
@@ -1705,46 +2424,293 @@ export default function SimulationRunPage() {
             </p>
           )}
 
-          {metricsLoading && (
+          {isTerminal && metricsLoading && (
             <div className="flex items-center gap-2 text-xs text-white/50 py-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading metrics…
             </div>
           )}
 
-          {metricsData && !metricsLoading && (
+          {displayMetrics && !(isTerminal && metricsLoading) && (
             <>
-              {/* Summary stats */}
-              {metricsData.summary && (
-                <div className="grid grid-cols-3 gap-3">
+              {/* Summary stats / KPI cards */}
+              {displayMetrics.summary && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Total requests</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.total_requests?.toLocaleString() ?? "—"}
+                      {displayMetrics.summary.total_requests?.toLocaleString() ?? "—"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Total errors</p>
-                    <p className={`text-lg font-mono font-semibold ${(metricsData.summary.total_errors ?? 0) > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                      {metricsData.summary.total_errors?.toLocaleString() ?? "0"}
+                    <p className={`text-lg font-mono font-semibold ${(displayMetrics.summary.total_errors ?? 0) > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      {displayMetrics.summary.total_errors?.toLocaleString() ?? "0"}
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
                     <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Duration</p>
                     <p className="text-lg font-mono font-semibold text-white">
-                      {metricsData.summary.total_duration_ms != null
-                        ? `${(metricsData.summary.total_duration_ms / 1000).toFixed(1)}s`
+                      {displayMetrics.summary.total_duration_ms != null
+                        ? `${(displayMetrics.summary.total_duration_ms / 1000).toFixed(1)}s`
                         : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Successful requests</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.successful_requests?.toLocaleString() ?? "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Failed requests</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.failed_requests?.toLocaleString() ?? "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Throughput (RPS)</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.throughput_rps != null ? displayMetrics.summary.throughput_rps.toFixed(1) : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency P50 (ms)</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.latency_p50_ms != null ? displayMetrics.summary.latency_p50_ms.toFixed(0) : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency P95 (ms)</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.latency_p95_ms != null ? displayMetrics.summary.latency_p95_ms.toFixed(0) : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency P99 (ms)</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.latency_p99_ms != null ? displayMetrics.summary.latency_p99_ms.toFixed(0) : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-black/20 p-3 text-center">
+                    <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Latency mean (ms)</p>
+                    <p className="text-lg font-mono font-semibold text-white">
+                      {displayMetrics.summary.latency_mean_ms != null ? displayMetrics.summary.latency_mean_ms.toFixed(0) : "—"}
                     </p>
                   </div>
                 </div>
               )}
 
+              {/* Error rate / Success vs failure */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const success = s.successful_requests ?? (s.total_requests != null && s.total_errors != null ? s.total_requests - s.total_errors : null);
+                const failed = s.failed_requests ?? s.total_errors ?? null;
+                const total = s.total_requests ?? (success != null && failed != null ? success + failed : null);
+                const errorRatePct = total != null && total > 0 && failed != null ? (failed / total) * 100 : null;
+                const hasDonut = (success != null && success > 0) || (failed != null && failed > 0);
+                if (errorRatePct == null && !hasDonut) return null;
+                const donutData = [
+                  ...(success != null && success > 0 ? [{ name: "Success", value: success, color: "#34d399" }] : []),
+                  ...(failed != null && failed > 0 ? [{ name: "Failed", value: failed, color: "#f87171" }] : []),
+                ];
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Success vs failure</h3>
+                    <div className="flex flex-wrap items-center gap-4">
+                      {errorRatePct != null && (
+                        <div className="rounded-lg border border-border bg-black/20 p-3 text-center min-w-[100px]">
+                          <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Error rate</p>
+                          <p className={`text-lg font-mono font-semibold ${errorRatePct > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                            {errorRatePct.toFixed(1)}%
+                          </p>
+                        </div>
+                      )}
+                      {donutData.length > 0 && (
+                        <div className="rounded-lg border border-border bg-black/20 p-2 flex items-center gap-2">
+                          <ResponsiveContainer width={80} height={80}>
+                            <PieChart>
+                              <Pie
+                                data={donutData}
+                                dataKey="value"
+                                nameKey="name"
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={24}
+                                outerRadius={36}
+                                paddingAngle={0}
+                                stroke="none"
+                              >
+                                {donutData.map((entry, i) => (
+                                  <Cell key={entry.name} fill={entry.color} />
+                                ))}
+                              </Pie>
+                              <Tooltip
+                                contentStyle={{ backgroundColor: "rgb(15 23 42)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8 }}
+                                formatter={(v, name) => [typeof v === "number" ? v.toLocaleString() : String(v ?? ""), String(name ?? "")]}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="text-xs text-white/70">
+                            {success != null && <span className="text-emerald-400">{success.toLocaleString()} success</span>}
+                            {success != null && failed != null && failed > 0 && " · "}
+                            {failed != null && failed > 0 && <span className="text-red-400">{failed.toLocaleString()} failed</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Per-service comparison table */}
+              {displayMetrics.metrics?.service_metrics && displayMetrics.metrics.service_metrics.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Per-service metrics</h3>
+                  <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-white/50">
+                          <th className="px-3 py-2 font-medium">Service</th>
+                          <th className="px-3 py-2 font-medium text-right">Requests</th>
+                          <th className="px-3 py-2 font-medium text-right">Errors</th>
+                          <th className="px-3 py-2 font-medium text-right">Latency P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">CPU %</th>
+                          <th className="px-3 py-2 font-medium text-right">Memory %</th>
+                          <th className="px-3 py-2 font-medium text-right">Concurrent</th>
+                          <th className="px-3 py-2 font-medium text-right">Replicas</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayMetrics.metrics.service_metrics.map((sm) => {
+                          const cpu = sm.cpu_utilization;
+                          const mem = sm.memory_utilization;
+                          const cpuVal = typeof cpu === "number" ? (cpu <= 1 ? (cpu * 100).toFixed(1) : cpu.toFixed(1)) : "—";
+                          const memVal = typeof mem === "number" ? (mem <= 1 ? (mem * 100).toFixed(1) : mem.toFixed(1)) : "—";
+                          return (
+                            <tr key={sm.service_name} className="border-b border-border/50 last:border-0">
+                              <td className="px-3 py-2 text-white font-mono truncate max-w-[160px]" title={sm.service_name}>{sm.service_name}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.request_count != null ? sm.request_count.toLocaleString() : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.error_count != null ? sm.error_count.toLocaleString() : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.latency_p95_ms != null ? sm.latency_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{cpuVal}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{memVal}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.concurrent_requests != null ? sm.concurrent_requests : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.active_replicas != null ? sm.active_replicas : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Latency distribution (run-level) */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const barData = [
+                  s.latency_p50_ms != null && { name: "P50", value: s.latency_p50_ms },
+                  s.latency_p95_ms != null && { name: "P95", value: s.latency_p95_ms },
+                  s.latency_p99_ms != null && { name: "P99", value: s.latency_p99_ms },
+                  s.latency_mean_ms != null && { name: "Mean", value: s.latency_mean_ms },
+                ].filter((x): x is { name: string; value: number } => Boolean(x));
+                if (barData.length === 0) return null;
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Latency distribution (ms)</h3>
+                    <div className="rounded-lg border border-border bg-black/20 p-3">
+                      <ResponsiveContainer width="100%" height={200}>
+                        <BarChart data={barData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                          <XAxis dataKey="name" stroke="rgba(255,255,255,0.5)" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 11 }} />
+                          <YAxis stroke="rgba(255,255,255,0.5)" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 11 }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: "rgb(15 23 42)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8 }}
+                            labelStyle={{ color: "rgba(255,255,255,0.8)" }}
+                            formatter={(value) => [typeof value === "number" ? value.toFixed(0) : "—", "ms"]}
+                          />
+                          <Bar dataKey="value" fill="#38bdf8" name="Latency (ms)" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Resource utilization (CPU / Memory gauges per service) */}
+              {displayMetrics.metrics?.service_metrics && (() => {
+                const withUtil = displayMetrics.metrics.service_metrics.filter(
+                  (sm) => typeof sm.cpu_utilization === "number" || typeof sm.memory_utilization === "number"
+                );
+                if (withUtil.length === 0) return null;
+                const toPct = (v: number) => (v <= 1 ? v * 100 : v);
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Resource utilization</h3>
+                    <div className="flex flex-wrap gap-4">
+                      {withUtil.map((sm) => {
+                        const cpuPct = typeof sm.cpu_utilization === "number" ? toPct(sm.cpu_utilization) : null;
+                        const memPct = typeof sm.memory_utilization === "number" ? toPct(sm.memory_utilization) : null;
+                        return (
+                          <div
+                            key={sm.service_name}
+                            className="rounded-lg border border-border bg-black/20 p-3 flex items-center gap-4 min-w-[140px]"
+                          >
+                            <span className="text-xs text-white/70 truncate max-w-[100px]" title={sm.service_name}>{sm.service_name}</span>
+                            <div className="flex gap-3">
+                              {cpuPct != null && (
+                                <div className="flex flex-col items-center">
+                                  <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
+                                    <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
+                                    <circle
+                                      cx="18"
+                                      cy="18"
+                                      r="14"
+                                      fill="none"
+                                      stroke="#38bdf8"
+                                      strokeWidth="4"
+                                      strokeDasharray={`${cpuPct * 0.879} 88`}
+                                      strokeLinecap="round"
+                                    />
+                                  </svg>
+                                  <span className="text-[10px] text-white/50 mt-0.5">CPU</span>
+                                  <span className="text-xs font-mono text-white">{cpuPct.toFixed(0)}%</span>
+                                </div>
+                              )}
+                              {memPct != null && (
+                                <div className="flex flex-col items-center">
+                                  <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
+                                    <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
+                                    <circle
+                                      cx="18"
+                                      cy="18"
+                                      r="14"
+                                      fill="none"
+                                      stroke="#34d399"
+                                      strokeWidth="4"
+                                      strokeDasharray={`${memPct * 0.879} 88`}
+                                      strokeLinecap="round"
+                                    />
+                                  </svg>
+                                  <span className="text-[10px] text-white/50 mt-0.5">Mem</span>
+                                  <span className="text-xs font-mono text-white">{memPct.toFixed(0)}%</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Concurrent requests from GET response (snapshot) */}
-              {metricsData.metrics?.service_metrics && metricsData.metrics.service_metrics.some((sm) => typeof sm.concurrent_requests === "number") && (
+              {displayMetrics.metrics?.service_metrics && displayMetrics.metrics.service_metrics.some((sm) => typeof sm.concurrent_requests === "number") && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Concurrent requests (at snapshot)</h3>
                   <div className="flex flex-wrap gap-3">
-                    {metricsData.metrics.service_metrics.map((sm) =>
+                    {displayMetrics.metrics.service_metrics.map((sm) =>
                       typeof sm.concurrent_requests === "number" ? (
                         <div
                           key={sm.service_name}
@@ -1759,12 +2725,88 @@ export default function SimulationRunPage() {
                 </div>
               )}
 
-              {/* Timeseries charts */}
-              {(metricsData.timeseries?.length ?? 0) > 0 ? (
-                <MetricsTimeseriesChart timeseries={metricsData.timeseries!} />
+              {/* Timeseries charts (from persisted metrics response) */}
+              {((displayMetrics.timeseriesProcessed?.length ?? 0) > 0 || (displayMetrics.timeseries?.length ?? 0) > 0) ? (
+                <MetricsTimeseriesChart
+                  timeseries={displayMetrics.timeseries}
+                  timeseriesProcessed={displayMetrics.timeseriesProcessed}
+                />
               ) : (
                 <p className="text-xs text-white/30 italic">No timeseries data available.</p>
               )}
+
+              {/* Time-series from GET .../metrics/timeseries API */}
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Metrics over time (API)</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={timeseriesApiMetric}
+                    onChange={(e) => setTimeseriesApiMetric(e.target.value)}
+                    className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
+                  >
+                    <option value="request_latency_ms">Request latency (ms)</option>
+                    <option value="request_count">Request count</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={fetchTimeseriesApi}
+                    disabled={timeseriesApiLoading}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 disabled:opacity-50 text-xs"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${timeseriesApiLoading ? "animate-spin" : ""}`} />
+                    {timeseriesApiRows.length ? "Refresh" : "Load timeseries"}
+                  </button>
+                </div>
+                {timeseriesApiError && (
+                  <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">{timeseriesApiError}</p>
+                )}
+                {timeseriesApiRows.length > 0 && (() => {
+                  const services = Array.from(new Set(timeseriesApiRows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))));
+                  const tMin = timeseriesApiRows[0]?._t as number | undefined;
+                  const tMax = timeseriesApiRows[timeseriesApiRows.length - 1]?._t as number | undefined;
+                  const allVals = timeseriesApiRows.flatMap((r) => services.map((s) => r[s]).filter((v): v is number => typeof v === "number"));
+                  const vMax = Math.max(...allVals, 0) * 1.2 || 1;
+                  return (
+                    <div className="rounded-lg border border-border bg-black/20 p-3">
+                      <ResponsiveContainer width="100%" height={220}>
+                        <LineChart
+                          data={timeseriesApiRows}
+                          margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                          <XAxis
+                            dataKey="_t"
+                            type="number"
+                            domain={tMin != null && tMax != null ? [tMin, tMax] : undefined}
+                            tickFormatter={(v: number) => new Date(v).toISOString().substring(11, 19)}
+                            tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
+                            scale="time"
+                            tickCount={6}
+                          />
+                          <YAxis domain={[0, vMax]} tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }} width={45} tickCount={5} />
+                          <Tooltip
+                            contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)" }}
+                            labelFormatter={(label) => typeof label === "number" ? new Date(label).toISOString() : String(label ?? "")}
+                            formatter={(v, name) => [typeof v === "number" ? v.toFixed(2) : String(v ?? ""), String(name ?? "")]}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          {services.map((svc, i) => (
+                            <Line
+                              key={svc}
+                              dataKey={svc}
+                              dot={false}
+                              stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                              strokeWidth={1.5}
+                              isAnimationActive={false}
+                              connectNulls
+                            />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  );
+                })()}
+              </div>
             </>
           )}
         </div>
