@@ -11,8 +11,6 @@
 !.yarn/versions
 
 
-package-lock.json
-
 # testing
 /coverage
 
