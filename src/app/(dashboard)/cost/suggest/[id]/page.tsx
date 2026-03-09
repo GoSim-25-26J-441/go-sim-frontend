@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchMetricsAnalysisById } from "@/app/api/asm/routes";
-import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft } from "lucide-react";
+import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -61,11 +61,14 @@ function getWorkloadPerformanceColor(distance: number, target: number) {
   return "text-red-500";
 }
 
-export default function ViewMetricsAnalysisPage() {
-  const params = useParams();
-  const id = params.id as string;
+type ViewMetricsAnalysisPageProps = {
+  id: string;
+  projectId?: string;
+};
 
+export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysisPageProps) {
   const { user } = useAuth();
+  const router = useRouter();
 
   const [data, setData] = useState<StoredRequest | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,11 +102,14 @@ export default function ViewMetricsAnalysisPage() {
     );
   }
 
+  const costBaseHref = projectId ? `/project/${projectId}/cost` : "/cost";
+  const costRunHref = projectId ? `/project/${projectId}/cost/${id}` : `/cost/${id}`;
+
   if (error || !data) {
     return (
       <div className="p-6 max-w-7xl mx-auto">
         <Link
-          href="/cost"
+          href={costBaseHref}
           className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100 mb-6"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -127,12 +133,12 @@ export default function ViewMetricsAnalysisPage() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="max-w-7xl mx-auto">
+      <div className="p-6 space-y-4">
         {/* Header */}
-        <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
+        {/* <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
           <div className="flex items-center gap-4">
             <Link
-              href="/cost"
+              href={costBaseHref}
               className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -140,11 +146,39 @@ export default function ViewMetricsAnalysisPage() {
             <h1 className="text-3xl font-bold">Metrices Analysis</h1>
           </div>
           <Link
-            href={`/cost/${id}`}
+            href={costRunHref}
             className="rounded-xl border border-border px-4 py-2 font-medium hover:bg-surface transition-colors inline-flex items-center gap-2"
           >
             View Cost Analysis
           </Link>
+        </div> */}
+        <div
+          className=" flex items-center justify-between"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+        >
+          <div className='px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap'>
+            <button
+              onClick={() => router.back()}
+              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+              aria-label="Go back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+
+            <div>
+              <h1 className="text-md font-bold text-white flex items-center gap-2">
+                Metrics Analysis
+              </h1>
+            </div>
+          </div>
+          <div>
+            <Link
+              href={costRunHref}
+              className="inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            >
+              View Cost Analysis
+            </Link>
+          </div>
         </div>
 
         {/* Design Requirements */}
@@ -264,22 +298,24 @@ export default function ViewMetricsAnalysisPage() {
                       {best.candidate.sim_workload?.concurrent_users ?? 0} users
                     </p>
                   </div>
-                  <div>
-                    <p className="text-sm opacity-60">Shortfall</p>
-                    <p
-                      className={`text-lg font-semibold ${getWorkloadPerformanceColor(
-                        best.workload_distance,
-                        targetUsers
-                      )}`}
-                    >
-                      {best.workload_distance} users
-                    </p>
-                    {targetUsers > 0 && (
-                      <p className="text-xs opacity-50 mt-1">
-                        ({((best.workload_distance / targetUsers) * 100).toFixed(1)}% of target)
-                      </p>
-                    )}
-                  </div>
+                  {(() => {
+                    const achieved = best.candidate.sim_workload?.concurrent_users ?? 0;
+                    const diff = achieved - targetUsers;
+                    const isSurplus = diff >= 0;
+                    return (
+                      <div>
+                        <p className="text-sm opacity-60">{isSurplus ? "Surplus" : "Shortfall"}</p>
+                        <p className={`text-lg font-semibold ${isSurplus ? "text-green-500" : "text-red-500"}`}>
+                          {isSurplus ? "+" : ""}{diff} users
+                        </p>
+                        {targetUsers > 0 && (
+                          <p className="text-xs opacity-50 mt-1">
+                            ({((Math.abs(diff) / targetUsers) * 100).toFixed(1)}% of target)
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm opacity-60">Source</p>
                     <p className="text-sm font-medium opacity-80">{best.candidate.source ?? "—"}</p>
@@ -314,9 +350,6 @@ export default function ViewMetricsAnalysisPage() {
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
                     Utilization
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
-                    Performance
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
                     Shortfall
@@ -383,24 +416,23 @@ export default function ViewMetricsAnalysisPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="opacity-80 font-medium">
-                        {score.candidate.sim_workload?.concurrent_users ?? 0} users
-                      </p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p
-                        className={`font-medium ${getWorkloadPerformanceColor(
-                          score.workload_distance,
-                          targetUsers
-                        )}`}
-                      >
-                        {score.workload_distance} users
-                      </p>
-                      {targetUsers > 0 && (
-                        <p className="text-xs opacity-50">
-                          {((score.workload_distance / targetUsers) * 100).toFixed(1)}% of target
-                        </p>
-                      )}
+                      {(() => {
+                        const achieved = score.candidate.sim_workload?.concurrent_users ?? 0;
+                        const diff = achieved - targetUsers;
+                        const isSurplus = diff >= 0;
+                        return (
+                          <>
+                            <p className={`font-medium ${isSurplus ? "text-green-500" : "text-red-500"}`}>
+                              {isSurplus ? "+" : ""}{diff} users
+                            </p>
+                            {targetUsers > 0 && (
+                              <p className="text-xs opacity-50">
+                                {((Math.abs(diff) / targetUsers) * 100).toFixed(1)}% of target
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -426,14 +458,21 @@ export default function ViewMetricsAnalysisPage() {
                         {index + 1}. {score.candidate.spec?.label ?? score.candidate.id} (
                         {score.candidate.id})
                       </h4>
-                      <span
-                        className={`px-2 py-1 text-xs rounded-full border ${score.passed_all_required
-                          ? "bg-card text-green-400 border-border"
-                          : "bg-card text-yellow-400 border-border"
-                          }`}
-                      >
-                        Shortfall: {score.workload_distance} users
-                      </span>
+                      {(() => {
+                        const achieved = score.candidate.sim_workload?.concurrent_users ?? 0;
+                        const diff = achieved - targetUsers;
+                        const isSurplus = diff >= 0;
+                        return (
+                          <span
+                            className={`px-2 py-1 text-xs rounded-full border ${isSurplus
+                              ? "bg-card text-green-400 border-border"
+                              : "bg-card text-red-400 border-border"
+                              }`}
+                          >
+                            {isSurplus ? "Surplus" : "Shortfall"}: {isSurplus ? "+" : ""}{diff} users
+                          </span>
+                        );
+                      })()}
                     </div>
                     <ul className="space-y-2">
                       {(score.suggestions ?? []).map((s, sIndex) => (
@@ -452,4 +491,10 @@ export default function ViewMetricsAnalysisPage() {
       </div>
     </div>
   );
+}
+
+export default function ViewMetricsAnalysisPage() {
+  const params = useParams();
+  const id = params.id as string;
+  return <ViewMetricsAnalysisContent id={id} />;
 }

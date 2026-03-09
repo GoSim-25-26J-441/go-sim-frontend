@@ -3,7 +3,15 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2, Play, Activity, CheckCircle2, XCircle, AlertCircle, ArrowLeft } from "lucide-react";
+import {
+  Loader2,
+  Play,
+  Activity,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  ArrowLeft,
+} from "lucide-react";
 import { authenticatedFetch } from "@/lib/api-client/http";
 import { env } from "@/lib/env";
 
@@ -45,9 +53,19 @@ const MODE_LABELS: Record<string, string> = {
   online_optimization: "Online",
 };
 
-type SimulationStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "stopping";
+type SimulationStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "stopped"
+  | "stopping";
 
-const statusConfig: Record<SimulationStatus, { label: string; icon: React.ReactNode; color: string; bgColor: string }> = {
+const statusConfig: Record<
+  SimulationStatus,
+  { label: string; icon: React.ReactNode; color: string; bgColor: string }
+> = {
   pending: {
     label: "Pending",
     icon: <Loader2 className="w-4 h-4 animate-spin" />,
@@ -120,7 +138,9 @@ export default function ProjectSimulationPage() {
         );
         if (!res.ok) {
           const raw = await res.text();
-          throw new Error(raw || `Failed to load simulation runs (HTTP ${res.status})`);
+          throw new Error(
+            raw || `Failed to load simulation runs (HTTP ${res.status})`,
+          );
         }
         const data = await res.json();
         setRawResponse(data);
@@ -133,18 +153,22 @@ export default function ProjectSimulationPage() {
         const rawList: unknown[] = Array.isArray(data)
           ? data
           : Array.isArray(data.runs)
-          ? data.runs
-          : data.run
-          ? [data.run]
-          : [];
+            ? data.runs
+            : data.run
+              ? [data.run]
+              : [];
 
         const list: BackendRunSummary[] = rawList.map((item) =>
-          typeof item === "string" ? { run_id: item } : (item as BackendRunSummary)
+          typeof item === "string"
+            ? { run_id: item }
+            : (item as BackendRunSummary),
         );
         setRuns(list);
       } catch (e) {
         console.error("Failed to load simulation runs:", e);
-        setError(e instanceof Error ? e.message : "Failed to load simulation runs");
+        setError(
+          e instanceof Error ? e.message : "Failed to load simulation runs",
+        );
       } finally {
         setLoading(false);
       }
@@ -171,26 +195,26 @@ export default function ProjectSimulationPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div
+        className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+      >
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push(`/project/${projectId}/summary`)}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
           >
-            <ArrowLeft className="w-5 h-5 text-white" />
+            <ArrowLeft className="w-4 h-4" />
           </button>
-          <div>
-            <h1 className="text-2xl font-bold text-white">Simulation runs</h1>
-            <p className="text-sm text-white/60 mt-1">
-              Project <span className="font-mono text-xs">{projectId}</span>
-            </p>
-          </div>
+          <h1 className="text-md font-bold text-white flex items-center gap-2">
+            Simulation runs
+          </h1>
         </div>
         <Link
           href={`/project/${projectId}/simulation/new`}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition-colors"
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
         >
-          <Play className="w-4 h-4" />
+          <Play className="w-3 h-3" />
           New simulation
         </Link>
       </div>
@@ -218,12 +242,13 @@ export default function ProjectSimulationPage() {
         </div>
       )}
 
-
       <div className="space-y-3">
         {runs.length === 0 && !error ? (
           <div className="bg-card rounded-lg p-6 border border-border text-center space-y-4">
             <div>
-              <p className="text-white/70 mb-1">No simulation runs for this project yet.</p>
+              <p className="text-white/70 mb-1">
+                No simulation runs for this project yet.
+              </p>
               <p className="text-white/50 text-sm">
                 Start a new simulation to see it appear here.
               </p>
@@ -242,13 +267,17 @@ export default function ProjectSimulationPage() {
           <ul className="space-y-3">
             {runs.map((run) => {
               const label = getRunLabel(run);
-              const rawStatus = typeof run.status === "string"
-                ? run.status.toLowerCase().replace(/^run_status_/, "")
-                : "pending";
-              const statusKey = (rawStatus in statusConfig ? rawStatus : "pending") as SimulationStatus;
+              const rawStatus =
+                typeof run.status === "string"
+                  ? run.status.toLowerCase().replace(/^run_status_/, "")
+                  : "pending";
+              const statusKey = (
+                rawStatus in statusConfig ? rawStatus : "pending"
+              ) as SimulationStatus;
               const status = statusConfig[statusKey];
               const mode = run.metadata?.mode;
-              const modeLabel = typeof mode === "string" ? (MODE_LABELS[mode] ?? mode) : null;
+              const modeLabel =
+                typeof mode === "string" ? (MODE_LABELS[mode] ?? mode) : null;
               const isRunning = statusKey === "running";
               return (
                 <li
@@ -258,7 +287,9 @@ export default function ProjectSimulationPage() {
                   <div className="min-w-0 flex-1 space-y-1">
                     {/* Name + mode badge */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-medium text-white truncate">{label}</p>
+                      <p className="text-sm font-medium text-white truncate">
+                        {label}
+                      </p>
                       {modeLabel && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/60">
                           {modeLabel}
@@ -282,30 +313,41 @@ export default function ProjectSimulationPage() {
                     <p className="font-mono text-xs text-white/30 truncate">
                       {run.run_id}
                       {run.engine_run_id && (
-                        <span className="ml-2 text-white/20">· engine: {run.engine_run_id}</span>
+                        <span className="ml-2 text-white/20">
+                          · engine: {run.engine_run_id}
+                        </span>
                       )}
                     </p>
 
                     {/* Timestamps */}
                     <div className="flex items-center gap-3 text-[11px] text-white/30">
                       {run.created_at && (
-                        <span>Created {new Date(run.created_at).toLocaleString()}</span>
+                        <span>
+                          Created {new Date(run.created_at).toLocaleString()}
+                        </span>
                       )}
                       {run.completed_at && (
-                        <span>· Ended {new Date(run.completed_at).toLocaleString()}</span>
+                        <span>
+                          · Ended {new Date(run.completed_at).toLocaleString()}
+                        </span>
                       )}
                       {!run.completed_at && run.updated_at && isRunning && (
-                        <span>· Updated {new Date(run.updated_at).toLocaleString()}</span>
+                        <span>
+                          · Updated {new Date(run.updated_at).toLocaleString()}
+                        </span>
                       )}
                     </div>
 
                     {/* Optimization summary */}
-                    {(run.metadata?.best_score != null || run.metadata?.iterations != null) && (
+                    {(run.metadata?.best_score != null ||
+                      run.metadata?.iterations != null) && (
                       <div className="flex items-center gap-3 text-[11px] flex-wrap pt-0.5">
                         {run.metadata.iterations != null && (
                           <span className="text-white/40">
                             <span className="text-white/20">Iterations </span>
-                            <span className="font-mono text-amber-300/80">{String(run.metadata.iterations)}</span>
+                            <span className="font-mono text-amber-300/80">
+                              {String(run.metadata.iterations)}
+                            </span>
                           </span>
                         )}
                         {run.metadata.best_score != null && (
@@ -346,4 +388,3 @@ export default function ProjectSimulationPage() {
     </div>
   );
 }
-

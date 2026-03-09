@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "@/lib/api-client/http";
+
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE;
 
 interface SimulationRequirements {
@@ -53,7 +55,7 @@ export const fetchCostData = async (
   }
 };
 
-//Fetch region data
+// Fetch all regions for a provide
 export const fetchRegions = async (provider: string) => {
   try {
     const response = await fetch(
@@ -61,6 +63,25 @@ export const fetchRegions = async (provider: string) => {
     );
     if (!response.ok) {
       throw new Error("Failed to fetch regions");
+    }
+    const data = await response.json();
+    return data.regions || [];
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Fetch regions
+export const fetchRegionsForRequest = async (
+  requestId: string,
+  provider: string,
+) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/cost/${requestId}/regions/${provider}`,
+    );
+    if (!response.ok) {
+      throw new Error("Failed to fetch regions for request");
     }
     const data = await response.json();
     return data.regions || [];
@@ -210,6 +231,83 @@ export const fetchDesignByProjectRun = async (
       );
     }
 
+    return await response.json();
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Response from GET /api/v1/simulation/runs/:runId/candidates
+export interface RunCandidatesResponse {
+  best_candidate_id: string;
+  candidates: RunCandidateItem[];
+  project_id: string;
+  run_id: string;
+  simulation: { nodes: number };
+  user_id: string;
+}
+
+export interface RunCandidateItem {
+  id: string;
+  spec: { label: string; memory_gb: number; vcpu: number };
+  metrics: {
+    cpu_util_pct: number;
+    mem_util_pct: number;
+    [key: string]: unknown;
+  };
+  sim_workload: { concurrent_users: number; rate_rps?: number };
+  source: string;
+  s3_path?: string;
+}
+
+// Fetch candidates for a simulation run (uses auth for 401 avoidance)
+export const fetchRunCandidates = async (runId: string) => {
+  try {
+    const response = await authenticatedFetch(
+      `${BASE_URL}/api/v1/simulation/runs/${encodeURIComponent(runId)}/candidates`,
+      { method: "GET" },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch run candidates: ${response.status} ${response.statusText}`,
+      );
+    }
+    return (await response.json()) as RunCandidatesResponse;
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
+// Call suggest with run data
+export const fetchSuggestionsFromRun = async (
+  userId: string,
+  projectId: string,
+  runId: string,
+  simulation: SimulationRequirements,
+  candidates: CandidateDTO[],
+) => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/suggest`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          project_id: projectId,
+          run_id: runId,
+          simulation,
+          candidates,
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get suggestions: ${response.status} ${response.statusText}`,
+      );
+    }
     return await response.json();
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));

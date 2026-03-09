@@ -1,24 +1,42 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { useToast } from "@/hooks/useToast";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type {
   AmgApdVersionSummary,
   AnalysisResult,
 } from "@/app/features/amg-apd/types";
+import { PenLine, Trash } from "lucide-react";
 
 export default function VersionSidebar({
   refreshTrigger = 0,
+  projectId,
 }: {
   refreshTrigger?: number;
+  /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
+  projectId?: string;
 } = {}) {
+  const { userId } = useAuth();
+  const headers = () =>
+    getAmgApdHeaders({
+      userId: userId ?? undefined,
+      ...(projectId ? { chatId: projectId } : {}),
+    });
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteVersionId, setConfirmDeleteVersionId] = useState<
+    string | null
+  >(null);
+  const [lastVersionBlockOpen, setLastVersionBlockOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -30,6 +48,7 @@ export default function VersionSidebar({
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const showToast = useToast((s) => s.showToast);
 
   const closePanel = useCallback(() => setOpen(false), []);
 
@@ -72,7 +91,7 @@ export default function VersionSidebar({
     setError(null);
     try {
       const res = await fetch("/api/amg-apd/versions", {
-        headers: getAmgApdHeaders(),
+        headers: headers(),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -87,24 +106,25 @@ export default function VersionSidebar({
 
   useEffect(() => {
     fetchVersions();
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     if (refreshTrigger > 0) fetchVersions();
-  }, [refreshTrigger]);
+  }, [refreshTrigger, projectId]);
 
   async function handleMoveToVersion(id: string) {
     setOpen(false);
     setRegenerating(true);
     try {
       const versionRes = await fetch(`/api/amg-apd/versions/${id}`, {
-        headers: getAmgApdHeaders(),
+        headers: headers(),
       });
       if (!versionRes.ok) throw new Error(await versionRes.text());
       const v = await versionRes.json();
       const yamlContent = v?.yaml_content;
       const graph = v?.graph;
-      if (!yamlContent || !graph) throw new Error("Version has no YAML or graph content");
+      if (!yamlContent || !graph)
+        throw new Error("Version has no YAML or graph content");
 
       // Load this version into the canvas without creating a new version (no analyze-upload).
       const data: AnalysisResult = {
@@ -118,25 +138,43 @@ export default function VersionSidebar({
 
       setLast(data);
       setEditedYaml(yamlContent);
+      showToast("Switched to version successfully", "success");
     } catch (e: any) {
-      alert("Failed to load version: " + (e?.message ?? "Unknown error"));
+      showToast(
+        "Failed to load version: " + (e?.message ?? "Unknown error"),
+        "error",
+      );
     } finally {
       setRegenerating(false);
     }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this version? This cannot be undone.")) return;
+    if (versions.length <= 1) {
+      setLastVersionBlockOpen(true);
+      return;
+    }
+    setConfirmDeleteVersionId(id);
+  }
+
+  async function confirmDeleteVersion() {
+    const id = confirmDeleteVersionId;
+    if (!id) return;
+    setConfirmDeleteVersionId(null);
     setDeletingId(id);
     try {
       const res = await fetch(`/api/amg-apd/versions/${id}`, {
         method: "DELETE",
-        headers: getAmgApdHeaders(),
+        headers: headers(),
       });
       if (!res.ok) throw new Error(await res.text());
       await fetchVersions();
+      showToast("Version deleted successfully", "success");
     } catch (e: any) {
-      alert("Failed to delete: " + (e?.message ?? "Unknown error"));
+      showToast(
+        "Failed to delete version: " + (e?.message ?? "Unknown error"),
+        "error",
+      );
     } finally {
       setDeletingId(null);
     }
@@ -144,7 +182,9 @@ export default function VersionSidebar({
 
   function startRename(v: AmgApdVersionSummary) {
     setEditingId(v.id);
-    setEditingTitle(v.title || `Version ${String(v.version_number).padStart(2, "0")}`);
+    setEditingTitle(
+      v.title || `diagramV${v.version_number}`,
+    );
   }
 
   async function saveRename() {
@@ -158,15 +198,19 @@ export default function VersionSidebar({
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          ...getAmgApdHeaders(),
+          ...headers(),
         },
         body: JSON.stringify({ title: editingTitle.trim() }),
       });
       if (!res.ok) throw new Error(await res.text());
       await fetchVersions();
       setEditingId(null);
+      showToast("Version renamed successfully", "success");
     } catch (e: any) {
-      alert("Failed to rename: " + (e?.message ?? "Unknown error"));
+      showToast(
+        "Failed to rename: " + (e?.message ?? "Unknown error"),
+        "error",
+      );
     } finally {
       setSavingTitleId(null);
     }
@@ -191,41 +235,71 @@ export default function VersionSidebar({
 
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="rounded-2xl border border-white/15 bg-card/80 px-5 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 hover:border-white/20 transition-all duration-200 flex items-center gap-2"
-        title="View and switch versions"
-      >
-        <span>Versions</span>
+      {typeof document !== "undefined" &&
+        createPortal(
+          <>
+            <ConfirmModal
+              open={confirmDeleteVersionId !== null}
+              onClose={() => setConfirmDeleteVersionId(null)}
+              title="Delete version?"
+              message="This version will be permanently deleted. This action cannot be undone."
+              confirmLabel="Delete"
+              cancelLabel="Cancel"
+              variant="danger"
+              onConfirm={confirmDeleteVersion}
+            />
+            <ConfirmModal
+              open={lastVersionBlockOpen}
+              onClose={() => setLastVersionBlockOpen(false)}
+              title="Cannot delete last version"
+              message="You must keep at least one version. Create another version before deleting this one."
+              confirmLabel="OK"
+              variant="warning"
+              alertOnly
+              onConfirm={() => setLastVersionBlockOpen(false)}
+            />
+          </>,
+          document.body,
+        )}
+      <div className="relative inline-flex">
         {versions.length > 0 && (
-          <span className="rounded-full bg-[#9AA4B2]/30 px-2 py-0.5 text-xs font-semibold text-white/90 min-w-[1.5rem] text-center">
+          <span
+            className="absolute -top-3 -right-3 z-10 inline-flex items-center justify-center min-w-[1rem] h-4 px-1.5 rounded-sm text-[10px] font-semibold tabular-nums bg-red-800 text-white ring-2 ring-black/30"
+            aria-label={`${versions.length} version(s)`}
+          >
             {versions.length}
           </span>
         )}
-        <span
-          className={`text-white/50 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+          title="View and switch versions"
         >
-          ▼
-        </span>
-      </button>
+          Versions
+        </button>
+      </div>
 
       {open &&
         typeof document !== "undefined" &&
         createPortal(
           <div
             id="versions-dropdown-portal"
-            className="fixed z-[99999] w-80 rounded-2xl border border-white/15 bg-gray-900 shadow-2xl shadow-black/50 overflow-hidden"
+            className="fixed z-99999 w-80 rounded-md  bg-black text-white shadow-2xl shadow-black/50 overflow-hidden"
             style={{ top: position.top, left: position.left }}
           >
-            <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-white/5 px-4 py-3">
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/80">
+            <div className="flex items-center justify-between gap-2 bg-black/10 px-4 py-3">
+              <span className="text-xs font-semibold uppercase tracking-wider">
                 Versions
               </span>
               <Link
-                href="/dashboard/patterns/compare"
-                className="text-xs text-[#9AA4B2] hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
+                href={
+                  projectId
+                    ? `/project/${projectId}/patterns/compare`
+                    : "/dashboard/patterns/compare"
+                }
+                className="text-xs hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
                 onClick={closePanel}
               >
                 Compare
@@ -253,7 +327,7 @@ export default function VersionSidebar({
                 {versions.map((v) => (
                   <li
                     key={v.id}
-                    className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs hover:bg-white/[0.07] transition-colors"
+                    className="rounded-md border border-white/10 bg-white/5 p-3 text-xs hover:bg-white/[0.07] transition-colors"
                   >
                     {editingId === v.id ? (
                       <div className="space-y-2">
@@ -275,7 +349,9 @@ export default function VersionSidebar({
                           <button
                             type="button"
                             onClick={() => void saveRename()}
-                            disabled={savingTitleId === v.id || !editingTitle.trim()}
+                            disabled={
+                              savingTitleId === v.id || !editingTitle.trim()
+                            }
                             className="rounded-lg bg-[#9AA4B2] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {savingTitleId === v.id ? "Saving…" : "Save"}
@@ -304,30 +380,26 @@ export default function VersionSidebar({
                           <button
                             type="button"
                             onClick={() => handleMoveToVersion(v.id)}
-                            className="rounded-lg bg-[rgb(34,76,135)] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[rgb(8,38,150)]/90 transition-colors"
+                            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
                           >
                             Move to this version
                           </button>
                           <button
                             type="button"
                             onClick={() => startRename(v)}
-                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-white/10 hover:text-white/90 transition-colors"
+                            className="flex items-center gap-2 transition-all duration-150 text-white mx-4"
                             title="Rename version"
                           >
-                            Rename
+                            <PenLine className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDelete(v.id)}
                             disabled={deletingId === v.id}
-                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 disabled:opacity-50 transition-colors"
+                            className="flex items-center transition-all duration-150 text-red-800"
                             title="Delete version"
                           >
-                            {deletingId === v.id ? (
-                              <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              "Delete"
-                            )}
+                            <Trash className="w-4 h-4" />
                           </button>
                         </div>
                       </>

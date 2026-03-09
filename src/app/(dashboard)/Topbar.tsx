@@ -65,27 +65,13 @@ export default function Topbar() {
     .slice(0, 2);
 
   return (
-    <header className="sticky top-0 z-40 h-20">
+    <header className="sticky top-0 z-40 h-20 mx-6">
       <div className="flex h-full max-w-[1800px] mx-auto items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />
         </Link>
 
         <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard/patterns/upload"
-            className="group flex items-center gap-3 px-4 py-2 bg-[#9AA4B2] text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-[1.02]"
-          >
-            <div className="flex flex-col items-start">
-              <span className="text-xs font-bold leading-none">AMG & APD</span>
-              <span className="text-[10px] opacity-90 leading-none mt-0.5">
-                Upload & analyze YAML
-              </span>
-            </div>
-          </Link>
-
-          <div className="h-8 w-px bg-gray-700" />
-
           <div className="relative" ref={dropdownRef}>
             <button
               type="button"

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import BeforeAfterPreview from "./BeforeAfterPreview";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
+import { X } from "lucide-react";
 
 export type Suggestion = {
   id?: string;
@@ -52,6 +53,16 @@ export default function SuggestionModal({
     });
   };
 
+  const selectAll = () => {
+    if (suggestions.length === 0) return;
+    const ids = suggestions.map((s, idx) => s.id ?? `idx:${idx}`);
+    setSelectedIds(new Set(ids));
+  };
+
+  const unselectAll = () => {
+    setSelectedIds(new Set());
+  };
+
   const handleApply = () => {
     onApply(Array.from(selectedIds));
   };
@@ -61,37 +72,62 @@ export default function SuggestionModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4">
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+      <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40">
+        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">
+            <h2 className="text-lg font-semibold text-white">
               Fix anti-patterns
             </h2>
-            <p className="mt-0.5 text-sm text-slate-500">
+            <p className="mt-0.5 text-xs text-white/50">
               Choose fixes to apply, then click Apply.
             </p>
           </div>
           <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-white hover:border-slate-300 transition-colors"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150 bg-white/10 text-white/80 hover:bg-white/20 hover:text-white border border-white/10"
           >
-            Close
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="max-h-[70vh] overflow-auto p-4">
+        {suggestions.length > 0 && (
+          <div className="flex items-center gap-2 px-5 py-2 border-b border-white/10 shrink-0">
+            <button
+              type="button"
+              onClick={selectAll}
+              className="text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+            >
+              Select all
+            </button>
+            <span className="text-white/30">|</span>
+            <button
+              type="button"
+              onClick={unselectAll}
+              className="text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+            >
+              Unselect all
+            </button>
+          </div>
+        )}
+
+        <div className="flex-1 min-h-0 overflow-auto p-4">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 text-slate-600">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-              <span className="mt-3 text-sm">Loading suggestions…</span>
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#9AA4B2]" />
+              <span className="mt-4 text-sm text-white/60">Loading suggestions…</span>
             </div>
           ) : error ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
               {error}
             </div>
           ) : suggestions.length === 0 ? (
-            <div className="py-12 text-center text-sm text-slate-500">
+            <div className="py-16 text-center text-sm text-white/50">
               No suggestions available.
             </div>
           ) : (
@@ -113,16 +149,16 @@ export default function SuggestionModal({
                     }}
                     className={`group flex gap-4 rounded-xl border-2 p-4 transition-all duration-200 cursor-pointer ${
                       isSelected
-                        ? "border-emerald-400 bg-emerald-50/50 shadow-sm"
-                        : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/80"
+                        ? "border-emerald-500/60 bg-emerald-500/10 shadow-sm"
+                        : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]"
                     }`}
                   >
-                    {/* Selection indicator - circular with checkmark */}
+                    {/* Selection indicator */}
                     <div
-                      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
+                      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${
                         isSelected
-                          ? "border-emerald-500 bg-emerald-500"
-                          : "border-slate-300 bg-white group-hover:border-slate-400"
+                          ? "border-emerald-400 bg-emerald-500"
+                          : "border-white/20 bg-white/5 group-hover:border-white/30"
                       }`}
                     >
                       {isSelected ? (
@@ -144,15 +180,15 @@ export default function SuggestionModal({
 
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-slate-900">
+                        <h3 className="text-sm font-semibold text-white">
                           {s.title}
                         </h3>
-                        <span className="rounded-full bg-slate-200/80 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                        <span className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/70">
                           {antipatternKindLabel(s.kind)}
                         </span>
                       </div>
 
-                      <ul className="mt-2 space-y-1 pl-4 text-sm text-slate-700 list-disc">
+                      <ul className="mt-2 space-y-1 pl-4 text-sm text-white/70 list-disc">
                         {s.bullets.map((b, i) => (
                           <li key={i}>{b}</li>
                         ))}
@@ -161,7 +197,7 @@ export default function SuggestionModal({
                       <BeforeAfterPreview suggestionId={s.id} kind={s.kind} />
 
                       {s.auto_fix_notes?.length ? (
-                        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/80 p-2.5 text-xs text-emerald-800">
+                        <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
                           <div className="font-semibold">Auto-fix notes</div>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
                             {s.auto_fix_notes.map((n, i) => (
@@ -178,23 +214,23 @@ export default function SuggestionModal({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-4 border-t border-slate-200 bg-slate-50/80 px-5 py-4">
-          <span className="text-sm text-slate-500">
+        <div className="flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0">
+          <span className="text-sm text-white/80">
             {hasSelection ? (
               <>
-                <span className="font-medium text-slate-700">
+                <span className="font-medium text-white">
                   {selectedIds.size}
-                </span>{" "}
-                of {suggestions.length} selected
+                </span>
+                <span className="text-white/50"> of {suggestions.length} selected</span>
               </>
             ) : (
-              "Select one or more suggestions"
+              <span className="text-white/50">Select one or more suggestions</span>
             )}
           </span>
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-white/10 text-white/90 hover:bg-white/20 border border-white/10"
             >
               Cancel
             </button>
@@ -203,7 +239,7 @@ export default function SuggestionModal({
               disabled={
                 disabledApply || applyLoading || !hasSelection || loading
               }
-              className="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}
             </button>

@@ -107,7 +107,9 @@ export default function SimulationDetailPage() {
                 if (!run) return;
                 try {
                   const updated = await stopSimulationRun(run.id);
-                  setRun(updated);
+                  setRun((prev) =>
+                    prev ? { ...prev, id: updated.run_id, status: updated.status as SimulationRun["status"] } : null,
+                  );
                 } catch (error) {
                   console.error("Failed to stop simulation:", error);
                 }

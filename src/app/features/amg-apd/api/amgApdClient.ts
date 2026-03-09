@@ -1,10 +1,8 @@
 /**
  * AMG-APD API client: headers and paths for versioning.
- * Backend uses X-User-Id and X-Chat-Id; if omitted it uses TestUser123 / TestChat123.
+ * Backend uses X-User-Id and X-Chat-Id. Callers must pass the actual Firebase user id
+ * (e.g. from useAuth().userId); no default user or chat id.
  */
-
-const DEFAULT_USER_ID = "TestUser123";
-const DEFAULT_CHAT_ID = "TestChat123";
 
 export type AmgApdHeaders = {
   "X-User-Id"?: string;
@@ -12,16 +10,16 @@ export type AmgApdHeaders = {
 };
 
 /**
- * Build headers for AMG-APD requests. Use from app state when available.
+ * Build headers for AMG-APD requests. Pass actual Firebase userId (and chatId when scoped to a project).
  */
 export function getAmgApdHeaders(overrides?: {
   userId?: string;
   chatId?: string;
 }): AmgApdHeaders {
-  return {
-    "X-User-Id": overrides?.userId ?? DEFAULT_USER_ID,
-    "X-Chat-Id": overrides?.chatId ?? DEFAULT_CHAT_ID,
-  };
+  const headers: AmgApdHeaders = {};
+  if (overrides?.userId) headers["X-User-Id"] = overrides.userId;
+  if (overrides?.chatId) headers["X-Chat-Id"] = overrides.chatId;
+  return headers;
 }
 
 /**
@@ -29,7 +27,7 @@ export function getAmgApdHeaders(overrides?: {
  */
 export function mergeAmgApdHeaders(
   init: RequestInit = {},
-  overrides?: { userId?: string; chatId?: string }
+  overrides?: { userId?: string; chatId?: string },
 ): RequestInit {
   const amg = getAmgApdHeaders(overrides);
   const prev = (init.headers ?? {}) as Record<string, string>;

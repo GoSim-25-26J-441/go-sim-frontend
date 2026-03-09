@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type {
@@ -15,6 +16,7 @@ type CompareResult = {
 };
 
 export default function ComparePage() {
+  const { userId } = useAuth();
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(true);
   const [leftId, setLeftId] = useState("");
@@ -24,11 +26,12 @@ export default function ComparePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!userId) return;
     (async () => {
       setLoadingVersions(true);
       try {
         const res = await fetch("/api/amg-apd/versions", {
-          headers: getAmgApdHeaders(),
+          headers: getAmgApdHeaders({ userId }),
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
@@ -39,7 +42,7 @@ export default function ComparePage() {
         setLoadingVersions(false);
       }
     })();
-  }, []);
+  }, [userId]);
 
   async function runCompare() {
     if (!leftId || !rightId || leftId === rightId) {
@@ -52,7 +55,7 @@ export default function ComparePage() {
     try {
       const res = await fetch(
         `/api/amg-apd/versions/compare?left=${encodeURIComponent(leftId)}&right=${encodeURIComponent(rightId)}`,
-        { headers: getAmgApdHeaders() }
+        { headers: getAmgApdHeaders({ userId: userId ?? undefined }) }
       );
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();

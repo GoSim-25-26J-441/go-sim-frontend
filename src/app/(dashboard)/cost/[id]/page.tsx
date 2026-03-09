@@ -1,9 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { fetchCostData, fetchRegions } from "@/app/api/asm/routes";
+import { fetchCostData, fetchRegionsForRequest } from "@/app/api/asm/routes";
 import {
     ChevronLeft,
     RefreshCw,
@@ -24,7 +25,8 @@ import {
     TrendingUp,
     Calendar,
     X,
-    GitCompare
+    GitCompare,
+    ArrowLeft
 } from "lucide-react";
 import { getRegionDisplayName } from "@/utils/regionFormatter";
 import { GENERIC_REGIONS, getGenericRegionById } from "@/utils/genericRegions";
@@ -34,6 +36,8 @@ interface ClusterCostResult {
     purchase_type: string;
     lease_contract_length: string;
     instance_type: string;
+    vcpus: number;
+    memory_gb: number;
     region: string;
     nodes: number;
     price_per_node_hour: number;
@@ -68,7 +72,12 @@ type ViewMode = "by-provider" | "by-region";
 
 const DEFAULT_GENERIC_REGION_ID = GENERIC_REGIONS[0]?.id ?? "us-east";
 
-export default function CostPage2() {
+type CostRunDetailProps = {
+    requestId: string;
+    projectId?: string;
+};
+
+export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
     const [costData, setCostData] = useState<CostData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -80,13 +89,9 @@ export default function CostPage2() {
     const [compareRegionsEnabled, setCompareRegionsEnabled] = useState(false);
     const [reloadingProviderCost, setReloadingProviderCost] = useState(false);
     const [expandedBreakdown, setExpandedBreakdown] = useState<string | null>(null);
+    const [filteredGenericRegions, setFilteredGenericRegions] = useState<typeof GENERIC_REGIONS>([]);
 
-    const params = useParams();
     const router = useRouter();
-
-    const requestId = params.id as string;
-
-    console.log("Request ID from route params:", requestId);
 
     const handleFetchCostData = async (provider?: string, region?: string) => {
         try {
@@ -106,13 +111,16 @@ export default function CostPage2() {
         }
     };
 
-    const handleFetchRegions = async (provider: string) => {
+    const handleFetchRegions = async (provider: string): Promise<string[]> => {
         try {
-            const regionsData = await fetchRegions(provider);
+            if (!requestId) return [];
+            const regionsData = await fetchRegionsForRequest(requestId, provider);
             setRegions(regionsData);
+            return regionsData;
         } catch (e: any) {
-            console.error("Error fetching regions:", e);
+            console.error("Error fetching regions for request:", e);
             setRegions([]);
+            return [];
         }
     };
 
@@ -137,6 +145,30 @@ export default function CostPage2() {
         } finally {
             setReloadingProviderCost(false);
             setLoading(false);
+        }
+    };
+
+    const loadFilteredGenericRegions = async () => {
+        if (!requestId) return;
+        try {
+            const [awsRegions, azureRegions] = await Promise.all([
+                fetchRegionsForRequest(requestId, "aws"),
+                fetchRegionsForRequest(requestId, "azure"),
+            ]);
+            const awsSet = new Set(awsRegions);
+            const azureSet = new Set(azureRegions);
+
+            const filtered = GENERIC_REGIONS.filter(
+                (r) => awsSet.has(r.aws) && azureSet.has(r.azure)
+            );
+            setFilteredGenericRegions(filtered);
+
+            if (filtered.length > 0 && !filtered.find((r) => r.id === selectedGenericRegionId)) {
+                setSelectedGenericRegionId(filtered[0].id);
+            }
+        } catch (e: any) {
+            console.error("Error loading filtered generic regions:", e);
+            setFilteredGenericRegions(GENERIC_REGIONS);
         }
     };
 
@@ -175,27 +207,36 @@ export default function CostPage2() {
         if (viewMode === "by-region") {
             handleFetchCostForGenericRegion(selectedGenericRegionId);
         } else {
-            const defaultRegion = DEFAULT_REGIONS[selectedProvider] ?? regions[0] ?? "";
-            setSelectedRegions([defaultRegion]);
-            handleFetchRegions(selectedProvider);
-            handleFetchCostData(selectedProvider, defaultRegion);
+            handleFetchRegions(selectedProvider).then((list) => {
+                const defaultRegion = list?.[0] ?? DEFAULT_REGIONS[selectedProvider] ?? "";
+                setSelectedRegions([defaultRegion]);
+                if (defaultRegion) handleFetchCostData(selectedProvider, defaultRegion);
+            });
         }
     }, [requestId]);
 
     useEffect(() => {
         if (requestId && viewMode === "by-provider") {
-            handleFetchRegions(selectedProvider);
-            const defaultRegion = DEFAULT_REGIONS[selectedProvider] ?? "";
-            setSelectedRegions([defaultRegion]);
-            handleFetchCostData(selectedProvider, defaultRegion);
+            handleFetchRegions(selectedProvider).then((list) => {
+                const defaultRegion = list?.[0] ?? "";
+                setSelectedRegions([defaultRegion]);
+                if (defaultRegion) handleFetchCostData(selectedProvider, defaultRegion);
+            });
         }
     }, [selectedProvider, requestId, viewMode]);
 
     useEffect(() => {
         if (requestId && viewMode === "by-region") {
+            loadFilteredGenericRegions();
             handleFetchCostForGenericRegion(selectedGenericRegionId);
         }
-    }, [requestId, viewMode, selectedGenericRegionId]);
+    }, [requestId, viewMode]);
+
+    useEffect(() => {
+        if (requestId && viewMode === "by-region") {
+            handleFetchCostForGenericRegion(selectedGenericRegionId);
+        }
+    }, [selectedGenericRegionId]);
 
     const addRegion = async (region: string) => {
         if (selectedRegions.includes(region) || selectedRegions.length >= MAX_REGIONS) return;
@@ -251,7 +292,11 @@ export default function CostPage2() {
     };
 
     const handleBackClick = () => {
-        router.push('/cost');
+        if (projectId) {
+            router.push(`/project/${projectId}/cost`);
+        } else {
+            router.back();
+        }
     };
 
     const identifyBestOptions = (costs: ClusterCostResult[]) => {
@@ -330,12 +375,14 @@ export default function CostPage2() {
     const genericRegion = viewMode === "by-region" ? getGenericRegionById(selectedGenericRegionId) : null;
     const { best: bestAWS, minimal: minimalAWS } = identifyBestOptions(costsByRegionAWS);
     const { best: bestAzure, minimal: minimalAzure } = identifyBestOptions(costsByRegionAzure);
+    const combinedRegionCosts = viewMode === "by-region" ? [...costsByRegionAWS, ...costsByRegionAzure] : [];
+    const { best: bestRegion, minimal: minimalRegion } = identifyBestOptions(combinedRegionCosts);
 
     return (
         <div className="p-6 space-y-4">
-            <div className="max-w-7xl mx-auto">
+            <div className="">
                 {/* Header */}
-                <div className="flex items-center justify-between mb-8">
+                {/* <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
                         <button
                             onClick={handleBackClick}
@@ -345,22 +392,28 @@ export default function CostPage2() {
                         </button>
                         <h1 className="text-4xl font-bold">Cluster Cost Analysis</h1>
                     </div>
-                    {/* <Link
-                        href={`/cost/suggest/${requestId}`}
-                        className="rounded-xl border border-border px-4 py-2 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
+                </div> */}
+                <div
+                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                    <button
+                        onClick={() => router.back()}
+                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                        aria-label="Go back"
                     >
-                        <BarChart3 className="w-5 h-5" />
-                        View Metrices Analysis
-                    </Link> */}
-                </div>
+                        <ArrowLeft className="w-4 h-4" />
+                    </button>
 
-                {/* Summary */}
-                <div className="mb-8">
-                    <p className="opacity-60 mb-6 text-sm">Detailed cost breakdown for each pricing option</p>
+                    <div>
+                        <h1 className="text-md font-bold text-white flex items-center gap-2">
+                            Cluster Cost Analysis
+                        </h1>
+                    </div>
                 </div>
 
                 {/* Provider & Region Selection */}
-                <div className="bg-card border border-border rounded-lg p-6 mb-8">
+                <div className="bg-card border border-border rounded-lg p-6 my-8">
                     <h2 className="text-xl font-semibold mb-4">Cloud Provider & Region</h2>
 
                     <div className="mb-6">
@@ -412,7 +465,12 @@ export default function CostPage2() {
                                     }}
                                     disabled={reloadingProviderCost}
                                 >
-                                    {GENERIC_REGIONS.map((r) => (
+                                    {filteredGenericRegions.length === 0 && (
+                                        <option value="" disabled className="bg-[#1a1a1a] text-white">
+                                            Loading regions…
+                                        </option>
+                                    )}
+                                    {filteredGenericRegions.map((r) => (
                                         <option key={r.id} value={r.id} className="bg-[#1a1a1a] text-white">
                                             {r.displayName}
                                         </option>
@@ -426,7 +484,7 @@ export default function CostPage2() {
                                 )}
                             </div>
                             <p className="text-xs opacity-50 mt-2">
-                                Showing AWS and Azure pricing for the selected region.
+                                Only regions where both AWS and Azure have matching instances are shown.
                             </p>
                         </div>
                     ) : (
@@ -601,7 +659,7 @@ export default function CostPage2() {
                                                                             {formatCurrency(cost.total_month)}
                                                                         </span>
                                                                         <div className="text-xs opacity-60">
-                                                                            {cost.instance_type}
+                                                                            {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -651,7 +709,9 @@ export default function CostPage2() {
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-sm opacity-70 mb-2">{cost.instance_type}</div>
+                                                    <div className="text-sm opacity-70 mb-2">
+                                                        {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
+                                                    </div>
                                                     <div className="flex justify-between items-center text-lg font-bold">
                                                         <span>Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
@@ -687,7 +747,9 @@ export default function CostPage2() {
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-sm opacity-70 mb-2">{cost.instance_type}</div>
+                                                    <div className="text-sm opacity-70 mb-2">
+                                                        {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
+                                                    </div>
                                                     <div className="flex justify-between items-center text-lg font-bold">
                                                         <span>Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
@@ -709,7 +771,7 @@ export default function CostPage2() {
 
                 {viewMode === "by-provider" && (!compareRegionsEnabled || selectedRegions.length < 2) && (
                     <div>
-                        <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center justify-between m-6">
                             <h2 className="text-2xl font-bold">Pricing Options Breakdown</h2>
                             <div className="text-sm opacity-60">
                                 Showing {currentCosts.length} pricing option{currentCosts.length !== 1 ? 's' : ''}
@@ -788,7 +850,7 @@ export default function CostPage2() {
                                                     <div className="flex items-center gap-4 text-sm opacity-60">
                                                         <div className="flex items-center gap-1">
                                                             <Building className="w-4 h-4" />
-                                                            <span>{cost.instance_type}</span>
+                                                            <span>{cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM</span>
                                                         </div>
                                                         <div className="flex items-center gap-1">
                                                             <MapPin className="w-4 h-4" />
@@ -1131,4 +1193,10 @@ export default function CostPage2() {
             </div>
         </div>
     );
+}
+
+export default function CostRunDetailPage() {
+    const params = useParams();
+    const requestId = params.id as string;
+    return <CostRunDetail requestId={requestId} />;
 }

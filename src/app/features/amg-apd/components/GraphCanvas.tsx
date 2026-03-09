@@ -1,7 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import CytoscapeComponent from "react-cytoscapejs";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
@@ -35,6 +35,7 @@ import {
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
 
+import { useToast } from "@/hooks/useToast";
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
 import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCyInteractions";
 import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyTooltip";
@@ -87,11 +88,17 @@ export default function GraphCanvas({
   readOnly = false,
   isGenerating = false,
   onGenerateGraph,
+  onExportImageReady,
+  onDuplicateName,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
   onGenerateGraph?: (yaml: string) => void | Promise<void>;
+  /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
+  onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
+  /** When renaming to a name that already exists, called with that name (replaces alert) */
+  onDuplicateName?: (name: string) => void;
 }) {
   if (!data?.graph) {
     return (
@@ -101,9 +108,9 @@ export default function GraphCanvas({
     );
   }
 
-  const router = useRouter();
   const analysis = data as AnalysisResult;
 
+  const showToast = useToast((s) => s.showToast);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const undoStackRef = useRef<UndoEntry[]>([]);
@@ -299,6 +306,47 @@ export default function GraphCanvas({
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
 
+  const EXPORT_PADDING = 64;
+
+  useEffect(() => {
+    if (!onExportImageReady || !cyAlive(cy)) return;
+    onExportImageReady(() => {
+      const c = cyRef.current;
+      if (!c || !cyAlive(c)) return null;
+      try {
+        const pngDataUrl = c.png({
+          full: true,
+          scale: 2,
+          bg: "#ffffff",
+        });
+        return new Promise<string | null>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const pad = EXPORT_PADDING;
+            const w = img.width + 2 * pad;
+            const h = img.height + 2 * pad;
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(pngDataUrl);
+              return;
+            }
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, pad, pad);
+            resolve(canvas.toDataURL("image/png"));
+          };
+          img.onerror = () => resolve(pngDataUrl);
+          img.src = pngDataUrl;
+        });
+      } catch {
+        return null;
+      }
+    });
+  }, [cy, onExportImageReady]);
+
   const performDelete = useCallback(() => {
     if (!cyAlive(cy)) return;
 
@@ -435,7 +483,10 @@ export default function GraphCanvas({
     if (!cyAlive(cy)) return;
 
     const error = validateGraphForSave(cy);
-    if (error) return window.alert(error);
+    if (error) {
+      showToast(error, "error");
+      return;
+    }
 
     const yaml = exportGraphToYaml(cy);
     setEditedYaml(yaml);
@@ -451,14 +502,37 @@ export default function GraphCanvas({
       return;
     }
 
-    const title = encodeURIComponent("Edited architecture");
-    router.push(`/dashboard/patterns/upload?regen=1&title=${title}`);
+    // No callback: user is in a context where regenerate is not available (e.g. compare view)
+    showToast(
+      "Use the Patterns view for this project to regenerate the graph from edits.",
+      "info",
+    );
   }
 
   function handleRenameNode(id: string, newLabel: string) {
     if (!cyAlive(cy)) return;
+    const trimmed = newLabel.trim();
+    if (!trimmed) return;
+
     const node = cy.getElementById(id);
-    if (!node.empty()) node.data("label", newLabel);
+    if (node.empty()) return;
+
+    const existing = new Set<string>();
+    cy.nodes().forEach((n) => {
+      if (n.hasClass("halo")) return;
+      if (n.id() === id) return;
+      const l = (n.data("label") as string) ?? "";
+      if (l.trim()) existing.add(l.trim().toLowerCase());
+    });
+    if (existing.has(trimmed.toLowerCase())) {
+      if (onDuplicateName) {
+        onDuplicateName(trimmed);
+      } else {
+        alert(`Sorry, "${trimmed}" already exists. Please choose a different name.`);
+      }
+      return;
+    }
+    node.data("label", trimmed);
   }
 
   function callEdgeLabel(protocol: string, sync: boolean): string {
@@ -511,27 +585,27 @@ export default function GraphCanvas({
       <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden">
         {!readOnly &&
           editMode &&
-          (leftPanelCollapsed ? (
+            (leftPanelCollapsed ? (
             <button
               type="button"
               onClick={() => setLeftPanelCollapsed(false)}
               title="Show edit tools"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-slate-800 bg-slate-950/80 hover:bg-slate-900/90 text-slate-400 hover:text-slate-200 transition-colors"
+              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
             >
               <Wrench className="h-4 w-4 shrink-0" />
               <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden relative z-10">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden relative z-10 shadow-xl shadow-black/20">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
                   Edit tools
                 </span>
                 <button
                   type="button"
                   onClick={() => setLeftPanelCollapsed(true)}
                   title="Minimize edit tools"
-                  className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors"
+                  className="p-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors"
                 >
                   <PanelLeftClose className="h-4 w-4" />
                 </button>
@@ -558,7 +632,7 @@ export default function GraphCanvas({
 
         <div
           ref={containerRef}
-          className="relative flex-1 min-h-[600px] min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 z-0"
+          className="relative flex-1 min-h-[600px] min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner"
         >
           <CytoscapeComponent
             cy={(c) => {
@@ -595,22 +669,22 @@ export default function GraphCanvas({
               type="button"
               onClick={() => setRightPanelCollapsed(false)}
               title="Show details"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-slate-800 bg-slate-950/80 hover:bg-slate-900/90 text-slate-400 hover:text-slate-200 transition-colors"
+              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
             >
               <Info className="h-4 w-4 shrink-0" />
               <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-72 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+            <aside className="w-72 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
                   Details
                 </span>
                 <button
                   type="button"
                   onClick={() => setRightPanelCollapsed(true)}
                   title="Minimize details"
-                  className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors"
+                  className="p-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors"
                 >
                   <PanelRightClose className="h-4 w-4" />
                 </button>

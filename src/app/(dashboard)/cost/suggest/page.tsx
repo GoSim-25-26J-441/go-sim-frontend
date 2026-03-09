@@ -2,8 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { fetchSuggestions, fetchDesignByProjectRun } from '@/app/api/asm/routes';
-import { Cpu, MemoryStick, AlertCircle, ChevronDown } from 'lucide-react';
+import {
+    fetchSuggestions,
+    fetchDesignByProjectRun,
+    fetchRunCandidates,
+    fetchSuggestionsFromRun,
+    type RunCandidateItem,
+} from '@/app/api/asm/routes';
+import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -50,7 +56,92 @@ interface SimulationRequirements {
     nodes: number;
 }
 
-export default function SuggestPage() {
+const DUMMY_DESIGN: DesignRequirements = {
+    preferred_vcpu: 4,
+    preferred_memory_gb: 16,
+    workload: { concurrent_users: 500 },
+    budget: 500,
+};
+
+const DUMMY_SIMULATION: SimulationRequirements = {
+    nodes: 3,
+};
+
+const DUMMY_CANDIDATE = (id: string, label: string, vcpu: number, memory_gb: number, cpu_util: number, mem_util: number, users: number, source: string): Candidate => ({
+    id,
+    spec: { vcpu, memory_gb, label },
+    metrics: { cpu_util_pct: cpu_util, mem_util_pct: mem_util },
+    sim_workload: { concurrent_users: users },
+    source,
+});
+
+const DUMMY_SUGGESTION_RESPONSE: SuggestionResponse = {
+    storage_id: 'b2cf17cb-085e-4be4-ba62-2cac869b0157',
+    best: {
+        candidate: DUMMY_CANDIDATE('t3.xlarge', 't3.xlarge', 4, 16, 62, 58, 480, 'AWS'),
+        passed_all_required: false,
+        workload_distance: 20,
+        suggestions: [
+            'Consider scaling to 4 nodes to meet target concurrent users.',
+            'CPU utilization is within healthy range; memory has headroom.',
+            'For production, enable enhanced networking if available.',
+        ],
+    },
+    all_scores: [
+        {
+            candidate: DUMMY_CANDIDATE('t3.xlarge', 't3.xlarge', 4, 16, 62, 58, 480, 'AWS'),
+            passed_all_required: false,
+            workload_distance: 20,
+            suggestions: [
+                'Consider scaling to 4 nodes to meet target concurrent users.',
+                'CPU utilization is within healthy range; memory has headroom.',
+            ],
+        },
+        {
+            candidate: DUMMY_CANDIDATE('t3.large', 't3.large', 2, 8, 78, 72, 320, 'AWS'),
+            passed_all_required: false,
+            workload_distance: 180,
+            suggestions: [
+                'Instance is under-provisioned for target workload.',
+                'Upgrade to t3.xlarge or add more nodes.',
+            ],
+        },
+        {
+            candidate: DUMMY_CANDIDATE('m5.large', 'm5.large', 2, 8, 82, 75, 300, 'AWS'),
+            passed_all_required: false,
+            workload_distance: 200,
+            suggestions: [
+                'High CPU and memory utilization; consider larger instance.',
+                'm5.xlarge would better match your preferred spec.',
+            ],
+        },
+    ],
+};
+
+type SuggestPageProps = {
+    projectId?: string;
+};
+
+function mapRunCandidatesToSuggest(candidates: RunCandidateItem[]): Candidate[] {
+    return candidates.map((c) => ({
+        id: c.id,
+        spec: {
+            vcpu: c.spec.vcpu,
+            memory_gb: c.spec.memory_gb,
+            label: c.spec.label ?? c.id,
+        },
+        metrics: {
+            cpu_util_pct: c.metrics.cpu_util_pct,
+            mem_util_pct: c.metrics.mem_util_pct,
+        },
+        sim_workload: {
+            concurrent_users: c.sim_workload?.concurrent_users ?? 0,
+        },
+        source: c.source ?? 'export',
+    }));
+}
+
+export default function SuggestPage({ projectId: projectIdProp }: SuggestPageProps = {}) {
     const [loading, setLoading] = useState(false);
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -60,6 +151,7 @@ export default function SuggestPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { user, userId: firebaseUid } = useAuth();
+    const projectId = projectIdProp ?? searchParams.get('projectId') ?? '';
 
     const hasFetchedRef = useRef(false);
 
@@ -72,13 +164,52 @@ export default function SuggestPage() {
             setLoading(true);
             setError(null);
 
-            try {
-                const projectId = searchParams.get('projectId') || '';
-                const runId = searchParams.get('runId') || '';
-                const candidatesParam = searchParams.get('candidates');
+            const runIdFromQuery = searchParams.get('run_id') ?? searchParams.get('runId') ?? '';
+            const candidatesParam = searchParams.get('candidates');
+            const resolvedProjectId = projectIdProp ?? searchParams.get('projectId') ?? '';
 
-                if (!projectId || !runId || !candidatesParam) {
-                    throw new Error('Missing projectId, runId, or candidates in URL');
+            try {
+                if (resolvedProjectId && runIdFromQuery && !candidatesParam) {
+                    const runData = await fetchRunCandidates(runIdFromQuery);
+                    const mappedCandidates = mapRunCandidatesToSuggest(runData.candidates ?? []);
+                    if (mappedCandidates.length === 0) {
+                        setError('No candidates found for this run');
+                        setDesign(DUMMY_DESIGN);
+                        setSimulation(runData.simulation ?? DUMMY_SIMULATION);
+                        setSuggestionData(null);
+                        setLoading(false);
+                        return;
+                    }
+                    setCandidates(mappedCandidates);
+                    const sim = runData.simulation ?? { nodes: 0 };
+                    setSimulation(sim);
+                    setDesign({
+                        ...DUMMY_DESIGN,
+                        preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
+                        preferred_memory_gb: mappedCandidates[0]?.spec.memory_gb ?? 0,
+                        workload: {
+                            concurrent_users: mappedCandidates[0]?.sim_workload.concurrent_users ?? 0,
+                        },
+                    });
+                    const data = await fetchSuggestionsFromRun(
+                        firebaseUid,
+                        resolvedProjectId,
+                        runIdFromQuery,
+                        sim,
+                        mappedCandidates,
+                    );
+                    setSuggestionData(data);
+                    setLoading(false);
+                    return;
+                }
+
+                // Flow 2: runId + candidates in URL (existing flow with design from stored request)
+                if (!runIdFromQuery || !candidatesParam) {
+                    setDesign(DUMMY_DESIGN);
+                    setSimulation(DUMMY_SIMULATION);
+                    setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
+                    setLoading(false);
+                    return;
                 }
 
                 const decodedCandidates = JSON.parse(
@@ -88,8 +219,8 @@ export default function SuggestPage() {
 
                 const stored = await fetchDesignByProjectRun(
                     firebaseUid,
-                    projectId,
-                    runId,
+                    resolvedProjectId,
+                    runIdFromQuery,
                 );
 
                 const storedRequest = stored.request as {
@@ -109,14 +240,16 @@ export default function SuggestPage() {
                     resolvedDesign,
                     resolvedSimulation,
                     decodedCandidates,
-                    projectId,
-                    runId,
+                    resolvedProjectId,
+                    runIdFromQuery,
                 );
                 setSuggestionData(data);
             } catch (err) {
                 console.error('Error fetching suggestions:', err);
                 setError(err instanceof Error ? err.message : 'An error occurred');
-                setSuggestionData(null);
+                setDesign(DUMMY_DESIGN);
+                setSimulation(DUMMY_SIMULATION);
+                setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
             } finally {
                 setLoading(false);
             }
@@ -138,7 +271,8 @@ export default function SuggestPage() {
 
     const handleViewCostAnalysis = () => {
         if (suggestionData?.storage_id) {
-            router.push(`/cost/${suggestionData.storage_id}`);
+            const path = projectId ? `/project/${projectId}/cost/${suggestionData.storage_id}` : `/cost/${suggestionData.storage_id}`;
+            router.push(path);
         }
     };
 
@@ -152,19 +286,11 @@ export default function SuggestPage() {
 
     return (
         <div className="p-6 space-y-4">
-            <div className="max-w-7xl mx-auto">
+            <div className="p-6 space-y-4">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-8">
+                {/* <div className="flex justify-between items-center mb-8">
                     <div>
                         <h1 className="text-3xl font-bold">Metrices Analysis</h1>
-                        {user && (
-                            <p className="text-sm opacity-60 mt-1">
-                                Signed in as{" "}
-                                <span className="font-medium">
-                                    {user.displayName || user.email || "Unnamed user"}
-                                </span>
-                            </p>
-                        )}
                     </div>
                     {suggestionData && (
                         <button
@@ -174,42 +300,74 @@ export default function SuggestPage() {
                             View Cost Analysis
                         </button>
                     )}
+                </div> */}
+                <div
+                    className=" flex items-center justify-between"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                    <div className='px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap'>
+                        <button
+                            onClick={() => router.back()}
+                            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                            aria-label="Go back"
+                        >
+                            <ArrowLeft className="w-4 h-4" />
+                        </button>
+
+                        <div>
+                            <h1 className="text-md font-bold text-white flex items-center gap-2">
+                                Metrices Analysis
+                            </h1>
+                        </div>
+                    </div>
+                    <div>
+                        {suggestionData && (
+                            <button
+                                onClick={handleViewCostAnalysis}
+                                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                            >
+                                View Cost Analysis
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Requirements Summary */}
-                <div className="bg-card border border-border rounded-lg p-6 mb-8">
-                    <h2 className="text-xl font-semibold mb-4">Design Requirements</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                        <div className="bg-card border border-border p-4 rounded-lg">
-                            <p className="text-sm opacity-60">User (Firebase)</p>
-                            {user ? (
-                                <>
-                                    <p className="text-sm font-medium">
-                                        {user.displayName || user.email || "Unnamed user"}
-                                    </p>
-                                </>
-                            ) : (
-                                <p className="text-sm opacity-70">Not signed in</p>
-                            )}
-                        </div>
-                        <div className="bg-card border border-border p-4 rounded-lg">
-                            <p className="text-sm opacity-60">Preferred vCPU</p>
-                            <p className="text-lg font-semibold">{design.preferred_vcpu}</p>
-                        </div>
-                        <div className="bg-card border border-border p-4 rounded-lg">
-                            <p className="text-sm opacity-60">Preferred Memory</p>
-                            <p className="text-lg font-semibold">{design.preferred_memory_gb} GB</p>
-                        </div>
-                        <div className="bg-card border border-border p-4 rounded-lg">
-                            <p className="text-sm opacity-60">Target Users</p>
-                            <p className="text-lg font-semibold">{design.workload.concurrent_users} users</p>
-                        </div>
-                        <div className="bg-card border border-border p-4 rounded-lg">
-                            <p className="text-sm opacity-60">Cluster Nodes</p>
-                            <p className="text-lg font-semibold">{simulation.nodes} nodes</p>
+                {design && simulation && (
+                    <div className="bg-card border border-border rounded-lg p-6 mb-8">
+                        <h2 className="text-xl font-semibold mb-4">Design Requirements</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                            <div className="bg-card border border-border p-4 rounded-lg">
+                                <p className="text-sm opacity-60">User (Firebase)</p>
+                                {user ? (
+                                    <>
+                                        <p className="text-sm font-medium">
+                                            {user.displayName || user.email || "Unnamed user"}
+                                        </p>
+                                    </>
+                                ) : (
+                                    <p className="text-sm opacity-70">Not signed in</p>
+                                )}
+                            </div>
+                            <div className="bg-card border border-border p-4 rounded-lg">
+                                <p className="text-sm opacity-60">Preferred vCPU</p>
+                                <p className="text-lg font-semibold">{design.preferred_vcpu}</p>
+                            </div>
+                            <div className="bg-card border border-border p-4 rounded-lg">
+                                <p className="text-sm opacity-60">Preferred Memory</p>
+                                <p className="text-lg font-semibold">{design.preferred_memory_gb} GB</p>
+                            </div>
+                            <div className="bg-card border border-border p-4 rounded-lg">
+                                <p className="text-sm opacity-60">Target Users</p>
+                                <p className="text-lg font-semibold">{design.workload.concurrent_users} users</p>
+                            </div>
+                            <div className="bg-card border border-border p-4 rounded-lg">
+                                <p className="text-sm opacity-60">Cluster Nodes</p>
+                                <p className="text-lg font-semibold">{simulation.nodes} nodes</p>
+                            </div>
                         </div>
                     </div>
-                </div>
+                )}
 
                 {/* Results Display */}
                 {suggestionData && (
@@ -326,12 +484,6 @@ export default function SuggestPage() {
                                                     ({((suggestionData.best.workload_distance / design.workload.concurrent_users) * 100).toFixed(1)}% of target)
                                                 </p>
                                             </div>
-                                            <div>
-                                                <p className="text-sm opacity-60">Source</p>
-                                                <p className="text-sm font-medium opacity-80">
-                                                    {suggestionData.best.candidate.source}
-                                                </p>
-                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -366,9 +518,6 @@ export default function SuggestPage() {
                                             </th>
                                             <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
                                                 Utilization
-                                            </th>
-                                            <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
-                                                Performance
                                             </th>
                                             <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
                                                 Shortfall
@@ -429,11 +578,6 @@ export default function SuggestPage() {
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    <p className="opacity-80 font-medium">
-                                                        {score.candidate.sim_workload.concurrent_users} users
-                                                    </p>
-                                                </td>
-                                                <td className="px-4 py-3">
                                                     <p className={`font-medium ${getWorkloadPerformanceColor(score.workload_distance, design.workload.concurrent_users)
                                                         }`}>
                                                         {score.workload_distance} users
@@ -487,7 +631,7 @@ export default function SuggestPage() {
                         {error && (
                             <div className="bg-card border border-red-600 rounded-lg p-4">
                                 <div className="flex items-start gap-2">
-                                    <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                                    <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
                                     <div>
                                         <p className="text-red-500">Note: {error}</p>
                                         <p className="text-red-600 text-sm mt-1">Showing demo data instead.</p>

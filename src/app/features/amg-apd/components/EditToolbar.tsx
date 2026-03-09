@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import type {
   EditTool,
   CallProtocol,
@@ -23,6 +24,20 @@ const TOOL_ICONS: Record<EditTool, string> = {
   "add-user-actor": "/icon/actor.png",
   "connect-calls": "/icon/select.png", // connect tool reuses select icon
 };
+
+const NODE_TOOLS: { t: EditTool; label: string; title: string }[] = [
+  { t: "select", label: "Select / Move", title: "Select, move and inspect elements" },
+  { t: "add-service", label: "Service", title: "Add a new service (click on the background)" },
+  { t: "add-api-gateway", label: "API Gateway", title: "Add an API gateway (click on the background)" },
+  { t: "add-database", label: "Database", title: "Add a new database (click on the background)" },
+  { t: "add-event-topic", label: "Event Topic", title: "Add an event topic (click on the background)" },
+  { t: "add-external-system", label: "External System", title: "Add an external system (click on the background)" },
+  { t: "add-client", label: "Client (web/mobile)", title: "Add a client (click on the background)" },
+  { t: "add-user-actor", label: "User / Actor", title: "Add a user or actor (click on the background)" },
+];
+
+const NODES_HEADING = "Nodes";
+const ANTIPATTERNS_HEADING = "Anti-Patterns";
 
 type Props = {
   editMode: boolean;
@@ -51,6 +66,46 @@ export default function EditToolbar({
   variant = "overlay",
 }: Props) {
   if (!editMode) return null;
+
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const query = useMemo(
+    () => searchQuery.trim().toLowerCase(),
+    [searchQuery],
+  );
+
+  const { showNodesSection, nodeToolsToShow, showAntiSection, antiToShow } =
+    useMemo(() => {
+      if (!query) {
+        return {
+          showNodesSection: true,
+          nodeToolsToShow: NODE_TOOLS,
+          showAntiSection: true,
+          antiToShow: EDITABLE_ANTIPATTERNS,
+        };
+      }
+      const nodesHeadingMatches =
+        NODES_HEADING.toLowerCase().includes(query) ||
+        "nodes".includes(query);
+      const antiHeadingMatches =
+        ANTIPATTERNS_HEADING.toLowerCase().replace(/\s/g, "-").includes(query) ||
+        "antipatterns".includes(query) ||
+        "anti-patterns".includes(query) ||
+        "anti patterns".includes(query);
+      const matchingNodeTools = NODE_TOOLS.filter((item) =>
+        item.label.toLowerCase().includes(query),
+      );
+      const matchingAnti = EDITABLE_ANTIPATTERNS.filter((kind) =>
+        antipatternKindLabel(kind).toLowerCase().includes(query),
+      );
+      return {
+        showNodesSection: nodesHeadingMatches || matchingNodeTools.length > 0,
+        nodeToolsToShow: nodesHeadingMatches ? NODE_TOOLS : matchingNodeTools,
+        showAntiSection: antiHeadingMatches || matchingAnti.length > 0,
+        antiToShow: antiHeadingMatches ? EDITABLE_ANTIPATTERNS : matchingAnti,
+      };
+    }, [query],
+  );
 
   const btnBase =
     "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150";
@@ -103,106 +158,92 @@ export default function EditToolbar({
         </span>
       </div>
 
+      <div className="mb-2.5 shrink-0">
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search tools…"
+          className="w-full rounded-lg border border-slate-600/80 bg-slate-800/90 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500/60 focus:border-sky-500/50"
+          aria-label="Search edit tools"
+        />
+      </div>
+
       {/* Scrollable tools list */}
       <div
         className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5 min-h-0"
         style={{ maxHeight: "320px" }}
       >
-        <ToolBtn
-          t="select"
-          label="Select / Move"
-          title="Select, move and inspect elements"
-        />
+        {showNodesSection && (
+          <>
+            <div className="mt-0.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              {NODES_HEADING}
+            </div>
+            {nodeToolsToShow.map(({ t, label, title }) => (
+              <ToolBtn key={t} t={t} label={label} title={title} />
+            ))}
+          </>
+        )}
 
-        <div className="mt-2.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-          Add nodes
-        </div>
-
-        <ToolBtn
-          t="add-service"
-          label="Service"
-          title="Add a new service (click on the background)"
-        />
-        <ToolBtn
-          t="add-api-gateway"
-          label="API Gateway"
-          title="Add an API gateway (click on the background)"
-        />
-        <ToolBtn
-          t="add-database"
-          label="Database"
-          title="Add a new database (click on the background)"
-        />
-        <ToolBtn
-          t="add-event-topic"
-          label="Event Topic"
-          title="Add an event topic (click on the background)"
-        />
-        <ToolBtn
-          t="add-external-system"
-          label="External System"
-          title="Add an external system (click on the background)"
-        />
-        <ToolBtn
-          t="add-client"
-          label="Client (web/mobile)"
-          title="Add a client (click on the background)"
-        />
-        <ToolBtn
-          t="add-user-actor"
-          label="User / Actor"
-          title="Add a user or actor (click on the background)"
-        />
-
-        <div className="mt-2.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-          Anti-Patterns
-        </div>
-        <p className="text-[10px] text-slate-500 mt-0.5">
-          Add a sample graph that triggers this anti-pattern.
-        </p>
-        {EDITABLE_ANTIPATTERNS.map((kind) => {
-          const isPending = pendingAntiPatternKind === kind;
-          return (
-            <button
-              key={kind}
-              type="button"
-              title={`Add a sample graph that triggers ${antipatternKindLabel(kind)}. Then click on the canvas to place it.`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onAddAntiPattern?.(kind);
-              }}
-              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150 cursor-pointer ${
-                isPending
-                  ? "bg-rose-900/60 text-rose-100 border-2 border-rose-400 shadow-lg shadow-rose-500/40 ring-2 ring-rose-400/60"
-                  : "bg-slate-800/80 text-slate-200 hover:bg-rose-900/40 border border-slate-600/60 hover:border-rose-500/50"
-              }`}
-            >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/20 pointer-events-none">
-                <img
-                  src={ANTIPATTERN_ICONS[kind]}
-                  alt=""
-                  className="h-4 w-4 object-contain invert pointer-events-none"
-                  draggable={false}
-                  onError={(e) => {
-                    const el = e.currentTarget;
-                    if (!el) return;
-                    const tried = el.getAttribute("data-fallback") ?? "";
-                    const alt = ANTIPATTERN_ICONS_ALT[kind];
-                    if (!tried && alt) {
-                      el.setAttribute("data-fallback", "alt");
-                      el.src = alt;
-                      return;
-                    }
-                    el.setAttribute("data-fallback", "1");
-                    el.src = "/icon/service.png";
+        {showAntiSection && (
+          <>
+            <div className="mt-2.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              {ANTIPATTERNS_HEADING}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Add a sample graph that triggers this anti-pattern.
+            </p>
+            {antiToShow.map((kind) => {
+              const isPending = pendingAntiPatternKind === kind;
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  title={`Add a sample graph that triggers ${antipatternKindLabel(kind)}. Then click on the canvas to place it.`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onAddAntiPattern?.(kind);
                   }}
-                />
-              </span>
-              <span className="truncate">{antipatternKindLabel(kind)}</span>
-            </button>
-          );
-        })}
+                  className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150 cursor-pointer ${
+                    isPending
+                      ? "bg-rose-900/60 text-rose-100 border-2 border-rose-400 shadow-lg shadow-rose-500/40 ring-2 ring-rose-400/60"
+                      : "bg-slate-800/80 text-slate-200 hover:bg-rose-900/40 border border-slate-600/60 hover:border-rose-500/50"
+                  }`}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/20 pointer-events-none">
+                    <img
+                      src={ANTIPATTERN_ICONS[kind]}
+                      alt=""
+                      className="h-4 w-4 object-contain invert pointer-events-none"
+                      draggable={false}
+                      onError={(e) => {
+                        const el = e.currentTarget;
+                        if (!el) return;
+                        const tried = el.getAttribute("data-fallback") ?? "";
+                        const alt = ANTIPATTERN_ICONS_ALT[kind];
+                        if (!tried && alt) {
+                          el.setAttribute("data-fallback", "alt");
+                          el.src = alt;
+                          return;
+                        }
+                        el.setAttribute("data-fallback", "1");
+                        el.src = "/icon/service.png";
+                      }}
+                    />
+                  </span>
+                  <span className="truncate">{antipatternKindLabel(kind)}</span>
+                </button>
+              );
+            })}
+          </>
+        )}
+
+        {query && !showNodesSection && !showAntiSection && (
+          <p className="py-4 text-center text-[11px] text-slate-500">
+            No tools match &quot;{searchQuery.trim()}&quot;
+          </p>
+        )}
       </div>
 
       {pendingSourceId && (
