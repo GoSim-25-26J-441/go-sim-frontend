@@ -47,20 +47,19 @@ aws ssm get-parameter \
   --region "$REGION" > .env.local
 echo "[$(date -Iseconds)] Wrote .env.local"
 
-# Load .env.local into this shell so PM2 child process inherits (BACKEND_BASE etc.)
+# Load .env.local and pass key vars explicitly to PM2 (so child processes get them)
 if [ -f .env.local ]; then
   set -a
   # shellcheck source=/dev/null
   source .env.local 2>/dev/null || true
   set +a
-  echo "[$(date -Iseconds)] Exported env from .env.local for PM2"
+  echo "[$(date -Iseconds)] Loaded .env.local"
 fi
-
 echo "[$(date -Iseconds)] Restarting PM2 app $PM2_APP_NAME..."
 if pm2 describe "$PM2_APP_NAME" > /dev/null 2>&1; then
-  pm2 restart "$PM2_APP_NAME" --update-env
+  BACKEND_BASE="${BACKEND_BASE:-}" pm2 restart "$PM2_APP_NAME" --update-env
 else
-  pm2 start ecosystem.config.js
+  BACKEND_BASE="${BACKEND_BASE:-}" pm2 start ecosystem.config.js
 fi
 
 echo "[$(date -Iseconds)] Deploy finished successfully"
