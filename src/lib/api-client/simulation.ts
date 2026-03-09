@@ -10,8 +10,10 @@ const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
 // --- Backend create run (project-level) ---
 
 export interface CreateProjectRunOptimization {
-  objective?: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost";
+  objective?: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost" | "cpu_utilization" | "memory_utilization";
   max_iterations?: number;
+  /** Cap total evaluations to avoid too many runs; e.g. 25 */
+  max_evaluations?: number;
   step_size?: number;
   evaluation_duration_ms?: number;
   online?: boolean;

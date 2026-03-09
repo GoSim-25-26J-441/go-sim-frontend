@@ -428,8 +428,11 @@ workload:
   const [configYaml, setConfigYaml] = useState("");
   const [seed, setSeed] = useState(0);
   const [optimization, setOptimization] = useState<{
-    objective: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost";
+    objective: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost" | "cpu_utilization" | "memory_utilization";
     max_iterations: number;
+    max_evaluations: number | null;
+    batch_target_util_low: number | null;
+    batch_target_util_high: number | null;
     step_size: number;
     evaluation_duration_ms: number;
     target_p95_latency_ms: number;
@@ -445,6 +448,10 @@ workload:
   }>({
     objective: "p95_latency_ms",
     max_iterations: 10,
+    max_evaluations: null,
+    /** Batch only: optional utilization band (0–1). When both set and low < high, sent for cpu_utilization/memory_utilization; else omit = minimize utilization. */
+    batch_target_util_low: null as number | null,
+    batch_target_util_high: null as number | null,
     step_size: 1.0,
     evaluation_duration_ms: 5000,
     target_p95_latency_ms: 200.0,
@@ -626,6 +633,19 @@ workload:
         newErrors.config = "Max iterations must be at least 1";
       } else if (optimization.evaluation_duration_ms <= 0) {
         newErrors.config = "Evaluation duration must be greater than 0";
+      } else if (
+        (optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization") &&
+        (optimization.batch_target_util_low != null || optimization.batch_target_util_high != null)
+      ) {
+        const low = optimization.batch_target_util_low ?? 0;
+        const high = optimization.batch_target_util_high ?? 0;
+        if (optimization.batch_target_util_low == null || optimization.batch_target_util_high == null) {
+          newErrors.config = "Set both target utilization low and high, or clear both for minimize behavior";
+        } else if (low < 0 || high > 1) {
+          newErrors.config = "Target utilization band must be between 0 and 1";
+        } else if (low >= high) {
+          newErrors.config = "Target utilization low must be less than high";
+        }
       }
     }
 
@@ -662,9 +682,24 @@ workload:
       // Build optimization payload based on run mode
       let optimizationPayload: Record<string, unknown> | undefined;
       if (runMode === "batch_optimization") {
+        const isUtilObjective =
+          optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization";
+        const low = optimization.batch_target_util_low;
+        const high = optimization.batch_target_util_high;
+        const validBand =
+          isUtilObjective &&
+          low != null &&
+          high != null &&
+          low >= 0 &&
+          high <= 1 &&
+          low < high;
         optimizationPayload = {
           objective: optimization.objective,
           max_iterations: optimization.max_iterations,
+          ...(optimization.max_evaluations != null && optimization.max_evaluations > 0
+            ? { max_evaluations: optimization.max_evaluations }
+            : {}),
+          ...(validBand ? { target_util_low: low, target_util_high: high } : {}),
           step_size: optimization.step_size,
           evaluation_duration_ms: optimization.evaluation_duration_ms,
           online: false,
@@ -1071,6 +1106,8 @@ workload:
                         <option value="throughput_rps">Throughput (rps)</option>
                         <option value="error_rate">Error rate</option>
                         <option value="cost">Cost</option>
+                        <option value="cpu_utilization">CPU utilization</option>
+                        <option value="memory_utilization">Memory utilization</option>
                       </select>
                     </div>
                     <div>
@@ -1087,6 +1124,26 @@ workload:
                         }
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/70 mb-1">Max evaluations</label>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Optional"
+                        value={optimization.max_evaluations ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          setOptimization((prev) => ({
+                            ...prev,
+                            max_evaluations: v === "" ? null : Math.max(1, Number(v) || 1),
+                          }));
+                        }}
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/30"
+                      />
+                      <p className="text-xs text-white/40 mt-0.5">
+                        Cap total runs to avoid too many evaluations (e.g. 25). Leave empty for no cap.
+                      </p>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-white/70 mb-1">Step size</label>
@@ -1122,6 +1179,51 @@ workload:
                         className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                       />
                     </div>
+                    {(optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization") && (
+                      <>
+                        <div className="col-span-full text-xs text-white/50 mt-1">
+                          Target utilization band (optional): aim for utilization within this range instead of minimizing. Leave empty for minimize behavior.
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">Band low (0–1)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            placeholder="e.g. 0.4"
+                            value={optimization.batch_target_util_low ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              setOptimization((prev) => ({
+                                ...prev,
+                                batch_target_util_low: v === "" ? null : Math.min(1, Math.max(0, Number(v) || 0)),
+                              }));
+                            }}
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-white/70 mb-1">Band high (0–1)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            placeholder="e.g. 0.7"
+                            value={optimization.batch_target_util_high ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              setOptimization((prev) => ({
+                                ...prev,
+                                batch_target_util_high: v === "" ? null : Math.min(1, Math.max(0, Number(v) || 0)),
+                              }));
+                            }}
+                            className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30 placeholder:text-white/30"
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -2752,6 +2854,22 @@ workload:
                       <dt className="text-xs text-white/50">Max iterations</dt>
                       <dd className="text-white">{optimization.max_iterations}</dd>
                     </div>
+                    {optimization.max_evaluations != null && optimization.max_evaluations > 0 && (
+                      <div>
+                        <dt className="text-xs text-white/50">Max evaluations</dt>
+                        <dd className="text-white">{optimization.max_evaluations}</dd>
+                      </div>
+                    )}
+                    {optimization.batch_target_util_low != null &&
+                      optimization.batch_target_util_high != null &&
+                      optimization.batch_target_util_low < optimization.batch_target_util_high && (
+                        <div>
+                          <dt className="text-xs text-white/50">Target util band</dt>
+                          <dd className="text-white">
+                            {(optimization.batch_target_util_low * 100).toFixed(0)}%–{(optimization.batch_target_util_high * 100).toFixed(0)}%
+                          </dd>
+                        </div>
+                      )}
                     <div>
                       <dt className="text-xs text-white/50">Step size</dt>
                       <dd className="text-white">{optimization.step_size}</dd>

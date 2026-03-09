@@ -245,10 +245,15 @@ interface SnapshotMetrics {
   service_metrics?: ServiceMetricSnapshot[];
 }
 
+/** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
+export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
+
 interface MetricsResponse {
   run_id: string;
   summary?: MetricsSummary;
   timeseries?: MetricTimeseries[];
+  /** When set, chart uses this instead of building rows from timeseries */
+  timeseriesProcessed?: TimeseriesProcessedItem[];
   metrics?: { service_metrics?: ServiceMetricSnapshot[] };
 }
 
@@ -477,43 +482,53 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
 // ── MetricsTimeseriesChart: renders one chart per metric from persisted data ──
 
 interface MetricsTimeseriesChartProps {
-  timeseries: MetricTimeseries[];
+  timeseries?: MetricTimeseries[];
+  /** When provided, chart uses precomputed rows (from worker); no row building on main thread */
+  timeseriesProcessed?: TimeseriesProcessedItem[];
 }
 
-function MetricsTimeseriesChart({ timeseries }: MetricsTimeseriesChartProps) {
-  if (!timeseries.length) return (
+function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: MetricsTimeseriesChartProps) {
+  const useProcessed = (timeseriesProcessed?.length ?? 0) > 0;
+  const items = useProcessed
+    ? timeseriesProcessed!
+    : timeseries.map((ts) => ({
+        metric: ts.metric,
+        rows: (() => {
+          const rowMap: Record<string, Record<string, number>> = {};
+          for (const p of ts.points) {
+            const key = p.time;
+            if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
+            rowMap[key][p.service_id ?? "global"] = p.value;
+          }
+          return Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
+        })(),
+      }));
+
+  if (!items.length) return (
     <p className="text-sm text-white/40 py-4 text-center">No timeseries data available.</p>
   );
 
   return (
     <div className="space-y-6">
-      {timeseries.map((ts) => {
-        // Build per-service rows. Group points by service_id (or "global").
-        const serviceSet = new Set(ts.points.map((p) => p.service_id ?? "global"));
-        const services = Array.from(serviceSet);
-
-        // Build recharts row array indexed by time string
-        const rowMap: Record<string, Record<string, number>> = {};
-        for (const p of ts.points) {
-          const key = p.time;
-          if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-          rowMap[key][p.service_id ?? "global"] = p.value;
-        }
-        const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
-
+      {items.map((item) => {
+        const rows = item.rows;
         if (!rows.length) return null;
+
+        const services = useProcessed
+          ? Array.from(new Set(rows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))))
+          : Array.from(new Set((timeseries!.find((ts) => ts.metric === item.metric)?.points ?? []).map((p) => p.service_id ?? "global")));
 
         const tMin = rows[0]._t as number;
         const tMax = rows[rows.length - 1]._t as number;
-        const allVals = ts.points.map((p) => p.value);
+        const allVals = rows.flatMap((r) => Object.entries(r).filter(([k]) => k !== "_t").map(([, v]) => v as number));
         const vMaxRaw = Math.max(...allVals, 0) * 1.2;
         const vMax = vMaxRaw > 0 ? vMaxRaw : 1;
         const xDomainMin = tMin < tMax ? tMin : tMax - 60_000;
         const xDomainMax = tMin < tMax ? tMax : tMax;
 
         return (
-          <div key={ts.metric}>
-            <p className="text-xs text-white/50 mb-2 font-mono">{ts.metric}</p>
+          <div key={item.metric}>
+            <p className="text-xs text-white/50 mb-2 font-mono">{item.metric}</p>
             <ResponsiveContainer width="100%" height={160}>
               <LineChart data={rows} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -906,6 +921,7 @@ export default function SimulationRunPage() {
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
+  const timeseriesWorkerRef = useRef<Worker | null>(null);
 
   // ── Run info fetch ──────────────────────────────────────────────────────────
 
@@ -1193,6 +1209,58 @@ export default function SimulationRunPage() {
         (Array.isArray(fromSummaryMetrics.service_metrics) ? fromSummaryMetrics.service_metrics : undefined);
       const metricsPayload =
         serviceMetrics != null ? { ...data.metrics, service_metrics: serviceMetrics } : data.metrics;
+
+      if (data.timeseries && data.timeseries.length > 0 && typeof Worker !== "undefined") {
+        let worker: Worker | null = timeseriesWorkerRef.current;
+        if (!worker) {
+          try {
+            worker = new Worker(
+              new URL("../../../../../../workers/timeseries-processor.worker.ts", import.meta.url),
+              { type: "module" }
+            );
+            timeseriesWorkerRef.current = worker;
+          } catch {
+            worker = null;
+          }
+        }
+        if (worker) {
+          try {
+            const timeseriesProcessed = await new Promise<TimeseriesProcessedItem[]>((resolve, reject) => {
+              const onMsg = (e: MessageEvent<{ type: string; timeseriesProcessed?: TimeseriesProcessedItem[]; error?: string }>) => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                if (e.data?.type === "metricsResult" && Array.isArray(e.data.timeseriesProcessed)) resolve(e.data.timeseriesProcessed);
+                else if (e.data?.type === "error") reject(new Error(e.data.error ?? "Worker error"));
+                else reject(new Error("Unknown worker response"));
+              };
+              const onErr = () => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                reject(new Error("Worker error"));
+              };
+              worker.addEventListener("message", onMsg);
+              worker.addEventListener("error", onErr);
+              worker.postMessage({ type: "processMetrics", data });
+            });
+            setMetricsData({ ...data, summary, metrics: metricsPayload, timeseries: undefined, timeseriesProcessed });
+            if (serviceMetrics?.length) {
+              const bySvc: Record<string, number> = {};
+              for (const sm of serviceMetrics) {
+                if (sm.service_name != null && typeof sm.concurrent_requests === "number") {
+                  bySvc[sm.service_name] = sm.concurrent_requests;
+                }
+              }
+              if (Object.keys(bySvc).length > 0) {
+                setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
+              }
+            }
+            return;
+          } catch {
+            // fall back to main-thread path below
+          }
+        }
+      }
+
       setMetricsData({ ...data, summary, metrics: metricsPayload });
       if (serviceMetrics?.length) {
         const bySvc: Record<string, number> = {};
@@ -1212,6 +1280,8 @@ export default function SimulationRunPage() {
     }
   }, [runId]);
 
+  const TIMESERIES_WORKER_THRESHOLD = 500;
+
   // Fetch timeseries from GET .../metrics/timeseries (metric, optional service, start_time, end_time)
   const fetchTimeseriesApi = useCallback(async () => {
     setTimeseriesApiLoading(true);
@@ -1226,6 +1296,48 @@ export default function SimulationRunPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { points?: TimeseriesPoint[] };
       const points = data.points ?? [];
+
+      if (points.length > TIMESERIES_WORKER_THRESHOLD && typeof Worker !== "undefined") {
+        let worker: Worker | null = timeseriesWorkerRef.current;
+        if (!worker) {
+          try {
+            worker = new Worker(
+              new URL("../../../../../../workers/timeseries-processor.worker.ts", import.meta.url),
+              { type: "module" }
+            );
+            timeseriesWorkerRef.current = worker;
+          } catch {
+            worker = null;
+          }
+        }
+        if (worker) {
+          try {
+            const rows = await new Promise<ChartRow[]>((resolve, reject) => {
+              const onMsg = (e: MessageEvent<{ type: string; rows?: ChartRow[]; error?: string }>) => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                if (e.data?.type === "timeseriesResult" && Array.isArray(e.data.rows)) resolve(e.data.rows);
+                else if (e.data?.type === "error") reject(new Error(e.data.error ?? "Worker error"));
+                else reject(new Error("Unknown worker response"));
+              };
+              const onErr = () => {
+                worker!.removeEventListener("message", onMsg);
+                worker!.removeEventListener("error", onErr);
+                reject(new Error("Worker error"));
+              };
+              worker.addEventListener("message", onMsg);
+              worker.addEventListener("error", onErr);
+              worker.postMessage({ type: "processTimeseriesPoints", points });
+            });
+            setTimeseriesApiRows(rows);
+            setTimeseriesApiLoading(false);
+            return;
+          } catch {
+            // fall back to main-thread row building below
+          }
+        }
+      }
+
       const rowMap: Record<number, Record<string, number>> = {};
       for (const p of points) {
         const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
@@ -1251,6 +1363,16 @@ export default function SimulationRunPage() {
     concurrentByInstanceRef.current = {};
     setConcurrentRequestsByService({});
   }, []);
+
+  // Terminate timeseries worker on unmount or runId change to avoid leaks
+  useEffect(() => {
+    return () => {
+      if (timeseriesWorkerRef.current) {
+        timeseriesWorkerRef.current.terminate();
+        timeseriesWorkerRef.current = null;
+      }
+    };
+  }, [runId]);
 
   // ── On mount ────────────────────────────────────────────────────────────────
 
@@ -1584,7 +1706,10 @@ export default function SimulationRunPage() {
                       <dt className="text-white/40 mb-0.5">Best score</dt>
                       <dd className="text-white/80 font-mono">
                         {typeof runInfo.metadata.best_score === "number"
-                          ? runInfo.metadata.best_score.toFixed(4)
+                          ? (runInfo.metadata.objective === "cpu_utilization" ||
+                            runInfo.metadata.objective === "memory_utilization")
+                            ? `${(runInfo.metadata.best_score * 100).toFixed(2)}%`
+                            : runInfo.metadata.best_score.toFixed(4)
                           : String(runInfo.metadata.best_score)}
                       </dd>
                     </div>
@@ -2564,8 +2689,11 @@ export default function SimulationRunPage() {
               )}
 
               {/* Timeseries charts (from persisted metrics response) */}
-              {(displayMetrics.timeseries?.length ?? 0) > 0 ? (
-                <MetricsTimeseriesChart timeseries={displayMetrics.timeseries!} />
+              {((displayMetrics.timeseriesProcessed?.length ?? 0) > 0 || (displayMetrics.timeseries?.length ?? 0) > 0) ? (
+                <MetricsTimeseriesChart
+                  timeseries={displayMetrics.timeseries}
+                  timeseriesProcessed={displayMetrics.timeseriesProcessed}
+                />
               ) : (
                 <p className="text-xs text-white/30 italic">No timeseries data available.</p>
               )}
