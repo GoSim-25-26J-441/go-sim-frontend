@@ -17,9 +17,9 @@ set -e
 BUCKET="${1:?Usage: deploy-ec2.sh BUCKET REGION}"
 REGION="${2:?Usage: deploy-ec2.sh BUCKET REGION}"
 
-LOG_FILE="${LOG_FILE:-$HOME/deploy.log}"
-APP_DIR="${APP_DIR:-$HOME/go-sim-frontend}"
-PARAM_NAME="${PARAM_NAME:-/go-sim-frontend/production/env}"
+LOG_FILE="${LOG_FILE:-/opt/go-sim-frontend/deploy.log}"
+APP_DIR="${APP_DIR:-/opt/go-sim-frontend}"
+PARAM_NAME="${PARAM_NAME:-/arcfind/production/frontend}"
 PM2_APP_NAME="${PM2_APP_NAME:-go-sim-frontend}"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
