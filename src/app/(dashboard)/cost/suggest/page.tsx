@@ -276,7 +276,13 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
         }
     };
 
-    if (loading || !design || !simulation) {
+    const shouldShowLoading =
+        loading ||
+        !design ||
+        !simulation ||
+        (!suggestionData && !error);
+
+    if (shouldShowLoading) {
         return (
             <div className="flex items-center justify-center min-h-[60vh] p-6">
                 <div className="text-xl opacity-70">Analyzing infrastructure candidates...</div>
