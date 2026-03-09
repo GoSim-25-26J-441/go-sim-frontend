@@ -2,6 +2,7 @@
 
 import { useToast } from "@/hooks/useToast";
 import { X, CheckCircle, XCircle, Info, AlertTriangle } from "lucide-react";
+import Image from "next/image";
 
 export function ToastContainer() {
   const toasts = useToast((s) => s.toasts);
@@ -9,6 +10,8 @@ export function ToastContainer() {
 
   const getToastStyles = (type: string) => {
     switch (type) {
+      case "chat":
+        return "bg-black/70 text-white text-sm font-medium rounded-md px-3 py-2.5 border-white/10";
       case "success":
         return "bg-gradient-to-r from-[#34D399]/10 to-[#34D399]/10 border-[#34D399]/30 text-green-400";
       case "error":
@@ -24,6 +27,18 @@ export function ToastContainer() {
 
   const getIcon = (type: string) => {
     switch (type) {
+      case "chat":
+        return (
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center">
+            <Image
+              src="/logo/logo.png"
+              alt=""
+              width={24}
+              height={24}
+              className="h-6 w-6 object-contain"
+            />
+          </div>
+        );
       case "success":
         return <CheckCircle className="w-5 h-5 text-green-500" />;
       case "error":
@@ -42,15 +57,15 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`flex items-start gap-3 p-2 rounded-full border backdrop-blur-sm shadow-xl animate-in slide-in-from-bottom duration-300 ${getToastStyles(toast.type)}`}
+          className={`flex items-center gap-3 border backdrop-blur-md shadow-xl animate-in slide-in-from-bottom duration-300 ${getToastStyles(toast.type)} ${toast.type === "chat" ? "min-w-[280px] rounded-xl px-3 py-2.5" : "rounded-full p-2"}`}
         >
-          <div className="flex-shrink-0 mt-0.5">{getIcon(toast.type)}</div>
-          <p className="flex-1 text-xs font-medium leading-relaxed mt-0.5">
+          <div className="shrink-0">{getIcon(toast.type)}</div>
+          <p className={`flex-1 font-medium leading-relaxed ${toast.type === "chat" ? "text-sm" : "text-xs mt-0.5"}`}>
             {toast.message}
           </p>
           <button
             onClick={() => removeToast(toast.id)}
-            className="flex-shrink-0 hover:bg-white/10 rounded-lg p-1 transition-colors duration-150"
+            className="shrink-0 hover:bg-white/10 rounded-lg p-1 transition-colors duration-150"
             aria-label="Close notification"
           >
             <X className="w-4 h-4" />

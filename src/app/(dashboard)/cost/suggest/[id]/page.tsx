@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchMetricsAnalysisById } from "@/app/api/asm/routes";
-import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft } from "lucide-react";
+import { BarChart3, Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -68,6 +68,7 @@ type ViewMetricsAnalysisPageProps = {
 
 export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysisPageProps) {
   const { user } = useAuth();
+  const router = useRouter();
 
   const [data, setData] = useState<StoredRequest | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,9 +133,9 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
 
   return (
     <div className="p-6 space-y-4">
-      <div className="max-w-7xl mx-auto">
+      <div className="p-6 space-y-4">
         {/* Header */}
-        <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
+        {/* <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
           <div className="flex items-center gap-4">
             <Link
               href={costBaseHref}
@@ -150,6 +151,34 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
           >
             View Cost Analysis
           </Link>
+        </div> */}
+        <div
+          className=" flex items-center justify-between"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+        >
+          <div className='px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap'>
+            <button
+              onClick={() => router.back()}
+              className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+              aria-label="Go back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+
+            <div>
+              <h1 className="text-md font-bold text-white flex items-center gap-2">
+                Metrics Analysis
+              </h1>
+            </div>
+          </div>
+          <div>
+            <Link
+              href={costRunHref}
+              className="inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            >
+              View Cost Analysis
+            </Link>
+          </div>
         </div>
 
         {/* Design Requirements */}

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useState, useEffect } from "react";
@@ -24,7 +25,8 @@ import {
     TrendingUp,
     Calendar,
     X,
-    GitCompare
+    GitCompare,
+    ArrowLeft
 } from "lucide-react";
 import { getRegionDisplayName } from "@/utils/regionFormatter";
 import { GENERIC_REGIONS, getGenericRegionById } from "@/utils/genericRegions";
@@ -378,9 +380,9 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     return (
         <div className="p-6 space-y-4">
-            <div className="max-w-7xl mx-auto">
+            <div className="">
                 {/* Header */}
-                <div className="flex items-center justify-between mb-8">
+                {/* <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
                         <button
                             onClick={handleBackClick}
@@ -390,17 +392,28 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                         </button>
                         <h1 className="text-4xl font-bold">Cluster Cost Analysis</h1>
                     </div>
-                    {/* <Link
-                        href={projectId ? `/project/${projectId}/cost/suggest/${requestId}` : `/cost/suggest/${requestId}`}
-                        className="rounded-xl border border-border px-4 py-2 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
+                </div> */}
+                <div
+                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                    <button
+                        onClick={() => router.back()}
+                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                        aria-label="Go back"
                     >
-                        <BarChart3 className="w-5 h-5" />
-                        View Metrices Analysis
-                    </Link> */}
+                        <ArrowLeft className="w-4 h-4" />
+                    </button>
+
+                    <div>
+                        <h1 className="text-md font-bold text-white flex items-center gap-2">
+                            Cluster Cost Analysis
+                        </h1>
+                    </div>
                 </div>
 
                 {/* Provider & Region Selection */}
-                <div className="bg-card border border-border rounded-lg p-6 mb-8">
+                <div className="bg-card border border-border rounded-lg p-6 my-8">
                     <h2 className="text-xl font-semibold mb-4">Cloud Provider & Region</h2>
 
                     <div className="mb-6">
@@ -758,7 +771,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                 {viewMode === "by-provider" && (!compareRegionsEnabled || selectedRegions.length < 2) && (
                     <div>
-                        <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center justify-between m-6">
                             <h2 className="text-2xl font-bold">Pricing Options Breakdown</h2>
                             <div className="text-sm opacity-60">
                                 Showing {currentCosts.length} pricing option{currentCosts.length !== 1 ? 's' : ''}
