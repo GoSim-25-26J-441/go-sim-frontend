@@ -120,19 +120,19 @@ export function parseAmgApdTemplate(yamlString: string): AmgApdTemplate | null {
     const raw = parseYaml(yamlString);
     if (typeof raw !== "object" || raw === null) return null;
 
-    const servicesRaw = Array.isArray((raw as Record<string, unknown>).services)
-      ? (raw as Record<string, unknown>).services
+    const servicesRaw: unknown[] = Array.isArray((raw as Record<string, unknown>).services)
+      ? ((raw as Record<string, unknown>).services as unknown[])
       : [];
     const services: AmgApdService[] = servicesRaw.filter(isAmgApdService);
     if (services.length === 0) return null;
 
-    const depsRaw = Array.isArray((raw as Record<string, unknown>).dependencies)
-      ? (raw as Record<string, unknown>).dependencies
+    const depsRaw: unknown[] = Array.isArray((raw as Record<string, unknown>).dependencies)
+      ? ((raw as Record<string, unknown>).dependencies as unknown[])
       : [];
     const dependencies: AmgApdDependency[] = depsRaw.filter(isAmgApdDependency);
 
-    const datastores = Array.isArray((raw as Record<string, unknown>).datastores)
-      ? (raw as Record<string, unknown>).datastores
+    const datastores: unknown[] | undefined = Array.isArray((raw as Record<string, unknown>).datastores)
+      ? ((raw as Record<string, unknown>).datastores as unknown[])
       : undefined;
 
     return { services, dependencies, datastores };

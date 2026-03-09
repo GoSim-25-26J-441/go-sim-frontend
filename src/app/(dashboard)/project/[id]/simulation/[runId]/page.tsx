@@ -461,8 +461,8 @@ function MetricsTimeseriesChart({ timeseries }: MetricsTimeseriesChartProps) {
                 />
                 <Tooltip
                   contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)" }}
-                  labelFormatter={(v: number) => new Date(v).toISOString()}
-                  formatter={(v: number, name: string) => [v.toFixed(2), name]}
+                  labelFormatter={(label) => typeof label === "number" ? new Date(label).toISOString() : String(label ?? "")}
+                  formatter={(v, name) => [typeof v === "number" ? v.toFixed(2) : String(v ?? ""), String(name ?? "")]}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 {services.map((svc, i) => (

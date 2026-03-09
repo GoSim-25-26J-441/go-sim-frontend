@@ -13,6 +13,9 @@ type InputFieldProps = {
   required?: boolean;
   disabled?: boolean;
   className?: string;
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 type TextAreaFieldProps = {
@@ -40,7 +43,10 @@ export function InputField({
   error,
   required = true,
   disabled = false,
-  className = ''
+  className = '',
+  min,
+  max,
+  step,
 }: InputFieldProps) {
   return (
     <div className={`flex flex-col ${className}`}>
@@ -64,6 +70,9 @@ export function InputField({
         onBlur={onBlur}
         placeholder={placeholder}
         disabled={disabled}
+        min={min}
+        max={max}
+        step={step}
         className={`px-3 py-2 bg-black/40 border border-white/20 rounded-lg text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
           error ? 'border-[#F58595] ring-2 ring-[#F58595]/60' : ''
         }`}
