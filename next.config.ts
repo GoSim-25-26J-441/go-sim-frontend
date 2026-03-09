@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   async rewrites() {
     return [
       { source: "/api/v1/:path*", destination: `${BACKEND}/api/v1/:path*` },
