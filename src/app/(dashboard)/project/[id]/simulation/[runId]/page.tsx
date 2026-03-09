@@ -997,13 +997,15 @@ export default function SimulationRunPage() {
           value?: number;
           timestamp?: string;
           labels?: { service?: string; instance?: string; endpoint?: string; [key: string]: unknown };
+          service_id?: string;
+          service_name?: string;
         }
         const outer = JSON.parse(data) as MetricPayload & { data?: MetricPayload };
         // Backend wraps the metric inside a "data" field: { data: {...}, event, run_id }
         // Fall back to flat format for older/direct payloads.
         const m: MetricPayload = outer.data ?? outer;
-        const svc = m.labels?.service;
-        if (svc) knownServicesRef.current.add(svc as string);
+        const svc = (m.labels?.service ?? m.service_id ?? m.service_name) as string | undefined;
+        if (svc) knownServicesRef.current.add(svc);
 
         if (m.metric === "request_count" && svc && m.value != null) {
           const t = m.timestamp ? new Date(m.timestamp).getTime() : Date.now();
@@ -1029,7 +1031,22 @@ export default function SimulationRunPage() {
       } catch { /* malformed — ignore */ }
     }
 
-    if (type === "metrics_snapshot") {
+    const pushRequestCountFromServiceMetrics = (list: ServiceMetricSnapshot[]) => {
+      if (!Array.isArray(list) || list.length === 0) return;
+      const t = Date.now();
+      for (const sm of list) {
+        const name = sm?.service_name;
+        if (name != null && typeof sm.request_count === "number") {
+          knownServicesRef.current.add(name);
+          const buf = seriesBufferRef.current;
+          if (!buf[name]) buf[name] = [];
+          buf[name].push({ t, v: sm.request_count });
+          if (buf[name].length > MAX_POINTS) buf[name] = buf[name].slice(-MAX_POINTS);
+        }
+      }
+    };
+
+    if (type === "metrics_snapshot" || type === "metrics") {
       try {
         const parsed = JSON.parse(data) as {
           data?: { metrics?: SnapshotMetrics };
@@ -1050,6 +1067,7 @@ export default function SimulationRunPage() {
           if (Object.keys(bySvc).length > 0) {
             setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
           }
+          pushRequestCountFromServiceMetrics(list);
         }
 
         const num = (v: unknown): number | undefined =>
@@ -1271,6 +1289,25 @@ export default function SimulationRunPage() {
         }
         if (Object.keys(bySvc).length > 0) {
           setConcurrentRequestsByService((prev) => ({ ...prev, ...bySvc }));
+        }
+        // Fallback: seed Request count chart from persisted metrics when chart has no data
+        const serviceMetrics = data.metrics.service_metrics;
+        const hasRequestCount = serviceMetrics.some(
+          (sm) => sm.service_name != null && typeof sm.request_count === "number"
+        );
+        if (hasRequestCount) {
+          const t = Date.now();
+          setChartSeries((prev) => {
+            const hasPoints = Object.values(prev).some((pts) => pts.length > 0);
+            if (hasPoints) return prev;
+            const next: ServiceSeries = {};
+            for (const sm of serviceMetrics) {
+              if (sm.service_name != null && typeof sm.request_count === "number") {
+                next[sm.service_name] = [{ t, v: sm.request_count }];
+              }
+            }
+            return Object.keys(next).length > 0 ? next : prev;
+          });
         }
       }
     } catch (e) {
