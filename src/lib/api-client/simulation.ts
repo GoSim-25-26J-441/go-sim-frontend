@@ -291,6 +291,36 @@ export async function stopSimulationRun(
 }
 
 /**
+ * Update run (PUT /runs/:id). Used for run control: status (e.g. "completed", "cancelled")
+ * or metadata. Backend: PUT /api/v1/simulation/runs/:id
+ */
+export interface UpdateRunBody {
+  status?: "running" | "completed" | "cancelled" | "stopped" | string;
+  metadata?: Record<string, unknown>;
+  engine_run_id?: string;
+}
+
+export async function updateRun(
+  id: string,
+  body: UpdateRunBody
+): Promise<{ run_id: string; status: string; run?: { run_id: string; status: string; metadata?: Record<string, unknown> } }> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(id)}`;
+  const response = await authenticatedFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: "Run update failed" }));
+    throw new Error((err as { error?: string }).error ?? `Run update failed (${response.status})`);
+  }
+  const data = (await response.json()) as { run?: { run_id: string; status: string; metadata?: Record<string, unknown> } };
+  const run = data.run;
+  if (run) return { run_id: run.run_id, status: run.status, run };
+  return { run_id: id, status: body.status ?? "unknown", run: data.run };
+}
+
+/**
  * Update workload rate for a running simulation (online mode).
  * Thin wrapper around patchRunWorkload.
  */
