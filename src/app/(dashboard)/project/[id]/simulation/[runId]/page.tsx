@@ -253,6 +253,20 @@ interface SnapshotMetrics {
   service_metrics?: ServiceMetricSnapshot[];
 }
 
+/** Host-level metrics from metric_update (labels.host) or metrics_snapshot.data.host_metrics */
+interface HostMetricSnapshot {
+  host_id: string;
+  cpu_utilization?: number;   // 0–1
+  memory_utilization?: number; // 0–1
+}
+
+/** Host resources from metrics_snapshot.data.resources.hosts */
+interface HostResource {
+  host_id: string;
+  cpu_cores?: number;
+  memory_gb?: number;
+}
+
 /** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
 export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
 
@@ -919,6 +933,9 @@ export default function SimulationRunPage() {
   // Concurrent requests (gauge): per-instance ref, per-service state for "current load" display
   const concurrentByInstanceRef = useRef<Record<string, number>>({});
   const [concurrentRequestsByService, setConcurrentRequestsByService] = useState<Record<string, number>>({});
+  // Host-level metrics (host-*): from metric_update labels.host or metrics_snapshot.host_metrics; gauges = latest value
+  const [hostMetrics, setHostMetrics] = useState<Record<string, { cpu_utilization?: number; memory_utilization?: number }>>({});
+  const [hostResources, setHostResources] = useState<Record<string, { cpu_cores?: number; memory_gb?: number }>>({});
   // Timeseries from GET .../metrics/timeseries API (for line chart over time)
   const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
   const [timeseriesApiMetric, setTimeseriesApiMetric] = useState<string>("request_latency_ms");
@@ -1006,7 +1023,7 @@ export default function SimulationRunPage() {
           metric?: string;
           value?: number;
           timestamp?: string;
-          labels?: { service?: string; instance?: string; endpoint?: string; [key: string]: unknown };
+          labels?: { service?: string; instance?: string; host?: string; endpoint?: string; [key: string]: unknown };
           service_id?: string;
           service_name?: string;
         }
@@ -1016,6 +1033,21 @@ export default function SimulationRunPage() {
         const m: MetricPayload = outer.data ?? outer;
         const svc = (m.labels?.service ?? m.service_id ?? m.service_name) as string | undefined;
         if (svc) knownServicesRef.current.add(svc);
+
+        // Host-level metrics (host-*): gauges, use latest value
+        const hostId = m.labels?.host as string | undefined;
+        if (hostId && typeof hostId === "string" && hostId.startsWith("host-") && m.value != null) {
+          const metricName = m.metric;
+          if (metricName === "cpu_utilization" || metricName === "memory_utilization") {
+            setHostMetrics((prev) => ({
+              ...prev,
+              [hostId]: {
+                ...prev[hostId],
+                [metricName]: m.value,
+              },
+            }));
+          }
+        }
 
         // request_count: one source per series (metric_update or metrics_snapshot, never mixed)
         if (m.metric === "request_count" && svc && m.value != null && seriesSourceRef.current[svc] !== "metrics_snapshot") {
@@ -1064,11 +1096,49 @@ export default function SimulationRunPage() {
     if (type === "metrics_snapshot" || type === "metrics") {
       try {
         const parsed = JSON.parse(data) as {
-          data?: { metrics?: SnapshotMetrics };
+          data?: {
+            metrics?: SnapshotMetrics;
+            host_metrics?: HostMetricSnapshot[];
+            resources?: { hosts?: HostResource[] };
+          };
           metrics?: SnapshotMetrics;
         };
-        const metrics = parsed.data?.metrics ?? parsed.metrics;
+        const dataPayload = parsed.data;
+        const metrics = dataPayload?.metrics ?? parsed.metrics;
         if (!metrics || typeof metrics !== "object") return;
+
+        // Host-level metrics and resources from snapshot
+        const hostMetricsList = dataPayload?.host_metrics;
+        if (Array.isArray(hostMetricsList) && hostMetricsList.length > 0) {
+          const byHost: Record<string, { cpu_utilization?: number; memory_utilization?: number }> = {};
+          for (const hm of hostMetricsList) {
+            const id = hm?.host_id;
+            if (id && typeof id === "string" && id.startsWith("host-")) {
+              const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+              byHost[id] = {
+                cpu_utilization: num(hm.cpu_utilization) ?? byHost[id]?.cpu_utilization,
+                memory_utilization: num(hm.memory_utilization) ?? byHost[id]?.memory_utilization,
+              };
+            }
+          }
+          if (Object.keys(byHost).length > 0) {
+            setHostMetrics((prev) => ({ ...prev, ...byHost }));
+          }
+        }
+        const hostsResource = dataPayload?.resources?.hosts;
+        if (Array.isArray(hostsResource) && hostsResource.length > 0) {
+          const byHost: Record<string, { cpu_cores?: number; memory_gb?: number }> = {};
+          for (const h of hostsResource) {
+            const id = h?.host_id;
+            if (id && typeof id === "string") {
+              const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+              byHost[id] = { cpu_cores: num(h.cpu_cores), memory_gb: num(h.memory_gb) };
+            }
+          }
+          if (Object.keys(byHost).length > 0) {
+            setHostResources((prev) => ({ ...prev, ...byHost }));
+          }
+        }
 
         const list = metrics.service_metrics;
         if (Array.isArray(list) && list.length > 0) {
@@ -1408,7 +1478,7 @@ export default function SimulationRunPage() {
     }
   }, [runId, timeseriesApiMetric]);
 
-  // Clear chart data and concurrent-requests state
+  // Clear chart data, concurrent-requests, and host metrics state
   const clearChart = useCallback(() => {
     seriesSourceRef.current = {};
     seriesBufferRef.current = {};
@@ -1416,6 +1486,7 @@ export default function SimulationRunPage() {
     setChartSeries({});
     concurrentByInstanceRef.current = {};
     setConcurrentRequestsByService({});
+    setHostMetrics({});
   }, []);
 
   // Terminate timeseries worker on unmount or runId change to avoid leaks
@@ -2164,6 +2235,79 @@ export default function SimulationRunPage() {
           </div>
         </div>
       )}
+
+      {/* Host-level metrics (host-*) from stream — CPU / memory utilization */}
+      {(() => {
+        const hostIds = Object.keys(hostMetrics).filter((id) => id.startsWith("host-"));
+        if (hostIds.length === 0) return null;
+        const toPct = (v: number) => (v <= 1 ? v * 100 : v);
+        return (
+          <div className="bg-card border border-border rounded-lg p-4 space-y-2">
+            <h2 className="text-sm font-semibold text-white">
+              Host metrics
+              <span className="ml-2 text-xs font-normal text-white/40">from stream · utilization</span>
+            </h2>
+            <div className="flex flex-wrap gap-3">
+              {hostIds.sort().map((hostId) => {
+                const m = hostMetrics[hostId];
+                const res = hostResources[hostId];
+                const cpuPct = typeof m?.cpu_utilization === "number" ? toPct(m.cpu_utilization) : null;
+                const memPct = typeof m?.memory_utilization === "number" ? toPct(m.memory_utilization) : null;
+                return (
+                  <div
+                    key={hostId}
+                    className="rounded-lg border border-border bg-black/20 px-3 py-2 flex items-center gap-4"
+                  >
+                    <span className="text-xs text-white/60 font-mono shrink-0" title={hostId}>{hostId}</span>
+                    {res && (typeof res.cpu_cores === "number" || typeof res.memory_gb === "number") && (
+                      <span className="text-[11px] text-white/40">
+                        {res.cpu_cores != null && `${res.cpu_cores} cores`}
+                        {res.cpu_cores != null && res.memory_gb != null && " · "}
+                        {res.memory_gb != null && `${res.memory_gb} GB`}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-3">
+                      {cpuPct != null && (
+                        <div className="flex flex-col items-center">
+                          <svg className="w-8 h-8 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
+                            <circle
+                              cx="18" cy="18" r="14"
+                              fill="none" stroke="#38bdf8" strokeWidth="4"
+                              strokeDasharray={`${Math.min(cpuPct / 100 * 0.879, 0.879)} 88`}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <span className="text-[10px] text-white/50">CPU</span>
+                          <span className="text-xs font-mono text-white">{cpuPct.toFixed(1)}%</span>
+                        </div>
+                      )}
+                      {memPct != null && (
+                        <div className="flex flex-col items-center">
+                          <svg className="w-8 h-8 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
+                            <circle
+                              cx="18" cy="18" r="14"
+                              fill="none" stroke="#34d399" strokeWidth="4"
+                              strokeDasharray={`${Math.min(memPct / 100 * 0.879, 0.879)} 88`}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <span className="text-[10px] text-white/50">Mem</span>
+                          <span className="text-xs font-mono text-white">{memPct.toFixed(1)}%</span>
+                        </div>
+                      )}
+                      {cpuPct == null && memPct == null && (
+                        <span className="text-xs text-white/40">—</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Request count chart */}
       <RequestCountChart series={chartSeries} onClear={clearChart} />
