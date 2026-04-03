@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import {
@@ -58,6 +58,19 @@ export default function ClientChat({ id }: Props) {
   const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
     useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const INPUT_MAX_HEIGHT_PX = 200;
+
+  const syncInputHeight = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT_PX)}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    syncInputHeight();
+  }, [input, syncInputHeight]);
 
   const {
     data: projectThreadId,
@@ -393,132 +406,130 @@ export default function ClientChat({ id }: Props) {
           />
         )}
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {loadingHistory && (
-            <div className="flex items-center justify-center gap-2 py-6">
-              <Loader2
-                className="w-4 h-4 animate-spin"
-                style={{ color: "rgba(255,255,255,0.3)" }}
-              />
-              <span
-                className="text-sm"
-                style={{ color: "rgba(255,255,255,0.3)" }}
-              >
-                Loading history…
-              </span>
-            </div>
-          )}
-
-          {messages.map((m, i) => (
-            <MessageBubble
-              key={`${m.ts ?? i}-${i}`}
-              role={m.role}
-              text={m.message}
-            />
-          ))}
-
-          {loading && (
-            <div className="flex justify-start gap-2">
-              <div
-                className="rounded-2xl px-4 py-2.5 flex items-center gap-2"
-                style={{
-                  backgroundColor: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  borderBottomLeftRadius: "4px",
-                }}
-              >
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="w-full max-w-3xl mx-auto space-y-5">
+            {loadingHistory && (
+              <div className="flex items-center justify-center gap-2 py-6">
                 <Loader2
-                  className="w-3.5 h-3.5 animate-spin"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  className="w-4 h-4 animate-spin"
+                  style={{ color: "rgba(255,255,255,0.3)" }}
                 />
                 <span
                   className="text-sm"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  style={{ color: "rgba(255,255,255,0.3)" }}
                 >
-                  Thinking…
+                  Loading history…
                 </span>
               </div>
-            </div>
-          )}
+            )}
 
-          {err && (
-            <div
-              className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
-              style={{
-                backgroundColor: "rgba(239,68,68,0.08)",
-                border: "1px solid rgba(239,68,68,0.2)",
-                color: "#fca5a5",
-              }}
-            >
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              {err}
-            </div>
-          )}
+            {messages.map((m, i) => (
+              <MessageBubble
+                key={`${m.ts ?? i}-${i}`}
+                role={m.role}
+                text={m.message}
+              />
+            ))}
 
-          <div ref={messagesEndRef} />
+            {loading && (
+              <div className="flex justify-start gap-2">
+                <div
+                  className="rounded-2xl px-4 py-2.5 flex items-center gap-2"
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    borderBottomLeftRadius: "4px",
+                  }}
+                >
+                  <Loader2
+                    className="w-3.5 h-3.5 animate-spin"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  />
+                  <span
+                    className="text-sm"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  >
+                    Thinking…
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {err && (
+              <div
+                className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
+                style={{
+                  backgroundColor: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.2)",
+                  color: "#fca5a5",
+                }}
+              >
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                {err}
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
         </div>
 
         <div
           className="px-4 pb-4 pt-3"
           style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
         >
-          {!threadId && !checkingThread && (
-            <div
-              className="mb-2 px-3 py-2 text-xs rounded-lg text-center"
-              style={{
-                backgroundColor: "rgba(251,191,36,0.08)",
-                border: "1px solid rgba(251,191,36,0.2)",
-                color: "#fcd34d",
-              }}
-            >
-              No thread found — start a conversation to create one.
-            </div>
-          )}
+          <div className="w-full max-w-3xl mx-auto">
+            {!threadId && !checkingThread && (
+              <div
+                className="mb-2 px-3 py-2 text-xs rounded-lg text-center"
+                style={{
+                  backgroundColor: "rgba(251,191,36,0.08)",
+                  border: "1px solid rgba(251,191,36,0.2)",
+                  color: "#fcd34d",
+                }}
+              >
+                No thread found — start a conversation to create one.
+              </div>
+            )}
 
-          <div className="flex items-center gap-2">
-            <input
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                if (err) setErr(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={inputRef}
+                rows={1}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  if (err) setErr(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={
+                  !threadId && !checkingThread
+                    ? "No active thread…"
+                    : "Type your message…"
                 }
-              }}
-              placeholder={
-                !threadId && !checkingThread
-                  ? "No active thread…"
-                  : "Type your message…"
-              }
-              disabled={!threadId || loading}
-              className="flex-1 rounded-full px-4 py-2.5 text-sm focus:outline-none transition-all duration-150 bg-white text-black placeholder:text-black/20 disabled:opacity-40 disabled:cursor-not-allowed"
-              onFocus={(e) =>
-                ((e.currentTarget as HTMLElement).style.borderColor =
-                  "rgba(255,255,255,0.3)")
-              }
-              onBlur={(e) =>
-                ((e.currentTarget as HTMLElement).style.borderColor =
-                  "rgba(255,255,255,0.1)")
-              }
-            />
-            <button
-              disabled={!threadId || loading || !input.trim()}
-              onClick={handleSend}
-              className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 ${
-                !threadId || loading || !input.trim()
-                  ? "bg-white/80 cursor-not-allowed"
-                  : "bg-white hover:bg-white/80 cursor-pointer"
-              } ${!threadId || loading || !input.trim() ? "text-black/40" : "text-black/90"} ${!threadId || loading || !input.trim() ? "hover:bg-white/60" : "hover:bg-white/40"}`}
-            >
-              {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </button>
+                disabled={!threadId || loading}
+                className="flex-1 min-h-[44px] max-h-[200px] resize-none rounded-3xl px-4 py-2.5 text-sm leading-snug focus:outline-none transition-all duration-150 bg-white text-black placeholder:text-black/20 disabled:opacity-40 disabled:cursor-not-allowed overflow-y-auto border border-black/10 focus:border-black/25"
+              />
+              <button
+                disabled={!threadId || loading || !input.trim()}
+                onClick={handleSend}
+                className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 mb-0.5 ${
+                  !threadId || loading || !input.trim()
+                    ? "bg-white/80 cursor-not-allowed"
+                    : "bg-white hover:bg-white/80 cursor-pointer"
+                } ${!threadId || loading || !input.trim() ? "text-black/40" : "text-black/90"} ${!threadId || loading || !input.trim() ? "hover:bg-white/60" : "hover:bg-white/40"}`}
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
