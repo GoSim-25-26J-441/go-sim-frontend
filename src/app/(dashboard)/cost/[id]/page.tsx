@@ -903,7 +903,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                 </span>
                                                             </div>
                                                             <div className="text-xs opacity-50 mt-1">
-                                                                ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} nodes × 720h
+                                                                ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} nodes × 730h
                                                             </div>
                                                         </div>
                                                     </div>
@@ -1062,7 +1062,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                     <div className="flex justify-between">
                                                                         <span className="opacity-60">Node monthly cost:</span>
                                                                         <span className="font-mono">
-                                                                            ${cost.price_per_node_hour.toFixed(3)} × 720h = ${cost.price_per_node_month.toFixed(2)}
+                                                                            ${cost.price_per_node_hour.toFixed(3)} × 730h = ${cost.price_per_node_month.toFixed(2)}
                                                                         </span>
                                                                     </div>
                                                                     <div className="flex justify-between">
@@ -1074,7 +1074,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                     <div className="flex justify-between">
                                                                         <span className="opacity-60">Control plane monthly:</span>
                                                                         <span className="font-mono">
-                                                                            ${cost.control_plane_hour.toFixed(3)} × 720h = ${cost.control_plane_month.toFixed(2)}
+                                                                            ${cost.control_plane_hour.toFixed(3)} × 730h = ${cost.control_plane_month.toFixed(2)}
                                                                         </span>
                                                                     </div>
                                                                     <div className="pt-2 mt-2 border-t border-border">
@@ -1164,7 +1164,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs opacity-50">
                                                             <div className="flex items-start gap-2">
                                                                 <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
-                                                                <span>1 month = 720 hours (24h × 30 days)</span>
+                                                                <span>1 month = 730 hours (24h × 30 days)</span>
                                                             </div>
                                                             <div className="flex items-start gap-2">
                                                                 <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
