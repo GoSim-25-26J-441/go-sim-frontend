@@ -1,9 +1,12 @@
+import { useState } from "react";
 import type { ComponentPropsWithoutRef } from "react";
 import Markdown from "react-markdown";
+import { Copy, Check } from "lucide-react";
 
 type MessageBubbleProps = {
   role: "user" | "assistant";
   text: string;
+  responseTimeMs?: number;
 };
 
 function MdHeading({ children, ...props }: ComponentPropsWithoutRef<"h4">) {
@@ -117,20 +120,47 @@ const assistantMarkdownComponents = {
 const bubbleBase =
   "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed";
 
-export default function MessageBubble({ role, text }: MessageBubbleProps) {
+function formatResponseTime(ms: number): string {
+  if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+  const minutes = Math.floor(ms / 60000);
+  const seconds = Math.floor((ms % 60000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
+export default function MessageBubble({
+  role,
+  text,
+  responseTimeMs,
+}: MessageBubbleProps) {
   const isUser = role === "user";
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   return (
     <div
       className={`flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
     >
       <span
-        className="text-[10px] uppercase tracking-wider font-semibold px-1 select-none"
+        className="text-[9px] font-medium px-1 select-none"
         style={{
           color: isUser ? "rgba(255,255,255,0.5)" : "rgba(147,197,253,0.85)",
         }}
       >
-        {isUser ? "" : "Assistant"}
+        {isUser
+          ? ""
+          : responseTimeMs !== undefined
+            ? `Assistant · Response time: ${formatResponseTime(responseTimeMs)}`
+            : "Assistant"}
       </span>
 
       <div
@@ -164,6 +194,23 @@ export default function MessageBubble({ role, text }: MessageBubbleProps) {
           </div>
         )}
       </div>
+
+      {!isUser && (
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/55 hover:text-white/80 transition-colors"
+          title={copied ? "Copied" : "Copy response"}
+          aria-label={copied ? "Copied response" : "Copy response"}
+        >
+          {copied ? (
+            <Check className="w-3 h-3 shrink-0" />
+          ) : (
+            <Copy className="w-3 h-3 shrink-0" />
+          )}
+          <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+      )}
     </div>
   );
 }

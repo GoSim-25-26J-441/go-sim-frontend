@@ -4,6 +4,8 @@
 import { useState, useEffect, useRef } from "react";
 import { X, ChevronDown, Trash2, Send, Loader2, MessageCircle } from "lucide-react";
 import { useTempChatMutation } from "@/app/store/projectsApi";
+import MessageBubble from "@/components/chat/main/comp/MessageBubble";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 interface TempChatModalProps {
   isOpen: boolean;
@@ -16,6 +18,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   message: string;
   ts: number;
+  responseTimeMs?: number;
 }
 
 export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
@@ -25,9 +28,29 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [pendingResponseMs, setPendingResponseMs] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [tempChat] = useTempChatMutation();
+
+  useEffect(() => {
+    if (pendingResponseMs === null) return;
+    const startedAt = Date.now() - pendingResponseMs;
+    const t = window.setInterval(() => {
+      setPendingResponseMs(Date.now() - startedAt);
+    }, 100);
+    return () => window.clearInterval(t);
+  }, [pendingResponseMs]);
+
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -54,13 +77,21 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
     setInput("");
     setLoading(true);
     setErr(null);
+    const startedAt = Date.now();
+    setPendingResponseMs(0);
 
     try {
       const result = await tempChat({ message: text, mode }).unwrap();
+      const responseTimeMs = Date.now() - startedAt;
       if (result.ok && result.answer) {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", message: result.answer, ts: Date.now() },
+          {
+            role: "assistant",
+            message: result.answer,
+            ts: Date.now(),
+            responseTimeMs,
+          },
         ]);
       } else {
         throw new Error("Failed to get response");
@@ -88,6 +119,7 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
       setMessages((prev) => prev.slice(0, -1));
     } finally {
       setLoading(false);
+      setPendingResponseMs(null);
     }
   };
 
@@ -226,7 +258,8 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
             </div>
 
             <button
-              onClick={handleClose}
+              type="button"
+              onClick={() => setConfirmCloseOpen(true)}
               className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
             >
               <X className="w-4 h-4" />
@@ -236,31 +269,12 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 scroll-smooth">
           {messages.map((m, i) => (
-            <div
+            <MessageBubble
               key={`msg-${m.ts}-${i}`}
-              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className="max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed"
-                style={
-                  m.role === "user"
-                    ? {
-                        backgroundColor: "#000",
-                        color: "#fff",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        borderBottomRightRadius: "4px",
-                      }
-                    : {
-                        backgroundColor: "rgba(255,255,255,0.05)",
-                        color: "rgba(255,255,255,0.9)",
-                        border: "1px solid rgba(255,255,255,0.07)",
-                        borderBottomLeftRadius: "4px",
-                      }
-                }
-              >
-                {m.message}
-              </div>
-            </div>
+              role={m.role}
+              text={m.message}
+              responseTimeMs={m.responseTimeMs}
+            />
           ))}
 
           {loading && (
@@ -280,6 +294,12 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
                 <span className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
                   Thinking…
                 </span>
+                <span
+                    className="text-[10px]"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  >
+                   {pendingResponseMs !== null ? `(Response time: ${formatDuration(pendingResponseMs)})` : ""}
+                  </span>
               </div>
             </div>
           )}
@@ -310,8 +330,10 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={handleClearChat}
+              type="button"
+              onClick={() => setConfirmClearOpen(true)}
               title="Clear chat"
+              disabled={loading}
               className="flex-shrink-0 flex items-center justify-center w-9 h-9 bg-white text-black hover:bg-white/80 rounded-full transition-all duration-150"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -348,6 +370,32 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
           </div>
         </div>
       </div>
+      <ConfirmModal
+        open={confirmClearOpen}
+        onClose={() => setConfirmClearOpen(false)}
+        title="Clear temporary chat?"
+        message="This will remove all messages in this temporary session. This cannot be undone."
+        confirmLabel="Yes, clear chat"
+        cancelLabel="No"
+        variant="warning"
+        onConfirm={() => {
+          handleClearChat();
+          setConfirmClearOpen(false);
+        }}
+      />
+      <ConfirmModal
+        open={confirmCloseOpen}
+        onClose={() => setConfirmCloseOpen(false)}
+        title="Close temporary chat?"
+        message="This is a temporary chat. Closing it will remove the current conversation from this screen."
+        confirmLabel="Yes, close"
+        cancelLabel="No"
+        variant="info"
+        onConfirm={() => {
+          setConfirmCloseOpen(false);
+          handleClose();
+        }}
+      />
     </div>
   );
 }

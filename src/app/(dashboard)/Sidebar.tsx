@@ -30,6 +30,8 @@ import {
 } from "../store/projectsApi";
 import { getCurrentUser, getFirebaseIdToken } from "@/lib/firebase/auth";
 import { diFetchClient } from "@/modules/di/clientFetch";
+import { getProjectIdFromPathname } from "@/lib/projectPath";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -57,6 +59,8 @@ export default function Sidebar() {
   } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const menuPortalRef = useRef<HTMLDivElement | null>(null);
@@ -277,27 +281,9 @@ export default function Sidebar() {
     setRenameValue("");
   };
 
-  const handleDeleteClick = async (project: Project) => {
+  const handleDeleteClick = (project: Project) => {
     setOpenMenuId(null);
-    if (
-      !confirm(
-        `Are you sure you want to delete "${project.name || "Untitled"}"? This action cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      await deleteProject(project.id).unwrap();
-      showToast("Project deleted successfully", "success");
-      if (selectedProject === project.id) {
-        router.push("/dashboard");
-      }
-    } catch (e: any) {
-      showToast(
-        e?.data?.error || e?.error || "Failed to delete project",
-        "error",
-      );
-    }
+    setProjectToDelete(project);
   };
 
   const handleProjectClick = async (projectId: string, e: React.MouseEvent) => {
@@ -334,11 +320,12 @@ export default function Sidebar() {
     }
   };
 
-  const handleLogout = async () => {
+  const performLogout = async () => {
     try {
       await signOut();
       router.push("/");
       showToast("Logged out successfully", "info");
+      setLogoutConfirmOpen(false);
     } catch (error) {
       console.error("Error logging out:", error);
       showToast("Failed to log out", "error");
@@ -529,11 +516,12 @@ export default function Sidebar() {
 
         <div className="border-t border-gray-800 p-3">
           <button
-            onClick={handleLogout}
+            type="button"
+            onClick={() => setLogoutConfirmOpen(true)}
             className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 hover:bg-gray-800/50 hover:text-gray-200 rounded-lg transition-all duration-150"
           >
             <LogOut className="w-4 h-4" />
-            <span>Logout</span>
+            <span>Sign out</span>
           </button>
 
           <Link
@@ -566,6 +554,51 @@ export default function Sidebar() {
           animation: grow-center 1.5s ease-out forwards;
         }
       `}</style>
+
+      <ConfirmModal
+        open={projectToDelete !== null}
+        onClose={() => setProjectToDelete(null)}
+        title="Delete project?"
+        message={
+          projectToDelete
+            ? `Are you sure you want to delete "${projectToDelete.name || "Untitled"}"? This action cannot be undone.`
+            : ""
+        }
+        confirmLabel="Yes"
+        cancelLabel="No"
+        variant="danger"
+        closeOnConfirm={false}
+        onConfirm={async () => {
+          const p = projectToDelete;
+          if (!p) return;
+          try {
+            await deleteProject(p.id).unwrap();
+            showToast("Project deleted successfully", "success");
+            const pathProjectId = getProjectIdFromPathname(pathname);
+            if (selectedProject === p.id || pathProjectId === p.id) {
+              router.push("/dashboard");
+            }
+            setProjectToDelete(null);
+          } catch (e: any) {
+            showToast(
+              e?.data?.error || e?.error || "Failed to delete project",
+              "error",
+            );
+          }
+        }}
+      />
+
+      <ConfirmModal
+        open={logoutConfirmOpen}
+        onClose={() => setLogoutConfirmOpen(false)}
+        title="Sign out?"
+        message="You will need to sign in again to access your account and projects."
+        confirmLabel="Log out"
+        cancelLabel="Cancel"
+        variant="info"
+        closeOnConfirm={false}
+        onConfirm={performLogout}
+      />
     </aside>
   );
 }
