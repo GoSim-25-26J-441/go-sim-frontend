@@ -29,6 +29,7 @@ import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
+type UiChatMessage = ChatMessageItem & { responseTimeMs?: number };
 
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
@@ -39,7 +40,7 @@ export default function ClientChat({ id }: Props) {
 
   const [threadId, setThreadId] = useState<string | null>(urlThreadId);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
+  const [messages, setMessages] = useState<UiChatMessage[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>("default");
   const [thinkingDetail, setThinkingDetail] = useState<string>("high");
@@ -57,6 +58,7 @@ export default function ClientChat({ id }: Props) {
 
   const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
     useState(false);
+  const [pendingResponseMs, setPendingResponseMs] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const INPUT_MAX_HEIGHT_PX = 200;
@@ -105,6 +107,23 @@ export default function ClientChat({ id }: Props) {
   }, [messages, loading]);
 
   useEffect(() => {
+    if (pendingResponseMs === null) return;
+    const startedAt = Date.now() - pendingResponseMs;
+    const t = window.setInterval(() => {
+      setPendingResponseMs(Date.now() - startedAt);
+    }, 100);
+    return () => window.clearInterval(t);
+  }, [pendingResponseMs]);
+
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  };
+
+  useEffect(() => {
     const hasShownModal = sessionStorage.getItem(`design-modal-shown-${id}`);
     if (fromDiagram && !hasShownModal && !urlThreadId) {
       setShowDesignModal(true);
@@ -140,7 +159,28 @@ export default function ClientChat({ id }: Props) {
 
   useEffect(() => {
     if (messagesData) {
-      setMessages(messagesData.filter((m) => m.message.trim()));
+      const incoming = messagesData.filter((m) => m.message.trim());
+      setMessages((prev) => {
+        // Preserve frontend-only response timers when history refetches.
+        const responseTimeBySignature = new Map<string, number>();
+        for (const msg of prev) {
+          if (msg.role !== "assistant" || msg.responseTimeMs === undefined) continue;
+          responseTimeBySignature.set(
+            `${msg.role}::${msg.message}`,
+            msg.responseTimeMs,
+          );
+        }
+
+        return incoming.map((msg) => {
+          if (msg.role !== "assistant") return msg;
+          const preserved = responseTimeBySignature.get(
+            `${msg.role}::${msg.message}`,
+          );
+          return preserved !== undefined
+            ? { ...msg, responseTimeMs: preserved }
+            : msg;
+        });
+      });
     }
   }, [messagesData]);
 
@@ -180,6 +220,8 @@ export default function ClientChat({ id }: Props) {
     ]);
     setInput("");
     setErr(null);
+    const startedAt = Date.now();
+    setPendingResponseMs(0);
 
     try {
       const response = await sendMessage({
@@ -192,6 +234,7 @@ export default function ClientChat({ id }: Props) {
           ? { design: designAnswers }
           : {}),
       }).unwrap();
+      const responseTimeMs = Date.now() - startedAt;
 
       if (aliveRef.current) {
         setMessages((prev) => [
@@ -200,6 +243,7 @@ export default function ClientChat({ id }: Props) {
             role: "assistant",
             message: response.answer || response.message || "No response",
             ts: Date.now(),
+            responseTimeMs,
           },
         ]);
       }
@@ -214,6 +258,8 @@ export default function ClientChat({ id }: Props) {
         setErr(e instanceof Error ? e.message : "Failed to send");
         setMessages((prev) => prev.slice(0, -1));
       }
+    } finally {
+      setPendingResponseMs(null);
     }
   }
 
@@ -428,6 +474,7 @@ export default function ClientChat({ id }: Props) {
                 key={`${m.ts ?? i}-${i}`}
                 role={m.role}
                 text={m.message}
+                responseTimeMs={m.responseTimeMs}
               />
             ))}
 
@@ -449,7 +496,13 @@ export default function ClientChat({ id }: Props) {
                     className="text-sm"
                     style={{ color: "rgba(255,255,255,0.4)" }}
                   >
-                    Thinking…
+                    Thinking… 
+                  </span>
+                  <span
+                    className="text-[10px]"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  >
+                   {pendingResponseMs !== null ? `(Response time: ${formatDuration(pendingResponseMs)})` : ""}
                   </span>
                 </div>
               </div>

@@ -129,7 +129,7 @@ export default function DashboardLanding() {
               <span className="text-sm font-regular">Temporary Chat</span>
             </button>
             <button
-              onClick={() => router.push("/docs")}
+              onClick={() => {}}
               className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-800/50 text-white/80 hover:text-white transition-colors shadow-md"
             >
               <ShieldAlert className="w-4 h-4" />
