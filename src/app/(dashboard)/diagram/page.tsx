@@ -1103,16 +1103,25 @@ export default function DrawDiagram() {
         console.error("Failed to upload diagram image:", imageError);
       }
 
+      let diagramVersionId: string | undefined;
       try {
         const backendFormat = transformToBackendFormat();
         setLoadingMessage("Saving diagram definition...");
-        await saveDiagram({
+        const saveRes = await saveDiagram({
           projectId,
           diagram: imageObjectKey
             ? { ...backendFormat, image_object_key: imageObjectKey }
             : backendFormat,
         }).unwrap();
         console.log("Diagram saved successfully");
+        const r = saveRes as Record<string, unknown>;
+        const dv = r?.diagram_version_id ?? r?.version_id;
+        const nested = r?.diagram_version as { id?: string } | undefined;
+        if (typeof dv === "string" && dv.length > 0) diagramVersionId = dv;
+        else if (nested && typeof nested.id === "string" && nested.id.length > 0)
+          diagramVersionId = nested.id;
+        else if (typeof r?.id === "string" && String(r.id).startsWith("dver-"))
+          diagramVersionId = r.id as string;
       } catch (saveError) {
         console.error("Failed to save diagram:", saveError);
       }
@@ -1129,6 +1138,7 @@ export default function DrawDiagram() {
           setOpening(loading);
           if (message) setLoadingMessage(message);
         },
+        diagramVersionId,
       });
     } catch (e) {
       console.error(e);

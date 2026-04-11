@@ -32,6 +32,8 @@ export interface SendMessageArg {
   mode?: "thinking" | "default" | "instant";
   detail?: string;
   design?: Record<string, unknown>;
+  /** When set, sent to backend so the first turns can bind to a concrete saved diagram version */
+  diagram_version_id?: string;
 }
 
 export interface ChatResponse {
@@ -111,7 +113,15 @@ export const chatApi = createApi({
     }),
 
     sendMessage: builder.mutation<ChatResponse, SendMessageArg>({
-      query: ({ projectId, threadId, message, mode, detail, design }) => ({
+      query: ({
+        projectId,
+        threadId,
+        message,
+        mode,
+        detail,
+        design,
+        diagram_version_id,
+      }) => ({
         url: `/api/projects/${projectId}/chats/${threadId}/messages`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,6 +130,9 @@ export const chatApi = createApi({
           mode: mode ?? "default",
           ...(mode === "thinking" && detail ? { detail } : {}),
           ...(design && Object.keys(design).length > 0 ? { design } : {}),
+          ...(diagram_version_id
+            ? { diagram_version_id: diagram_version_id }
+            : {}),
         },
       }),
       transformResponse: (res: unknown) => res as ChatResponse,

@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import {
   Send,
@@ -19,6 +19,7 @@ import {
   useGetMessagesQuery,
   useSendMessageMutation,
   type ChatMessageItem,
+  type ChatResponse,
 } from "@/app/store/chatApi";
 import { useToast } from "@/hooks/useToast";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
@@ -31,10 +32,25 @@ type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
 type UiChatMessage = ChatMessageItem & { responseTimeMs?: number };
 
+const MAX_MESSAGE_503_RETRIES = 6;
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function getFetchErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const urlThreadId = searchParams.get("thread");
   const fromDiagram = searchParams.get("from") === "diagram";
 
@@ -223,8 +239,14 @@ export default function ClientChat({ id }: Props) {
     const startedAt = Date.now();
     setPendingResponseMs(0);
 
+    const diagramVersionId =
+      searchParams.get("diagramVersion") ??
+      searchParams.get("diagram_version") ??
+      undefined;
+    const hadDiagramVersionParam = Boolean(diagramVersionId);
+
     try {
-      const response = await sendMessage({
+      const baseArg = {
         projectId: id,
         threadId,
         message: text,
@@ -233,7 +255,31 @@ export default function ClientChat({ id }: Props) {
         ...(Object.keys(designAnswers).length > 0
           ? { design: designAnswers }
           : {}),
-      }).unwrap();
+        ...(diagramVersionId ? { diagram_version_id: diagramVersionId } : {}),
+      };
+
+      let response: ChatResponse | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < MAX_MESSAGE_503_RETRIES; attempt++) {
+        try {
+          response = await sendMessage(baseArg).unwrap();
+          break;
+        } catch (e) {
+          lastError = e;
+          const status = getFetchErrorStatus(e);
+          if (status === 503 && attempt < MAX_MESSAGE_503_RETRIES - 1) {
+            if (attempt === 0) {
+              showToast("Diagram is still saving; retrying…", "info");
+            }
+            await delay(450 * (attempt + 1));
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      if (!response) throw lastError ?? new Error("No response");
+
       const responseTimeMs = Date.now() - startedAt;
 
       if (aliveRef.current) {
@@ -252,6 +298,14 @@ export default function ClientChat({ id }: Props) {
         window.location.pathname.includes("/chat");
       if (!isOnChatPage) {
         showToast("Chat received a response", "chat");
+      }
+
+      if (hadDiagramVersionParam && aliveRef.current) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("diagramVersion");
+        params.delete("diagram_version");
+        const q = params.toString();
+        router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
       }
     } catch (e) {
       if (aliveRef.current) {
