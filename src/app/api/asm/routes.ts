@@ -55,6 +55,70 @@ export const fetchCostData = async (
   }
 };
 
+export interface ClusterCostResultDTO {
+  provider: string;
+  purchase_type: string;
+  lease_contract_length: string;
+  instance_type: string;
+  vcpus: number;
+  memory_gb: number;
+  region: string;
+  nodes: number;
+  price_per_node_hour: number;
+  price_per_node_month: number;
+  control_plane_tier: string;
+  control_plane_hour: number;
+  control_plane_month: number;
+  total_hour: number;
+  total_month: number;
+  budget_month: number;
+  within_budget: boolean;
+}
+
+export interface GlobalRecommendationPayload {
+  fits_budget: boolean;
+  recommended: ClusterCostResultDTO | null;
+  runners_up: ClusterCostResultDTO[];
+  rationale: string[];
+  region_jobs_evaluated: number;
+  plans_evaluated: number;
+  within_budget_plans: number;
+}
+
+export interface GlobalCostRecommendResponse {
+  request_id: string;
+  best_candidate: unknown;
+  nodes: number;
+  budget: number;
+  recommendation: GlobalRecommendationPayload;
+  stored_at: string;
+}
+
+// cross-region / cross-provider cheapest plan
+export const fetchGlobalCostRecommendation = async (
+  requestId: string,
+): Promise<GlobalCostRecommendResponse> => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/api/v1/analysis-suggestions/cost/${requestId}/recommend`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch global recommendation: ${response.status} ${response.statusText}`,
+      );
+    }
+    return (await response.json()) as GlobalCostRecommendResponse;
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+};
+
 // Fetch all regions for a provide
 export const fetchRegions = async (provider: string) => {
   try {

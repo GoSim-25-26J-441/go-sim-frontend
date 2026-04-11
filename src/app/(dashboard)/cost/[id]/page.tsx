@@ -1,10 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { fetchCostData, fetchRegionsForRequest } from "@/app/api/asm/routes";
+import {
+    fetchCostData,
+    fetchGlobalCostRecommendation,
+    fetchRegionsForRequest,
+    type ClusterCostResultDTO,
+    type GlobalCostRecommendResponse,
+} from "@/app/api/asm/routes";
 import {
     ChevronLeft,
     RefreshCw,
@@ -65,7 +71,6 @@ const MAX_REGIONS = 5;
 const DEFAULT_REGIONS: Record<string, string> = {
     aws: "argentinabuenosaires",
     azure: "attdallas1",
-    gcp: "us-central1",
 };
 
 type ViewMode = "by-provider" | "by-region";
@@ -77,12 +82,284 @@ type CostRunDetailProps = {
     projectId?: string;
 };
 
+function normalizeLeaseLabel(v: string | undefined | null) {
+    return (v ?? "").trim();
+}
+
+function planMatchesPick(cost: ClusterCostResult, pick: ClusterCostResultDTO) {
+    return (
+        cost.purchase_type === pick.purchase_type &&
+        normalizeLeaseLabel(cost.lease_contract_length) === normalizeLeaseLabel(pick.lease_contract_length) &&
+        cost.instance_type === pick.instance_type &&
+        cost.region === pick.region
+    );
+}
+
+function supportsProviderBreakdownNav(provider: string) {
+    const p = provider.toLowerCase();
+    return p === "aws" || p === "azure";
+}
+
+type GlobalPanelProps = {
+    globalRec: GlobalCostRecommendResponse | null;
+    globalRecLoading: boolean;
+    globalRecError: string | null;
+    formatCurrency: (v: number) => string;
+    onViewBreakdown?: (pick: ClusterCostResultDTO) => void;
+    breakdownNavBusy?: boolean;
+};
+
+function GlobalRecommendPanel({
+    globalRec,
+    globalRecLoading,
+    globalRecError,
+    formatCurrency,
+    onViewBreakdown,
+    breakdownNavBusy,
+}: GlobalPanelProps) {
+    const [runnersOpen, setRunnersOpen] = useState(false);
+    const runnersUp = globalRec?.recommendation?.runners_up ?? [];
+    const runnersCount = runnersUp.length;
+
+    useEffect(() => {
+        setRunnersOpen(false);
+    }, [globalRec?.request_id]);
+
+    const toggleRunners = useCallback(() => {
+        setRunnersOpen((o) => !o);
+    }, []);
+
+    return (
+        <div className="bg-card border border-border rounded-lg p-6 my-6">
+            <div className="flex items-start gap-3 mb-4">
+                <Target className="w-5 h-5 mt-0.5 shrink-0 opacity-90" />
+                <div className="min-w-0 flex-1">
+                    <h2 className="text-lg font-semibold text-white">
+                        Best option across all providers &amp; regions
+                    </h2>
+                </div>
+            </div>
+            {globalRecLoading && (
+                <p className="text-sm opacity-60 flex items-center gap-2">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Scanning catalog…
+                </p>
+            )}
+            {globalRecError && !globalRecLoading && (
+                <p className="text-sm text-red-400/90">{globalRecError}</p>
+            )}
+            {!globalRecLoading && !globalRecError && globalRec?.recommendation && (
+                <div className="space-y-4">
+                    {!globalRec.recommendation.recommended ? (
+                        <p className="text-sm opacity-75">
+                            {globalRec.recommendation.rationale?.[0] ??
+                                "No recommendation could be built from stored prices."}
+                        </p>
+                    ) : (
+                        <>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {globalRec.recommendation.fits_budget ? (
+                                    <span className="text-xs font-medium px-2 py-0.5 rounded bg-green-600/25 text-green-400 border border-green-600/40">
+                                        Within budget
+                                    </span>
+                                ) : (
+                                    <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-600/20 text-amber-300 border border-amber-500/35">
+                                        Over budget — cheapest overall
+                                    </span>
+                                )}
+                            </div>
+                            <div className="rounded-lg border border-border/80 bg-black/20 p-4">
+                                <div className="flex flex-wrap justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-wide opacity-50">
+                                            Monthly total
+                                        </p>
+                                        <p className="text-2xl font-bold text-white">
+                                            {formatCurrency(globalRec.recommendation.recommended.total_month)}
+                                        </p>
+                                    </div>
+                                    <div className="text-right text-sm opacity-90">
+                                        <p className="font-medium capitalize">
+                                            {globalRec.recommendation.recommended.provider}
+                                        </p>
+                                        <p className="opacity-70">
+                                            {getRegionDisplayName(
+                                                globalRec.recommendation.recommended.region,
+                                                globalRec.recommendation.recommended.provider as
+                                                | "aws"
+                                                | "azure",
+                                            )}
+                                        </p>
+                                    </div>
+                                </div>
+                                <p className="text-sm mt-3 opacity-85">
+                                    <span className="font-mono">
+                                        {globalRec.recommendation.recommended.instance_type}
+                                    </span>
+                                    <span className="opacity-60"> · </span>
+                                    {globalRec.recommendation.recommended.purchase_type}
+                                    {globalRec.recommendation.recommended.lease_contract_length
+                                        ? ` (${globalRec.recommendation.recommended.lease_contract_length})`
+                                        : ""}
+                                </p>
+                                {onViewBreakdown &&
+                                    supportsProviderBreakdownNav(globalRec.recommendation.recommended.provider) && (
+                                        <button
+                                            type="button"
+                                            disabled={breakdownNavBusy}
+                                            onClick={() => onViewBreakdown(globalRec.recommendation.recommended!)}
+                                            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
+                                        >
+                                            <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
+                                            View pricing breakdown in this region
+                                        </button>
+                                    )}
+                            </div>
+                            {globalRec.recommendation.rationale.length > 0 && (
+                                <ul className="text-sm space-y-2 opacity-85 list-disc pl-5">
+                                    {globalRec.recommendation.rationale.map((line, i) => (
+                                        <li key={i}>{line}</li>
+                                    ))}
+                                </ul>
+                            )}
+                            {runnersCount > 0 && globalRec.recommendation.recommended && (
+                                <div className="pt-2 border-t border-border/40">
+                                    <button
+                                        type="button"
+                                        onClick={toggleRunners}
+                                        className="flex w-full items-start justify-between gap-3 rounded-xl border border-border/70 bg-gradient-to-b from-white/[0.04] to-transparent px-4 py-3 text-left transition-colors hover:border-border hover:from-white/[0.06]"
+                                        aria-expanded={runnersOpen}
+                                    >
+                                        <div className="min-w-0 flex items-start gap-3">
+                                            <GitCompare className="h-5 w-5 shrink-0 mt-0.5 text-white/50" aria-hidden />
+                                            <div>
+                                                <span className="block font-semibold text-white">
+                                                    Other low-cost options
+                                                </span>
+                                                <span className="mt-0.5 block text-xs leading-relaxed text-white/50">
+                                                    {!runnersOpen ? " Tap to expand." : ""}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <ChevronDown
+                                            className={`h-5 w-5 shrink-0 text-white/50 transition-transform mt-0.5 ${runnersOpen ? "rotate-180" : ""}`}
+                                            aria-hidden
+                                        />
+                                    </button>
+                                    {runnersOpen && (
+                                        <div className="mt-3 space-y-2">
+                                            <p className="text-[11px] uppercase tracking-wider text-white/40 px-1">
+                                                Compared to your pick (
+                                                {formatCurrency(globalRec.recommendation.recommended.total_month)}
+                                                /mo)
+                                            </p>
+                                            <ol className="space-y-2 list-none p-0 m-0">
+                                                {runnersUp.map((r, idx) => {
+                                                    const pick = globalRec.recommendation.recommended!;
+                                                    const delta = r.total_month - pick.total_month;
+                                                    const deltaPct =
+                                                        pick.total_month > 0
+                                                            ? (100 * delta) / pick.total_month
+                                                            : 0;
+                                                    const rank = idx + 2;
+                                                    return (
+                                                        <li
+                                                            key={`${r.provider}-${r.region}-${r.instance_type}-${idx}`}
+                                                            className="rounded-lg border border-border/50 bg-black/25 px-3 py-3 sm:px-4"
+                                                        >
+                                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                <div className="flex min-w-0 items-center gap-3">
+                                                                    <span
+                                                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs font-bold text-white/90"
+                                                                        title={`Rank ${rank} by price`}
+                                                                    >
+                                                                        #{rank}
+                                                                    </span>
+                                                                    <div className="min-w-0">
+                                                                        <p className="text-lg font-semibold tabular-nums text-white">
+                                                                            {formatCurrency(r.total_month)}
+                                                                            <span className="ml-2 text-xs font-normal text-amber-200/90">
+                                                                                +{formatCurrency(delta)} / mo
+                                                                                {deltaPct > 0.05 ? (
+                                                                                    <span className="text-white/45">
+                                                                                        {" "}
+                                                                                        (+{deltaPct.toFixed(1)}%)
+                                                                                    </span>
+                                                                                ) : null}
+                                                                            </span>
+                                                                        </p>
+                                                                        <p className="mt-1 text-sm text-white/80">
+                                                                            <span className="font-medium capitalize">
+                                                                                {r.provider}
+                                                                            </span>
+                                                                            <span className="text-white/35"> · </span>
+                                                                            <span>
+                                                                                {getRegionDisplayName(
+                                                                                    r.region,
+                                                                                    r.provider as
+                                                                                    | "aws"
+                                                                                    | "azure",
+                                                                                )}
+                                                                            </span>
+                                                                        </p>
+                                                                        <p className="mt-0.5 font-mono text-xs text-white/55">
+                                                                            {r.instance_type}
+                                                                            <span className="text-white/30"> · </span>
+                                                                            {r.purchase_type}
+                                                                            {r.lease_contract_length
+                                                                                ? ` (${r.lease_contract_length})`
+                                                                                : ""}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                                {globalRec.budget > 0 && (
+                                                                    <div className="shrink-0">
+                                                                        {r.within_budget ? (
+                                                                            <span className="inline-block rounded-md border border-green-600/35 bg-green-600/15 px-2 py-1 text-[11px] font-medium text-green-400">
+                                                                                Within budget
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="inline-block rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300/90">
+                                                                                Over budget
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            {onViewBreakdown && supportsProviderBreakdownNav(r.provider) && (
+                                                                <div className="mt-3 border-t border-white/10 pt-3 sm:pl-11">
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={breakdownNavBusy}
+                                                                        onClick={() => onViewBreakdown(r)}
+                                                                        className="text-sm font-medium text-sky-300/95 underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                                                                    >
+                                                                        View pricing breakdown in this region
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </li>
+                                                    );
+                                                })}
+                                            </ol>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
     const [costData, setCostData] = useState<CostData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>("by-provider");
-    const [selectedProvider, setSelectedProvider] = useState<"aws" | "azure" | "gcp">("aws");
+    const [selectedProvider, setSelectedProvider] = useState<"aws" | "azure">("aws");
     const [regions, setRegions] = useState<string[]>([]);
     const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
     const [selectedGenericRegionId, setSelectedGenericRegionId] = useState<string>(DEFAULT_GENERIC_REGION_ID);
@@ -90,6 +367,12 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
     const [reloadingProviderCost, setReloadingProviderCost] = useState(false);
     const [expandedBreakdown, setExpandedBreakdown] = useState<string | null>(null);
     const [filteredGenericRegions, setFilteredGenericRegions] = useState<typeof GENERIC_REGIONS>([]);
+    const [globalRec, setGlobalRec] = useState<GlobalCostRecommendResponse | null>(null);
+    const [globalRecLoading, setGlobalRecLoading] = useState(true);
+    const [globalRecError, setGlobalRecError] = useState<string | null>(null);
+    const [pendingBreakdownPick, setPendingBreakdownPick] = useState<ClusterCostResultDTO | null>(null);
+    const [breakdownNavBusy, setBreakdownNavBusy] = useState(false);
+    const skipProviderRegionResetRef = useRef(false);
 
     const router = useRouter();
 
@@ -108,6 +391,39 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
         } finally {
             setReloadingProviderCost(false);
             setLoading(false);
+        }
+    };
+
+    const jumpToBreakdownForPick = async (pick: ClusterCostResultDTO) => {
+        if (!requestId) return;
+        const provider = pick.provider.toLowerCase();
+        if (provider !== "aws" && provider !== "azure") return;
+
+        setBreakdownNavBusy(true);
+        try {
+            skipProviderRegionResetRef.current = selectedProvider !== provider;
+
+            setViewMode("by-provider");
+            setCompareRegionsEnabled(false);
+            setExpandedBreakdown(null);
+
+            const list = await fetchRegionsForRequest(requestId, provider);
+            setRegions(list);
+            if (!list.includes(pick.region)) {
+                skipProviderRegionResetRef.current = false;
+                return;
+            }
+
+            setSelectedRegions([pick.region]);
+            setSelectedProvider(provider as "aws" | "azure");
+
+            await handleFetchCostData(provider, pick.region);
+            setPendingBreakdownPick(pick);
+        } catch (e) {
+            console.error("jumpToBreakdownForPick:", e);
+            skipProviderRegionResetRef.current = false;
+        } finally {
+            setBreakdownNavBusy(false);
         }
     };
 
@@ -200,6 +516,31 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     useEffect(() => {
         if (!requestId) {
+            setGlobalRecLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setGlobalRecLoading(true);
+        setGlobalRecError(null);
+        fetchGlobalCostRecommendation(requestId)
+            .then((data) => {
+                if (!cancelled) setGlobalRec(data);
+            })
+            .catch((e: unknown) => {
+                if (!cancelled) {
+                    setGlobalRecError(e instanceof Error ? e.message : String(e));
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setGlobalRecLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [requestId]);
+
+    useEffect(() => {
+        if (!requestId) {
             setError("No request ID provided");
             setLoading(false);
             return;
@@ -217,6 +558,10 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     useEffect(() => {
         if (requestId && viewMode === "by-provider") {
+            if (skipProviderRegionResetRef.current) {
+                skipProviderRegionResetRef.current = false;
+                return;
+            }
             handleFetchRegions(selectedProvider).then((list) => {
                 const defaultRegion = list?.[0] ?? "";
                 setSelectedRegions([defaultRegion]);
@@ -237,6 +582,28 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
             handleFetchCostForGenericRegion(selectedGenericRegionId);
         }
     }, [selectedGenericRegionId]);
+
+    useEffect(() => {
+        if (!pendingBreakdownPick || !costData) return;
+        const pick = pendingBreakdownPick;
+        const prov = pick.provider.toLowerCase();
+        const rows = (costData.cluster_costs?.[prov] ?? []).filter((c) => c.region === pick.region);
+        const idx = rows.findIndex((c) => planMatchesPick(c, pick));
+        if (idx < 0) {
+            setPendingBreakdownPick(null);
+            return;
+        }
+        const c = rows[idx];
+        const planId = `${c.provider}-${c.purchase_type}-${c.lease_contract_length}-${idx}`;
+        setExpandedBreakdown(planId);
+        setPendingBreakdownPick(null);
+        window.setTimeout(() => {
+            document.getElementById(`cost-plan-${planId}`)?.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
+        }, 200);
+    }, [pendingBreakdownPick, costData]);
 
     const addRegion = async (region: string) => {
         if (selectedRegions.includes(region) || selectedRegions.length >= MAX_REGIONS) return;
@@ -318,10 +685,38 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     if (loading) {
         return (
-            <div className="p-6 flex items-center justify-center min-h-[60vh]">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-border mx-auto mb-4"></div>
-                    <p className="text-lg opacity-70">Loading cluster costs...</p>
+            <div className="p-6 space-y-4">
+                <div
+                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                    <button
+                        type="button"
+                        onClick={() => router.back()}
+                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                        aria-label="Go back"
+                    >
+                        <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <div>
+                        <h1 className="text-md font-bold text-white flex items-center gap-2">
+                            Cluster Cost Analysis
+                        </h1>
+                    </div>
+                </div>
+                <GlobalRecommendPanel
+                    globalRec={globalRec}
+                    globalRecLoading={globalRecLoading}
+                    globalRecError={globalRecError}
+                    formatCurrency={formatCurrency}
+                    onViewBreakdown={jumpToBreakdownForPick}
+                    breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
+                />
+                <div className="flex items-center justify-center min-h-[40vh]">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-border mx-auto mb-4"></div>
+                        <p className="text-lg opacity-70">Loading cluster costs...</p>
+                    </div>
                 </div>
             </div>
         );
@@ -411,6 +806,15 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                         </h1>
                     </div>
                 </div>
+
+                <GlobalRecommendPanel
+                    globalRec={globalRec}
+                    globalRecLoading={globalRecLoading}
+                    globalRecError={globalRecError}
+                    formatCurrency={formatCurrency}
+                    onViewBreakdown={jumpToBreakdownForPick}
+                    breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
+                />
 
                 {/* Provider & Region Selection */}
                 <div className="bg-card border border-border rounded-lg p-6 my-8">
@@ -804,8 +1208,9 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                                     return (
                                         <div
+                                            id={`cost-plan-${planId}`}
                                             key={planId}
-                                            className={`border rounded-xl p-6 transition-all relative overflow-hidden ${cost.within_budget
+                                            className={`border rounded-xl p-6 transition-all relative overflow-hidden scroll-mt-24 ${cost.within_budget
                                                 ? "bg-card border-border"
                                                 : "bg-card border-border"
                                                 }`}
