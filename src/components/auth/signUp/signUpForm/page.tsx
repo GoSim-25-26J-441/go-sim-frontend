@@ -231,7 +231,7 @@ export default function SignUpForm() {
       <div className="max-w-3xl mx-auto">
         {/* Header */}
         <div className="flex flex-col justify-start gap-2 py-8">
-          <h1 className="text-2xl font-bold text-white">GO-SIM</h1>
+          <h1 className="text-2xl font-bold text-white">Arc Find</h1>
           <h2 className="text-4xl font-bold text-white">Create your account</h2>
           
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">

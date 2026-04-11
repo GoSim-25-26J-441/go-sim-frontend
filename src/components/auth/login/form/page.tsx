@@ -234,7 +234,7 @@ export default function Form() {
     <section className="px-4 sm:px-6 lg:px-8" onKeyPress={handleKeyPress}>
       <div className="max-w-3xl mx-auto">
         <div className="flex flex-col justify-start gap-6 py-5">
-          <h1 className="text-2xl font-bold text-white">GO-SIM</h1>
+          <h1 className="text-2xl font-bold text-white">ArcFind</h1>
           <h1 className="text-6xl font-bold text-white">Sign in</h1>
           <div>
             <p className="text-xs font-normal text-white/80 mb-2">
