@@ -32,7 +32,6 @@ type NodeKind =
   | "client"
   | "user";
 
-/** Served from `public/diagram-icons/` — use URLs; Turbopack does not treat `public/` SVGs as importable modules. */
 const NODE_KIND_ICONS: Record<NodeKind, string> = {
   service: "/diagram-icons/ms-icon-service.svg",
   gateway: "/diagram-icons/ms-icon-gateway.svg",
@@ -767,7 +766,14 @@ export default function DrawDiagram() {
     const services = nodes
       .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
       .map((n) => n.name);
-    
+
+    const service_types: Record<string, string> = {};
+    nodes
+      .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
+      .forEach((n) => {
+        service_types[n.name] = kindToType(n.kind);
+      });
+
     const datastores = nodes
       .filter((n) => n.kind === "database")
       .map((n) => n.name);
@@ -787,6 +793,7 @@ export default function DrawDiagram() {
       },
       spec_summary: {
         services,
+        service_types,
         datastores,
         dependencies,
       },
