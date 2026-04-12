@@ -224,7 +224,9 @@ export default function GraphCanvas({
           e.style("opacity", 1);
           e.style("line-opacity", 1);
           e.style("target-arrow-opacity", 1);
-          e.style("width", 2.5);
+          /* Do not bypass `width` — stylesheet controls thin stroke + arrow-scale (gradient lines). */
+          e.removeStyle("width");
+          e.removeStyle("arrow-scale");
           e.style("curve-style", "bezier");
           e.style("target-arrow-shape", "triangle");
         });
@@ -305,7 +307,6 @@ export default function GraphCanvas({
         classes: `${typeof el.classes === "string" ? `${el.classes} ` : ""}calls rest`,
         style: {
           ...(el as any).style,
-          width: 2.5,
           opacity: 1,
           "line-opacity": 1,
           "target-arrow-opacity": 1,

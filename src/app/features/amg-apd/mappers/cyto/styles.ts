@@ -6,17 +6,14 @@ import { gradientStops } from "./svg";
 
 type StylesheetLike = Array<{ selector: string; style: Record<string, any> }>;
 
-/** Stroke is half prior widths; `arrow-scale` compensates so heads stay the same visual size. */
-const EDGE_STROKE = {
-  default: 1.25,
-  high: 1.25,
-  medium: 1.25,
-  low: 1.25,
-} as const;
-/** Default Cytoscape arrow-scale is 1; doubling offsets halved stroke for same head size. */
-const ARROW_SCALE_NON_CALLS = 2;
-/** Prior CALLS used 0.62; ×2 matches halved stroke. */
-const ARROW_SCALE_CALLS = 0.64;
+/**
+ * Thin stroke for patterns graph; keep multi-color `line-fill: linear-gradient` (unchanged below).
+ * Arrow heads: width × arrow-scale — bump scales so heads match the prior ~1.25px stroke look.
+ */
+const EDGE_LINE_WIDTH = 0.98;
+const REF_STROKE = 1.25;
+const ARROW_SCALE_NON_CALLS = (REF_STROKE * 2) / EDGE_LINE_WIDTH;
+const ARROW_SCALE_CALLS = (REF_STROKE * 0.42) / EDGE_LINE_WIDTH;
 
 const EDGE_KIND_COLOR: Record<string, string> = {
   CALLS: "#1f2937",
@@ -136,8 +133,10 @@ export const cyStyles: StylesheetLike = [
       "target-arrow-opacity": 1,
       "line-color": "#1f2937",
       "target-arrow-color": "#1f2937",
-      width: EDGE_STROKE.default,
+      width: EDGE_LINE_WIDTH,
       "arrow-scale": ARROW_SCALE_NON_CALLS,
+      "line-outline-width": 0,
+      "line-cap": "butt",
       opacity: 1,
       events: "yes",
       "z-index": 8,
@@ -184,13 +183,7 @@ export const cyStyles: StylesheetLike = [
         return EDGE_KIND_COLOR[kind] ?? "#1f2937";
       },
 
-      width: (ele: any) => {
-        const severity = ele.data("severity") as Severity | null;
-        if (!severity) return EDGE_STROKE.default;
-        if (severity === "HIGH") return EDGE_STROKE.high;
-        if (severity === "MEDIUM") return EDGE_STROKE.medium;
-        return EDGE_STROKE.low;
-      },
+      width: EDGE_LINE_WIDTH,
     },
   },
 
