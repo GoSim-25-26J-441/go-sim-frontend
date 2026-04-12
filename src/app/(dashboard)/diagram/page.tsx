@@ -124,7 +124,7 @@ function shortenSegment(
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
-  const maxShorten = (len - 4) / 2;
+  const maxShorten = Math.max(0, (len - 2) / 2);
   const s0 = Math.min(fromStart, maxShorten);
   const s1 = Math.min(fromEnd, maxShorten);
   return {
@@ -143,7 +143,55 @@ function edgeLineEndpoints(
   const fromR = getNodeIconRect(from);
   const p1 = iconRectAnchorToward(from, toR.cx, toR.cy);
   const p2 = iconRectAnchorToward(to, fromR.cx, fromR.cy);
-  return shortenSegment(p1.x, p1.y, p2.x, p2.y, 2, 4);
+  // Minimal pull-back so tiny marker clears icon; keeps line close to icon edge
+  return shortenSegment(p1.x, p1.y, p2.x, p2.y, 0, 0.75);
+}
+
+/** Seconds for one flow pulse along an edge (~constant visual speed). Async is slightly slower. */
+function edgeFlowPulseDuration(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  sync: boolean
+): number {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  const base = Math.max(1.5, Math.min(3.4, len / 135));
+  return sync ? base : base * 1.2;
+}
+
+/** Async only: slow start/end, fast middle (queued / non-blocking feel). Sync uses even motion. */
+function edgeFlowMotionKeyAttrs(sync: boolean): {
+  keyPoints?: string;
+  keyTimes?: string;
+} {
+  if (sync) return {};
+  return {
+    keyPoints: "0;0.06;0.94;1",
+    keyTimes: "0;0.35;0.65;1",
+  };
+}
+
+function edgeReturnPath(x1: number, y1: number, x2: number, y2: number): string {
+  return `M ${x2} ${y2} L ${x1} ${y1}`;
+}
+
+function edgePulsePalette(
+  sync: boolean,
+  selected: boolean
+): { outer: string; inner: string; outerOpacity: number } {
+  if (sync) {
+    return {
+      outer: selected ? "#0ea5e9" : "#38bdf8",
+      inner: selected ? "#bae6fd" : "#e0f2fe",
+      outerOpacity: selected ? 0.5 : 0.4,
+    };
+  }
+  return {
+    outer: selected ? "#ea580c" : "#f59e0b",
+    inner: selected ? "#ffedd5" : "#fef3c7",
+    outerOpacity: selected ? 0.52 : 0.44,
+  };
 }
 
 const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: any }[] = [
@@ -687,10 +735,10 @@ export default function DrawDiagram() {
 
     // Map edge kinds to protocols
     const kindToProtocol = (kind: EdgeKind, sync: boolean): string => {
-      if (kind === "rest") return "REST";
-      if (kind === "grpc") return "gRPC";
+      if (kind === "rest") return sync ? "REST" : "REST_ASYNC";
+      if (kind === "grpc") return sync ? "gRPC" : "GRPC_ASYNC";
       if (kind === "event") return sync ? "EventSync" : "EventAsync";
-      return "REST";
+      return sync ? "REST" : "REST_ASYNC";
     };
 
     const backendNodes = nodes.map((node) => ({
@@ -706,6 +754,7 @@ export default function DrawDiagram() {
       from: edge.fromId,
       to: edge.toId,
       protocol: kindToProtocol(edge.kind, edge.sync),
+      sync: edge.sync,
       ...(edge.label ? { label: edge.label } : {}),
     }));
 
@@ -765,6 +814,8 @@ export default function DrawDiagram() {
       from: string;
       to: string;
       protocol: string;
+      /** When set (e.g. saved canvas JSON), used for flow styling and round-trip. */
+      sync?: boolean;
       label?: string;
     }>;
   }) => {
@@ -832,15 +883,21 @@ export default function DrawDiagram() {
         const fromId = idToNodeId[edge.from] || edge.from;
         const toId = idToNodeId[edge.to] || edge.to;
 
-        // Map protocol to edge kind and sync
+        const protocol = (edge.protocol ?? "REST").toUpperCase();
         let kind: EdgeKind = "rest";
-        let sync = true;
-        const protocol = edge.protocol?.toUpperCase() || "REST";
-        if (protocol === "GRPC") {
+        if (protocol === "GRPC" || protocol.includes("GRPC")) {
           kind = "grpc";
         } else if (protocol.includes("EVENT")) {
           kind = "event";
-          sync = protocol.includes("SYNC");
+        }
+
+        let sync: boolean;
+        if (typeof edge.sync === "boolean") {
+          sync = edge.sync;
+        } else if (kind === "event") {
+          sync = protocol.includes("SYNC") && !protocol.includes("ASYNC");
+        } else {
+          sync = !protocol.includes("ASYNC");
         }
 
         const edgeId =
@@ -922,7 +979,7 @@ export default function DrawDiagram() {
           fromId,
           toId,
           kind: dep.kind,
-          sync: dep.sync,
+          sync: typeof dep.sync === "boolean" ? dep.sync : true,
           label: dep.label,
         });
       }
@@ -1070,14 +1127,17 @@ export default function DrawDiagram() {
 
     const defs = `
       <defs>
-        <marker id="arrowhead-export" viewBox="0 0 4 3.2" markerWidth="3.5" markerHeight="3" refX="3.1" refY="1.6" orient="auto" markerUnits="userSpaceOnUse">
-          <path d="M0,0 L4,1.6 L0,3.2 Z" fill="#64748b" />
+        <marker id="arrowhead-export" viewBox="0 0 3 2.4" markerWidth="2.8" markerHeight="2.4" refX="3" refY="1.2" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L3,1.2 L0,2.4 Z" fill="#64748b" />
         </marker>
+        <filter id="flow-pulse-glow-export" x="-120%" y="-120%" width="340%" height="340%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="1.6" />
+        </filter>
       </defs>
     `;
 
     const edgeEls = edges
-      .map((e) => {
+      .map((e, ei) => {
         const from = nodeIndex[e.fromId];
         const to = nodeIndex[e.toId];
         if (!from || !to) return "";
@@ -1093,20 +1153,52 @@ export default function DrawDiagram() {
         const dx = x2 - x1;
         const dy = y2 - y1;
         const dLen = Math.hypot(dx, dy) || 1;
-        const lx = midX + (-dy / dLen) * 12;
-        const ly = midY + (dx / dLen) * 12;
+        const lx = midX + (-dy / dLen) * 10;
+        const ly = midY + (dx / dLen) * 10;
+
+        const pulseDur = edgeFlowPulseDuration(x1, y1, x2, y2, e.sync);
+        const pulseBegin = ((ei % 12) * 0.14).toFixed(2);
+        const motionExtra = e.sync
+          ? ""
+          : ` keyPoints="0;0.06;0.94;1" keyTimes="0;0.35;0.65;1"`;
+        const pulse = edgePulsePalette(e.sync, false);
+        const pulseBeginNum = Number(pulseBegin);
+        const pulseBeginReturn = (pulseBeginNum + pulseDur / 2).toFixed(2);
 
         const label =
           e.label && e.label.trim().length > 0
             ? `${e.label} (${e.kind}${e.sync ? ", sync" : ", async"})`
             : `${e.kind}${e.sync ? " (sync)" : " (async)"}`;
 
+        const pulseBlock = e.sync
+          ? `
+            <g>
+              <animateMotion dur="${pulseDur.toFixed(2)}s" repeatCount="indefinite" begin="${pulseBegin}s" calcMode="linear"
+                path="M ${x1} ${y1} L ${x2} ${y2}" />
+              <circle cx="0" cy="0" r="5.5" fill="${pulse.outer}" fill-opacity="${pulse.outerOpacity}" filter="url(#flow-pulse-glow-export)" />
+              <circle cx="0" cy="0" r="2.2" fill="${pulse.inner}" fill-opacity="0.95" />
+            </g>
+            <g>
+              <animateMotion dur="${pulseDur.toFixed(2)}s" repeatCount="indefinite" begin="${pulseBeginReturn}s" calcMode="linear"
+                path="M ${x2} ${y2} L ${x1} ${y1}" />
+              <circle cx="0" cy="0" r="5.5" fill="${pulse.outer}" fill-opacity="${(pulse.outerOpacity * 0.88).toFixed(2)}" filter="url(#flow-pulse-glow-export)" />
+              <circle cx="0" cy="0" r="2.2" fill="#f0f9ff" fill-opacity="0.92" />
+            </g>`
+          : `
+            <g>
+              <animateMotion dur="${pulseDur.toFixed(2)}s" repeatCount="indefinite" begin="${pulseBegin}s" calcMode="linear"${motionExtra}
+                path="M ${x1} ${y1} L ${x2} ${y2}" />
+              <circle cx="0" cy="0" r="6" fill="${pulse.outer}" fill-opacity="${pulse.outerOpacity}" filter="url(#flow-pulse-glow-export)" />
+              <circle cx="0" cy="0" r="2.4" fill="${pulse.inner}" fill-opacity="0.95" />
+            </g>`;
+
         return `
           <g>
             <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-              stroke="#64748b" stroke-width="2" stroke-linecap="round" marker-end="url(#arrowhead-export)" />
+              stroke="#64748b" stroke-width="1.85" stroke-linecap="round" marker-end="url(#arrowhead-export)" />
+            ${pulseBlock}
             <text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle"
-              font-size="10" font-weight="600" fill="#334155" stroke="#f8fafc" stroke-width="2.5" paint-order="stroke fill"
+              font-size="9" font-weight="600" fill="#334155" stroke="#f8fafc" stroke-width="2" paint-order="stroke fill"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${label.replace(/&/g, "&amp;")}
             </text>
@@ -1576,32 +1668,41 @@ export default function DrawDiagram() {
           >
             <svg className="absolute inset-0 h-full w-full">
               <defs>
+                <filter
+                  id="flow-pulse-glow"
+                  x="-120%"
+                  y="-120%"
+                  width="340%"
+                  height="340%"
+                >
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="1.6" />
+                </filter>
                 <marker
                   id="arrowhead"
-                  viewBox="0 0 4 3.2"
-                  markerWidth="3.5"
-                  markerHeight="3"
-                  refX="3.1"
-                  refY="1.6"
+                  viewBox="0 0 3 2.4"
+                  markerWidth="2.8"
+                  markerHeight="2.4"
+                  refX={3}
+                  refY={1.2}
                   orient="auto"
                   markerUnits="userSpaceOnUse"
                 >
-                  <path d="M0,0 L4,1.6 L0,3.2 Z" fill="#475569" />
+                  <path d="M0,0 L3,1.2 L0,2.4 Z" fill="#475569" />
                 </marker>
                 <marker
                   id="arrowhead-selected"
-                  viewBox="0 0 4 3.2"
-                  markerWidth="3.5"
-                  markerHeight="3"
-                  refX="3.1"
-                  refY="1.6"
+                  viewBox="0 0 3 2.4"
+                  markerWidth="2.8"
+                  markerHeight="2.4"
+                  refX={3}
+                  refY={1.2}
                   orient="auto"
                   markerUnits="userSpaceOnUse"
                 >
-                  <path d="M0,0 L4,1.6 L0,3.2 Z" fill="#0284c7" />
+                  <path d="M0,0 L3,1.2 L0,2.4 Z" fill="#0284c7" />
                 </marker>
               </defs>
-              {edges.map((edge) => {
+              {edges.map((edge, edgeIndex) => {
                 const from = nodes.find((n) => n.id === edge.fromId);
                 const to = nodes.find((n) => n.id === edge.toId);
                 if (!from || !to) return null;
@@ -1612,14 +1713,30 @@ export default function DrawDiagram() {
                 const dx = x2 - x1;
                 const dy = y2 - y1;
                 const dLen = Math.hypot(dx, dy) || 1;
-                const nx = (-dy / dLen) * 14;
-                const ny = (dx / dLen) * 14;
+                const nx = (-dy / dLen) * 12;
+                const ny = (dx / dLen) * 12;
                 const lx = midX + nx;
                 const ly = midY + ny;
 
                 const isSelected = edge.id === selectedEdgeId;
                 const stroke = isSelected ? "#0284c7" : "#475569";
-                const strokeW = isSelected ? 2.75 : 2;
+                const strokeW = isSelected ? 2.5 : 1.85;
+                const pulseDur = edgeFlowPulseDuration(
+                  x1,
+                  y1,
+                  x2,
+                  y2,
+                  edge.sync
+                );
+                const pulseBegin = ((edgeIndex % 12) * 0.14).toFixed(2);
+                const motionPath = `M ${x1} ${y1} L ${x2} ${y2}`;
+                const motionPathReturn = edgeReturnPath(x1, y1, x2, y2);
+                const motionKeys = edgeFlowMotionKeyAttrs(edge.sync);
+                const pulse = edgePulsePalette(edge.sync, isSelected);
+                const pulseBeginReturn = (
+                  Number(pulseBegin) +
+                  pulseDur / 2
+                ).toFixed(2);
 
                 return (
                   <g key={edge.id} data-edge>
@@ -1649,6 +1766,84 @@ export default function DrawDiagram() {
                       }
                       pointerEvents="none"
                     />
+                    {edge.sync ? (
+                      <>
+                        <g pointerEvents="none">
+                          <animateMotion
+                            dur={`${pulseDur.toFixed(2)}s`}
+                            repeatCount="indefinite"
+                            begin={`${pulseBegin}s`}
+                            calcMode="linear"
+                            path={motionPath}
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 6 : 5.2}
+                            fill={pulse.outer}
+                            fillOpacity={pulse.outerOpacity}
+                            filter="url(#flow-pulse-glow)"
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 2.6 : 2.2}
+                            fill={pulse.inner}
+                            fillOpacity={0.95}
+                          />
+                        </g>
+                        <g pointerEvents="none">
+                          <animateMotion
+                            dur={`${pulseDur.toFixed(2)}s`}
+                            repeatCount="indefinite"
+                            begin={`${pulseBeginReturn}s`}
+                            calcMode="linear"
+                            path={motionPathReturn}
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 6 : 5.2}
+                            fill={pulse.outer}
+                            fillOpacity={pulse.outerOpacity * 0.88}
+                            filter="url(#flow-pulse-glow)"
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 2.6 : 2.2}
+                            fill="#f0f9ff"
+                            fillOpacity={0.92}
+                          />
+                        </g>
+                      </>
+                    ) : (
+                      <g pointerEvents="none">
+                        <animateMotion
+                          dur={`${pulseDur.toFixed(2)}s`}
+                          repeatCount="indefinite"
+                          begin={`${pulseBegin}s`}
+                          calcMode="linear"
+                          path={motionPath}
+                          {...motionKeys}
+                        />
+                        <circle
+                          cx={0}
+                          cy={0}
+                          r={isSelected ? 6.5 : 5.5}
+                          fill={pulse.outer}
+                          fillOpacity={pulse.outerOpacity}
+                          filter="url(#flow-pulse-glow)"
+                        />
+                        <circle
+                          cx={0}
+                          cy={0}
+                          r={isSelected ? 2.8 : 2.4}
+                          fill={pulse.inner}
+                          fillOpacity={0.95}
+                        />
+                      </g>
+                    )}
                     {edge.label ? (
                       <text
                         x={lx}
@@ -1656,11 +1851,11 @@ export default function DrawDiagram() {
                         textAnchor="middle"
                         dominantBaseline="middle"
                         className="pointer-events-none select-none"
-                        fontSize={11}
+                        fontSize={10}
                         fontWeight={600}
                         fill={isSelected ? "#0c4a6e" : "#334155"}
                         stroke="#f8fafc"
-                        strokeWidth={3}
+                        strokeWidth={2.5}
                         paintOrder="stroke fill"
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
@@ -1674,11 +1869,11 @@ export default function DrawDiagram() {
                         textAnchor="middle"
                         dominantBaseline="middle"
                         className="pointer-events-none select-none"
-                        fontSize={11}
+                        fontSize={10}
                         fontWeight={600}
                         fill={isSelected ? "#0c4a6e" : "#334155"}
                         stroke="#f8fafc"
-                        strokeWidth={3}
+                        strokeWidth={2.5}
                         paintOrder="stroke fill"
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
@@ -1963,6 +2158,13 @@ export default function DrawDiagram() {
                 Synchronous call (uncheck = async)
               </label>
             </div>
+            <p className="text-[10px] leading-snug text-slate-500">
+              Flow cue: sync = two cyan pulses shuttling opposite ways
+              (bidirectional); async = one amber pulse along the arrow only
+              (one-way). Matches{" "}
+              <code className="text-slate-400">sync</code> in exported / uploaded
+              JSON.
+            </p>
 
             <div className="pt-1">
               <button
