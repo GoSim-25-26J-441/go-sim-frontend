@@ -94,7 +94,8 @@ export type EditTool =
   | "add-external-system"
   | "add-client"
   | "add-user-actor"
-  | "connect-calls";
+  | "connect-calls"
+  | "delete-element";
 
 export type SelectedItem =
   | { type: "node"; data: any }

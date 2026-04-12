@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState, useMemo } from "react";
+import { Trash2 } from "lucide-react";
 import type {
   EditTool,
   CallProtocol,
@@ -18,7 +19,7 @@ import {
   DIAGRAM_TOOL_ICON_PATHS,
 } from "@/app/features/amg-apd/utils/diagramNodeIcons";
 
-const TOOL_ICONS: Record<EditTool, string> = {
+const TOOL_ICONS: Record<Exclude<EditTool, "delete-element">, string> = {
   select: DIAGRAM_TOOL_ICON_PATHS.select,
   "add-service": DIAGRAM_NODE_ICON_PATHS.service,
   "add-api-gateway": DIAGRAM_NODE_ICON_PATHS.gateway,
@@ -45,6 +46,12 @@ const INTERACTION_TOOLS: ToolRowDef[] = [
     label: "Connect nodes",
     title: "Choose a source node, then click another node to add a call",
     hint: "Click two nodes",
+  },
+  {
+    t: "delete-element",
+    label: "Delete",
+    title: "Click a node or connection on the canvas to remove it",
+    hint: "Click target",
   },
 ];
 
@@ -114,10 +121,10 @@ const toneRowClasses = {
   },
   node: {
     idle: diagramRowIdle,
-    active: `${rowBase} cursor-pointer border-sky-500 bg-gradient-to-br from-sky-50 via-white to-sky-100/45 text-black ring-2 ring-sky-400/50 shadow-[0_0_22px_rgba(56,189,248,0.3)]`,
+    active: `${rowBase} cursor-pointer border-sky-600 bg-gradient-to-br from-sky-100/95 via-white to-sky-200/65 text-black ring-2 ring-sky-600/42 shadow-[0_0_20px_rgba(2,132,199,0.26)]`,
     iconWrapIdle: "bg-slate-100/90",
-    iconWrapActive: "bg-sky-200/50",
-    hintActive: "text-sky-900/70",
+    iconWrapActive: "bg-sky-300/50",
+    hintActive: "text-sky-950/72",
   },
   anti: {
     idle: diagramRowIdle,
@@ -242,13 +249,21 @@ export default function EditToolbar({
             active ? tc.iconWrapActive : tc.iconWrapIdle
           }`}
         >
-          <Image
-            width={32}
-            height={32}
-            src={TOOL_ICONS[t]}
-            alt=""
-            className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
-          />
+          {t === "delete-element" ? (
+            <Trash2
+              className="h-5 w-5 sm:h-6 sm:w-6 text-slate-800 pointer-events-none"
+              strokeWidth={2.25}
+              aria-hidden
+            />
+          ) : (
+            <Image
+              width={32}
+              height={32}
+              src={TOOL_ICONS[t as Exclude<EditTool, "delete-element">]}
+              alt=""
+              className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
+            />
+          )}
         </span>
         <div className="flex min-w-0 flex-1 flex-col text-left">
           <span className="truncate font-bold text-black">{label}</span>
@@ -291,7 +306,7 @@ export default function EditToolbar({
 
       {showNodesSection && (
         <>
-          <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-sky-200/90 sm:text-[11px]">
+          <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-sky-300/85 sm:text-[11px]">
             {NODES_HEADING}
           </div>
           {nodesToShow.map((row) => (
@@ -387,7 +402,7 @@ export default function EditToolbar({
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         placeholder="Search tools…"
-        className="w-full rounded-lg border border-slate-600/80 bg-slate-900/40 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500/60 focus:border-sky-500/50"
+        className="w-full rounded-lg border border-slate-600/80 bg-slate-900/40 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-600/55 focus:border-sky-600/45"
         aria-label="Search edit tools"
       />
     </div>

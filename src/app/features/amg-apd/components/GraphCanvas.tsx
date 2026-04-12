@@ -27,7 +27,13 @@ import ControlPanel, {
   type GraphStats,
 } from "@/app/features/amg-apd/components/ControlPanel";
 import EditToolbar from "@/app/features/amg-apd/components/EditToolbar";
-import SelectedDetails from "@/app/features/amg-apd/components/SelectedDetails";
+import CollapsibleDetailsSection from "@/app/features/amg-apd/components/CollapsibleDetailsSection";
+import LiveGraphExportPreview from "@/app/features/amg-apd/components/LiveGraphExportPreview";
+import {
+  AntiPatternDetailsPanel,
+  ConnectionsToolsPanel,
+  SelectionDetailsMain,
+} from "@/app/features/amg-apd/components/SelectedDetails";
 
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import {
@@ -59,6 +65,9 @@ cytoscape.use(cola);
 cytoscape.use(elk);
 
 const PHASE_TICK_MS = 900;
+
+/** Canvas + sidebars share this height so the graph area stays fixed; Details scrolls inside its column. */
+const GRAPH_WORK_AREA_HEIGHT_CLASS = "h-[min(600px,70vh)] shrink-0";
 
 function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   if (!cy) return false;
@@ -209,6 +218,18 @@ export default function GraphCanvas({
     return `${n}-${e}-${d}`;
   }, [analysis]);
 
+  const handleToolChange = useCallback((t: EditTool) => {
+    setPendingAntiPatternKind(null);
+    setPendingSource(null);
+    setTool(t);
+  }, []);
+
+  const handleAddAntiPattern = useCallback((kind: DetectionKind) => {
+    setPendingSource(null);
+    setTool("select");
+    setPendingAntiPatternKind((prev) => (prev === kind ? null : kind));
+  }, []);
+
   const { tooltip } = useCyTooltip({
     cy,
     data: analysis,
@@ -273,6 +294,7 @@ export default function GraphCanvas({
       setSelected(null);
       setPendingSource(null);
       setPendingAntiPatternKind(null);
+      setTool("select");
 
       requestAnimationFrame(() => {
         if (!cyAlive(cy)) return;
@@ -604,7 +626,7 @@ export default function GraphCanvas({
         readOnly={readOnly}
       />
 
-      <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden">
+      <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden items-start">
         {!readOnly &&
           editMode &&
             (leftPanelCollapsed ? (
@@ -625,7 +647,9 @@ export default function GraphCanvas({
               </span>
             </div>
           ) : (
-            <aside className="w-52 shrink-0 flex h-full min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10">
+            <aside
+              className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+            >
               <div className="flex items-center justify-between gap-1 mb-2 shrink-0">
                 <span className="text-xs font-semibold truncate text-slate-200 sm:text-sm">
                   Toolbox
@@ -652,14 +676,14 @@ export default function GraphCanvas({
                   editMode={editMode}
                   tool={tool}
                   pendingSourceId={pendingSource}
-                  onToolChange={setTool}
+                  onToolChange={handleToolChange}
                   defaultCallProtocol={defaultCallProtocol}
                   defaultCallSync={defaultCallSync}
                   onDefaultCallChange={(kind, sync) => {
                     setDefaultCallProtocol(kind);
                     setDefaultCallSync(sync);
                   }}
-                  onAddAntiPattern={(kind) => setPendingAntiPatternKind(kind)}
+                  onAddAntiPattern={handleAddAntiPattern}
                   pendingAntiPatternKind={pendingAntiPatternKind}
                   variant="sidebar"
                 />
@@ -669,7 +693,7 @@ export default function GraphCanvas({
 
         <div
           ref={containerRef}
-          className="relative flex-1 min-h-[600px] min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner"
+          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
         >
           <CytoscapeComponent
             cy={(c) => {
@@ -712,36 +736,88 @@ export default function GraphCanvas({
               <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-72 shrink-0 flex h-full min-h-0 min-w-0 flex-col rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
+            <aside
+              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+            >
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900/80 px-3 py-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-200">
                   Details
                 </span>
                 <button
                   type="button"
                   onClick={() => setRightPanelCollapsed(true)}
                   title="Minimize details"
-                  className="p-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors"
+                  className="rounded-md p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100"
                 >
                   <PanelRightClose className="h-4 w-4" />
                 </button>
               </div>
-              <div className="flex-1 min-h-0 overflow-auto overflow-x-hidden scrollbar-subtle p-3">
-                <SelectedDetails
-                  data={analysis}
-                  selected={selected}
-                  editMode={editMode}
-                  onRenameNode={handleRenameNode}
-                  onUpdateEdge={handleUpdateEdge}
-                  currentTool={tool}
-                  onToolChange={setTool}
-                  defaultCallProtocol={defaultCallProtocol}
-                  defaultCallSync={defaultCallSync}
-                  onDefaultCallChange={(kind, sync) => {
-                    setDefaultCallProtocol(kind);
-                    setDefaultCallSync(sync);
-                  }}
-                />
+              {/* Single scroll surface for the whole panel (like Edit Tools); subsections do not scroll on their own */}
+              <div className="isolate flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 pr-2 [scrollbar-gutter:stable] scrollbar-toolbox">
+                <CollapsibleDetailsSection
+                  collapsedLabel={
+                    selected?.type === "node"
+                      ? "Show node details"
+                      : selected?.type === "edge"
+                        ? "Show connection details"
+                        : "Show selection details"
+                  }
+                  expandedTitle={
+                    selected?.type === "node"
+                      ? "Node details"
+                      : selected?.type === "edge"
+                        ? "Connection details"
+                        : "Selection"
+                  }
+                >
+                  <SelectionDetailsMain
+                    data={analysis}
+                    selected={selected}
+                    editMode={editMode}
+                    onRenameNode={handleRenameNode}
+                    onUpdateEdge={handleUpdateEdge}
+                  />
+                </CollapsibleDetailsSection>
+
+                {!readOnly && editMode && (
+                  <CollapsibleDetailsSection
+                    collapsedLabel="Show connection tools"
+                    expandedTitle="Connection tools"
+                  >
+                    <ConnectionsToolsPanel
+                      editMode={editMode}
+                      currentTool={tool}
+                      onToolChange={handleToolChange}
+                      defaultCallProtocol={defaultCallProtocol}
+                      defaultCallSync={defaultCallSync}
+                      onDefaultCallChange={(kind, sync) => {
+                        setDefaultCallProtocol(kind);
+                        setDefaultCallSync(sync);
+                      }}
+                    />
+                  </CollapsibleDetailsSection>
+                )}
+
+                <CollapsibleDetailsSection
+                  collapsedLabel="Show anti-pattern details"
+                  expandedTitle="Anti-pattern details"
+                >
+                  <AntiPatternDetailsPanel
+                    data={analysis}
+                    selected={selected}
+                  />
+                </CollapsibleDetailsSection>
+
+                <CollapsibleDetailsSection
+                  collapsedLabel="Show JSON / YAML details"
+                  expandedTitle="Live graph export"
+                >
+                  <LiveGraphExportPreview
+                    cy={cy}
+                    graphFallback={analysis.graph}
+                    graphRev={phaseKey}
+                  />
+                </CollapsibleDetailsSection>
               </div>
             </aside>
           ))}
