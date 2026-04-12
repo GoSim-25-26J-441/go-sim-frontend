@@ -7,15 +7,17 @@ import React, {
   useRef,
   useEffect,
   useCallback,
+  useMemo,
   MouseEvent as ReactMouseEvent,
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
 import {
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
+  useUpdateDiagramVersionMutation,
   useUploadDiagramImageMutation,
 } from "@/app/store/projectsApi";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
@@ -133,14 +135,43 @@ function colorForKind(kind: NodeKind): string {
   }
 }
 
+function extractDiagramVersionIdFromSaveResponse(
+  saveRes: Record<string, unknown>
+): string | undefined {
+  const dv = saveRes?.diagram_version_id ?? saveRes?.version_id;
+  const nested = saveRes?.diagram_version as { id?: string } | undefined;
+  if (typeof dv === "string" && dv.length > 0) return dv;
+  if (nested && typeof nested.id === "string" && nested.id.length > 0) {
+    return nested.id;
+  }
+  if (typeof saveRes?.id === "string" && String(saveRes.id).startsWith("dver-")) {
+    return saveRes.id as string;
+  }
+  return undefined;
+}
+
 export default function DrawDiagram() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const projectId = searchParams.get("project");
-  
-  const { data: summary, isLoading: loadingSummary } = useGetProjectSummaryQuery(
-    projectId || "",
-    { skip: !projectId }
-  );
+  const threadFromQuery = searchParams.get("thread");
+  const diagramVersionFromQuery =
+    searchParams.get("diagramVersion") ??
+    searchParams.get("diagram_version");
+  const reloadFlag = searchParams.get("reload");
+
+  const {
+    data: summary,
+    isLoading: loadingSummary,
+    refetch: refetchProjectSummary,
+  } = useGetProjectSummaryQuery(projectId || "", { skip: !projectId });
+
+  const diagramVersionIdForSave = useMemo(() => {
+    const fromUrl = diagramVersionFromQuery?.trim();
+    if (fromUrl) return fromUrl;
+    const id = summary?.latest_diagram_version?.id;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+  }, [diagramVersionFromQuery, summary?.latest_diagram_version?.id]);
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
@@ -181,6 +212,7 @@ export default function DrawDiagram() {
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [saveDiagram] = useSaveDiagramMutation();
+  const [updateDiagramVersion] = useUpdateDiagramVersionMutation();
   const [uploadDiagramImage] = useUploadDiagramImageMutation();
 
   // Helpers
@@ -583,6 +615,10 @@ export default function DrawDiagram() {
     const kindToType = (kind: NodeKind): string => {
       if (kind === "database") return "db";
       if (kind === "topic") return "topic";
+      if (kind === "gateway") return "gateway";
+      if (kind === "external") return "external";
+      if (kind === "client") return "client";
+      if (kind === "user") return "user";
       return "service";
     };
 
@@ -598,12 +634,16 @@ export default function DrawDiagram() {
       id: node.id,
       label: node.name,
       type: kindToType(node.kind),
+      x: node.x,
+      y: node.y,
     }));
 
     const backendEdges = edges.map((edge) => ({
+      id: edge.id,
       from: edge.fromId,
       to: edge.toId,
       protocol: kindToProtocol(edge.kind, edge.sync),
+      ...(edge.label ? { label: edge.label } : {}),
     }));
 
     // Build spec_summary
@@ -650,8 +690,20 @@ export default function DrawDiagram() {
       label?: string;
     }>;
     // New format
-    nodes?: Array<{ id: string; label: string; type: string }>;
-    edges?: Array<{ from: string; to: string; protocol: string }>;
+    nodes?: Array<{
+      id: string;
+      label: string;
+      type: string;
+      x?: unknown;
+      y?: unknown;
+    }>;
+    edges?: Array<{
+      id?: string;
+      from: string;
+      to: string;
+      protocol: string;
+      label?: string;
+    }>;
   }) => {
     const newNodes: DiagramNode[] = [];
     const idToNodeId: Record<string, string> = {};
@@ -661,26 +713,53 @@ export default function DrawDiagram() {
     const START_X = 100;
     const START_Y = 100;
 
+    const gridPosition = (idx: number) => ({
+      x: START_X + (idx % 4) * GRID_SPACING,
+      y: START_Y + Math.floor(idx / 4) * GRID_SPACING,
+    });
+
+    const positionFromSavedOrGrid = (
+      node: { x?: unknown; y?: unknown },
+      idx: number
+    ) => {
+      const nx = Number(node.x);
+      const ny = Number(node.y);
+      if (Number.isFinite(nx) && Number.isFinite(ny)) {
+        return { x: nx, y: ny };
+      }
+      return gridPosition(idx);
+    };
+
     // Check if this is the new format (has nodes/edges)
     if (diagramData.nodes && diagramData.edges) {
       // New format: nodes with id, label, type
       diagramData.nodes.forEach((node, idx) => {
         const nodeId = node.id || `node-${nodeCounter++}`;
-        idToNodeId[node.id] = nodeId;
+        if (node.id) {
+          idToNodeId[node.id] = nodeId;
+        }
+        idToNodeId[nodeId] = nodeId;
         nameToNodeId[node.label] = nodeId;
-        
+
         // Map backend type to frontend kind
         let kind: NodeKind = "service";
-        if (node.type === "db") kind = "database";
-        else if (node.type === "topic") kind = "topic";
-        else if (node.type === "service") kind = "service";
-        
+        const t = (node.type || "service").toLowerCase();
+        if (t === "db" || t === "database") kind = "database";
+        else if (t === "topic") kind = "topic";
+        else if (t === "gateway") kind = "gateway";
+        else if (t === "external") kind = "external";
+        else if (t === "client") kind = "client";
+        else if (t === "user") kind = "user";
+        else if (t === "service") kind = "service";
+
+        const { x, y } = positionFromSavedOrGrid(node, idx);
+
         newNodes.push({
           id: nodeId,
           name: node.label,
           kind,
-          x: START_X + (idx % 4) * GRID_SPACING,
-          y: START_Y + Math.floor(idx / 4) * GRID_SPACING,
+          x,
+          y,
         });
       });
 
@@ -689,7 +768,7 @@ export default function DrawDiagram() {
       diagramData.edges.forEach((edge, idx) => {
         const fromId = idToNodeId[edge.from] || edge.from;
         const toId = idToNodeId[edge.to] || edge.to;
-        
+
         // Map protocol to edge kind and sync
         let kind: EdgeKind = "rest";
         let sync = true;
@@ -700,14 +779,22 @@ export default function DrawDiagram() {
           kind = "event";
           sync = protocol.includes("SYNC");
         }
-        
+
+        const edgeId =
+          typeof edge.id === "string" && edge.id.trim().length > 0
+            ? edge.id.trim()
+            : `edge-${idx}`;
+
         if (newNodes.find((n) => n.id === fromId) && newNodes.find((n) => n.id === toId)) {
           newEdges.push({
-            id: `edge-${idx}`,
+            id: edgeId,
             fromId,
             toId,
             kind,
             sync,
+            ...(typeof edge.label === "string" && edge.label.trim().length > 0
+              ? { label: edge.label }
+              : {}),
           });
         }
       });
@@ -793,6 +880,15 @@ export default function DrawDiagram() {
     }
   }, [projectId, lastLoadedProjectId]);
 
+  // Refetch summary and clear local canvas when returning from chat (?reload=1)
+  useEffect(() => {
+    if (!projectId || reloadFlag !== "1") return;
+    setNodes([]);
+    setEdges([]);
+    setDiagramLoaded(false);
+    void refetchProjectSummary();
+  }, [projectId, reloadFlag, refetchProjectSummary]);
+
   // Load diagram from summary when available
   useEffect(() => {
     if (
@@ -818,6 +914,14 @@ export default function DrawDiagram() {
       console.log("No diagram_json found in summary:", summary);
     }
   }, [projectId, summary, loadingSummary, diagramLoaded, loadDiagramFromJson, lastLoadedProjectId]);
+
+  useEffect(() => {
+    if (reloadFlag !== "1" || !diagramLoaded || !projectId) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("reload");
+    const qs = next.toString();
+    router.replace(qs ? `/diagram?${qs}` : "/diagram", { scroll: false });
+  }, [reloadFlag, diagramLoaded, projectId, router, searchParams]);
 
   const buildExportModel = () => {
     const services = nodes
@@ -1077,8 +1181,52 @@ export default function DrawDiagram() {
   };
 
   const [opening, setOpening] = useState(false);
+  const [backToChatBusy, setBackToChatBusy] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string>("");
   const openInChat = useOpenInChat();
+
+  const persistDiagramDefinition = useCallback(
+    async (options?: { imageObjectKey?: string }) => {
+      if (!projectId) {
+        throw new Error("Missing project");
+      }
+      const backendFormat = transformToBackendFormat();
+      const diagramJson = backendFormat.diagram_json;
+      const imageObjectKey = options?.imageObjectKey;
+
+      let saveRes: Record<string, unknown>;
+      if (diagramVersionIdForSave) {
+        saveRes = (await updateDiagramVersion({
+          projectId,
+          versionId: diagramVersionIdForSave,
+          diagram_json: diagramJson,
+          ...(imageObjectKey ? { image_object_key: imageObjectKey } : {}),
+        }).unwrap()) as Record<string, unknown>;
+      } else {
+        saveRes = (await saveDiagram({
+          projectId,
+          diagram: imageObjectKey
+            ? { ...backendFormat, image_object_key: imageObjectKey }
+            : backendFormat,
+        }).unwrap()) as Record<string, unknown>;
+      }
+
+      await refetchProjectSummary();
+      return (
+        extractDiagramVersionIdFromSaveResponse(saveRes) ??
+        diagramVersionIdForSave ??
+        undefined
+      );
+    },
+    [
+      projectId,
+      diagramVersionIdForSave,
+      transformToBackendFormat,
+      updateDiagramVersion,
+      saveDiagram,
+      refetchProjectSummary,
+    ]
+  );
 
   const handleOpenInChat = async () => {
     if (opening || !projectId) return;
@@ -1105,23 +1253,11 @@ export default function DrawDiagram() {
 
       let diagramVersionId: string | undefined;
       try {
-        const backendFormat = transformToBackendFormat();
-        setLoadingMessage("Saving diagram definition...");
-        const saveRes = await saveDiagram({
-          projectId,
-          diagram: imageObjectKey
-            ? { ...backendFormat, image_object_key: imageObjectKey }
-            : backendFormat,
-        }).unwrap();
+        setLoadingMessage("Saving diagram definition…");
+        diagramVersionId = await persistDiagramDefinition({
+          imageObjectKey,
+        });
         console.log("Diagram saved successfully");
-        const r = saveRes as Record<string, unknown>;
-        const dv = r?.diagram_version_id ?? r?.version_id;
-        const nested = r?.diagram_version as { id?: string } | undefined;
-        if (typeof dv === "string" && dv.length > 0) diagramVersionId = dv;
-        else if (nested && typeof nested.id === "string" && nested.id.length > 0)
-          diagramVersionId = nested.id;
-        else if (typeof r?.id === "string" && String(r.id).startsWith("dver-"))
-          diagramVersionId = r.id as string;
       } catch (saveError) {
         console.error("Failed to save diagram:", saveError);
       }
@@ -1148,9 +1284,46 @@ export default function DrawDiagram() {
     }
   };
 
+  const navigateBackToChat = useCallback(async () => {
+    if (!projectId || !threadFromQuery) return;
+    setBackToChatBusy(true);
+    try {
+      const versionAfterSave = await persistDiagramDefinition();
+      const p = new URLSearchParams();
+      p.set("thread", threadFromQuery);
+      p.set("from", "diagram");
+      const dv = diagramVersionFromQuery ?? versionAfterSave;
+      if (dv) {
+        p.set("diagramVersion", dv);
+      }
+      router.push(`/project/${projectId}/chat?${p.toString()}`);
+    } catch (e) {
+      console.error(e);
+      alert(
+        (e as Error).message ||
+          "Failed to save diagram before returning to chat"
+      );
+    } finally {
+      setBackToChatBusy(false);
+    }
+  }, [
+    projectId,
+    threadFromQuery,
+    diagramVersionFromQuery,
+    persistDiagramDefinition,
+    router,
+  ]);
+
   return (
     <React.Fragment>
-      <LoaderModal isOpen={opening} message={loadingMessage || "Loading..."} />
+      <LoaderModal
+        isOpen={opening || backToChatBusy}
+        message={
+          backToChatBusy
+            ? "Saving diagram…"
+            : loadingMessage || "Loading..."
+        }
+      />
 
       {contextMenuNodeId && contextMenuPosition && (
         <div
@@ -1747,20 +1920,39 @@ export default function DrawDiagram() {
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Discuss in chat</span>
-            <button
-              type="button"
-              onClick={handleOpenInChat}
-              disabled={opening}
-              className={`rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
+            <span className="text-xs text-slate-400">
+              {"Discuss in chat"}
+            </span>
+            {threadFromQuery && projectId ? (
+              <button
+                type="button"
+                onClick={() => void navigateBackToChat()}
+                disabled={backToChatBusy || opening}
+                className={`flex items-center gap-1 rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
+                  ${
+                    backToChatBusy || opening
+                      ? "bg-emerald-700/60 cursor-not-allowed opacity-70"
+                      : "bg-emerald-600/80 hover:bg-emerald-500"
+                  }`}
+              >
+                <MessageSquare className="w-3 h-3 shrink-0" />
+                {backToChatBusy ? "Saving…" : "Back to chat"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleOpenInChat}
+                disabled={opening}
+                className={`rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
         ${
           opening
             ? "bg-emerald-700/60 cursor-not-allowed opacity-70"
             : "bg-emerald-600/80 hover:bg-emerald-500"
         }`}
-            >
-              {opening ? "Opening in Chat…" : "Open in Chat (JSON copied)"}
-            </button>
+              >
+                {opening ? "Opening in Chat…" : "Open in Chat"}
+              </button>
+            )}
           </div>
           <p className="text-[10px] text-slate-500">
             JSON copied to clipboard. Paste into chat to analyse.

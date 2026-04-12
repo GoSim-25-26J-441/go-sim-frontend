@@ -274,6 +274,7 @@ export default function TempChatModal({ isOpen, onClose }: TempChatModalProps) {
               role={m.role}
               text={m.message}
               responseTimeMs={m.responseTimeMs}
+              showDiagramVersionFooter={false}
             />
           ))}
 

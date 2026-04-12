@@ -7,17 +7,13 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 import { ArrowLeft, AlertCircle } from "lucide-react";
+import { navigateToProjectChatWithDiagram } from "@/modules/di/navigateToProjectChatWithDiagram";
 
 type Props = {
   projectId: string;
   onClose: () => void;
 };
 
-/**
- * Overlay shown on the chat page when "Check Anti-Patterns" is clicked.
- * Blurs the current page and shows a loading card; runs fetch then redirects
- * to patterns or shows error with option to close.
- */
 export default function CheckPatternsOverlay({ projectId, onClose }: Props) {
   const router = useRouter();
   const { userId } = useAuth();
@@ -70,7 +66,6 @@ export default function CheckPatternsOverlay({ projectId, onClose }: Props) {
         };
 
         if (data.needs_analysis && data.yaml_content) {
-          // Update existing version in place when version_id is present (e.g. from chat); otherwise create new version.
           const versionId = (data as { version_id?: string }).version_id;
           if (versionId) {
             const updateRes = await fetch("/api/amg-apd/update-version-analysis", {
@@ -209,7 +204,7 @@ export default function CheckPatternsOverlay({ projectId, onClose }: Props) {
                   type="button"
                   onClick={() => {
                     onClose();
-                    router.push(`/project/${projectId}/chat`);
+                    void navigateToProjectChatWithDiagram(router, projectId);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
                 >

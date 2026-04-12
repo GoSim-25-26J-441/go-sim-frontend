@@ -53,11 +53,10 @@ export const projectsApi = createApi({
       return headers;
     },
   }),
-  tagTypes: ["Projects"],
+  tagTypes: ["Projects", "ProjectSummary"],
   endpoints: (b) => ({
     getProjects: b.query<Project[], void>({
       query: () => ({
-        // Call backend directly instead of Next.js proxy
         url: `${env.BACKEND_BASE}/api/v1/projects`,
         method: "GET",
       }),
@@ -65,7 +64,6 @@ export const projectsApi = createApi({
         const data = res as any;
         console.log("Raw projects API response:", data);
         
-        // Handle different response formats
         let projectsArray: any[] = [];
         
         if (Array.isArray(data)) {
@@ -227,6 +225,9 @@ export const projectsApi = createApi({
           ...data,
         };
       },
+      providesTags: (_result, _error, projectId) => [
+        { type: "ProjectSummary", id: projectId },
+      ],
     }),
 
     saveDiagram: b.mutation<
@@ -246,6 +247,46 @@ export const projectsApi = createApi({
           ...data,
         };
       },
+      invalidatesTags: (_result, _error, arg) => [
+        { type: "ProjectSummary", id: arg.projectId },
+      ],
+    }),
+
+    updateDiagramVersion: b.mutation<
+      { ok: boolean; diagram_version?: unknown; [key: string]: unknown },
+      {
+        projectId: string;
+        versionId: string;
+        diagram_json: unknown;
+        spec_summary?: unknown;
+        image_object_key?: string;
+      }
+    >({
+      query: ({ projectId, versionId, diagram_json, spec_summary, image_object_key }) => {
+        const body: Record<string, unknown> = { diagram_json };
+        if (spec_summary !== undefined) {
+          body.spec_summary = spec_summary;
+        }
+        if (image_object_key !== undefined) {
+          body.image_object_key = image_object_key;
+        }
+        return {
+          url: `${env.BACKEND_BASE}/api/v1/projects/${projectId}/diagram/${encodeURIComponent(versionId)}`,
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body,
+        };
+      },
+      transformResponse: (res: unknown) => {
+        const data = res as any;
+        return {
+          ok: data?.ok ?? true,
+          ...data,
+        };
+      },
+      invalidatesTags: (_result, _error, arg) => [
+        { type: "ProjectSummary", id: arg.projectId },
+      ],
     }),
 
     uploadDiagramImage: b.mutation<
@@ -341,6 +382,7 @@ export const {
   useDeleteProjectMutation,
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
+  useUpdateDiagramVersionMutation,
   useUploadDiagramImageMutation,
   useGetProjectDiagramImagesQuery,
   useUpdateDiagramImageTitleMutation,

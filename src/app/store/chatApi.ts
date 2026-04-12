@@ -23,6 +23,8 @@ export interface ChatMessageItem {
   role: "user" | "assistant";
   message: string;
   ts?: number;
+  /** Present on assistant messages when the backend bound a diagram version to the reply */
+  diagram_version_id_used?: string | null;
 }
 
 export interface SendMessageArg {
@@ -40,6 +42,7 @@ export interface ChatResponse {
   answer?: string;
   message?: string;
   source?: "rag" | "llm" | "assistant";
+  diagram_version_id_used?: string | null;
   [key: string]: unknown;
 }
 
@@ -101,11 +104,29 @@ export const chatApi = createApi({
           : Array.isArray(data?.messages)
             ? data.messages
             : [];
-        return arr.map((m: any) => ({
-          role: m.role === "user" ? "user" : "assistant",
-          message: m.message || m.text || m.content || "",
-          ts: m.ts || m.timestamp || Date.now(),
-        }));
+        return arr.map((m: any) => {
+          const role = m.role === "user" ? "user" : "assistant";
+          const rawDv =
+            m.diagram_version_id_used ??
+            m.diagram_version_id ??
+            m.diagramVersionIdUsed;
+          const diagram_version_id_used =
+            role === "assistant" &&
+            typeof rawDv === "string" &&
+            rawDv.trim().length > 0
+              ? rawDv.trim()
+              : role === "assistant"
+                ? null
+                : undefined;
+          return {
+            role,
+            message: m.message || m.text || m.content || "",
+            ts: m.ts || m.timestamp || Date.now(),
+            ...(role === "assistant"
+              ? { diagram_version_id_used }
+              : {}),
+          };
+        });
       },
       providesTags: (_result, _err, arg) => [
         { type: "ChatMessages", id: `${arg.projectId}-${arg.threadId}` },

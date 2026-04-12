@@ -9,6 +9,7 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
+import { navigateToProjectChatWithDiagram } from "@/modules/di/navigateToProjectChatWithDiagram";
 
 type LatestResponse = AnalysisResult & { yaml_content?: string };
 
@@ -39,7 +40,7 @@ function ProjectNavSidebar({
 
   const handleChatClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    router.push(`/project/${projectId}/chat`);
+    void navigateToProjectChatWithDiagram(router, projectId);
   };
 
   const navItems = [
@@ -280,13 +281,16 @@ export default function ProjectPatternPage({
                 architecture using the <strong>Chat</strong> flow, then return
                 here for pattern detection.
               </p>
-              <Link
-                href={`/project/${projectId}/chat`}
+              <button
+                type="button"
+                onClick={() =>
+                  void navigateToProjectChatWithDiagram(router, projectId)
+                }
                 className="mt-5 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/15 transition-colors"
               >
                 <MessageCircle className="h-4 w-4" />
                 Go to Chat
-              </Link>
+              </button>
             </div>
           </main>
         </div>
