@@ -12,6 +12,9 @@ export interface Node {
   id: string;
   name: string;
   kind: NodeKind;
+  /** Layout coordinates when saved (same idea as `/diagram` node JSON). */
+  x?: number;
+  y?: number;
   attrs?: Record<string, any>;
 }
 

@@ -25,7 +25,7 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     const severity = meta?.severity ?? null;
     const hasDetection = kinds.length > 0;
 
-    return {
+    const el: ElementDefinition = {
       data: {
         id,
         label: toDisplayName(n?.name ?? id.replace(/^[^:]+:/, "")),
@@ -42,6 +42,12 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
         .filter(Boolean)
         .join(" "),
     };
+
+    if (typeof n?.x === "number" && typeof n?.y === "number") {
+      el.position = { x: n.x, y: n.y };
+    }
+
+    return el;
   });
 
   const nodeIds = new Set(Object.keys(nodesObj));

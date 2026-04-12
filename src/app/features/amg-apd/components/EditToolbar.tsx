@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useMemo } from "react";
 import type {
   EditTool,
@@ -12,32 +13,120 @@ import {
   ANTIPATTERN_ICONS,
   ANTIPATTERN_ICONS_ALT,
 } from "@/app/features/amg-apd/utils/antiPatternChunks";
+import {
+  DIAGRAM_NODE_ICON_PATHS,
+  DIAGRAM_TOOL_ICON_PATHS,
+} from "@/app/features/amg-apd/utils/diagramNodeIcons";
 
 const TOOL_ICONS: Record<EditTool, string> = {
-  select: "/icon/select.png",
-  "add-service": "/icon/service.png",
-  "add-api-gateway": "/icon/api_gateway.png",
-  "add-database": "/icon/database.png",
-  "add-event-topic": "/icon/event_topic.png",
-  "add-external-system": "/icon/service.png", // fallback; add external_system.png if desired
-  "add-client": "/icon/client.png",
-  "add-user-actor": "/icon/actor.png",
-  "connect-calls": "/icon/select.png", // connect tool reuses select icon
+  select: DIAGRAM_TOOL_ICON_PATHS.select,
+  "add-service": DIAGRAM_NODE_ICON_PATHS.service,
+  "add-api-gateway": DIAGRAM_NODE_ICON_PATHS.gateway,
+  "add-database": DIAGRAM_NODE_ICON_PATHS.database,
+  "add-event-topic": DIAGRAM_NODE_ICON_PATHS.topic,
+  "add-external-system": DIAGRAM_NODE_ICON_PATHS.external,
+  "add-client": DIAGRAM_NODE_ICON_PATHS.client,
+  "add-user-actor": DIAGRAM_NODE_ICON_PATHS.user,
+  "connect-calls": DIAGRAM_TOOL_ICON_PATHS.connect,
 };
 
-const NODE_TOOLS: { t: EditTool; label: string; title: string }[] = [
-  { t: "select", label: "Select / Move", title: "Select, move and inspect elements" },
-  { t: "add-service", label: "Service", title: "Add a new service (click on the background)" },
-  { t: "add-api-gateway", label: "API Gateway", title: "Add an API gateway (click on the background)" },
-  { t: "add-database", label: "Database", title: "Add a new database (click on the background)" },
-  { t: "add-event-topic", label: "Event Topic", title: "Add an event topic (click on the background)" },
-  { t: "add-external-system", label: "External System", title: "Add an external system (click on the background)" },
-  { t: "add-client", label: "Client (web/mobile)", title: "Add a client (click on the background)" },
-  { t: "add-user-actor", label: "User / Actor", title: "Add a user or actor (click on the background)" },
+type ToolRowDef = { t: EditTool; label: string; title: string; hint: string };
+
+/** Select / connect — amber/orange only when selected. */
+const INTERACTION_TOOLS: ToolRowDef[] = [
+  {
+    t: "select",
+    label: "Select / Move",
+    title: "Select, move and inspect elements",
+    hint: "Click the canvas",
+  },
+  {
+    t: "connect-calls",
+    label: "Connect nodes",
+    title: "Choose a source node, then click another node to add a call",
+    hint: "Click two nodes",
+  },
 ];
 
+/** Add-node tools — diagram-style white tiles; sky when selected. */
+const NODE_ADD_TOOLS: ToolRowDef[] = [
+  {
+    t: "add-service",
+    label: "Service",
+    title: "Add a new service (click on the background)",
+    hint: "Click on canvas",
+  },
+  {
+    t: "add-api-gateway",
+    label: "API Gateway",
+    title: "Add an API gateway (click on the background)",
+    hint: "Click on canvas",
+  },
+  {
+    t: "add-database",
+    label: "Database",
+    title: "Add a new database (click on the background)",
+    hint: "Click on canvas",
+  },
+  {
+    t: "add-event-topic",
+    label: "Event Topic",
+    title: "Add an event topic (click on the background)",
+    hint: "Click on canvas",
+  },
+  {
+    t: "add-external-system",
+    label: "External System",
+    title: "Add an external system (click on the background)",
+    hint: "Click on canvas",
+  },
+  {
+    t: "add-client",
+    label: "Client (Web/Mobile)",
+    title: "Add a client (click on the background)",
+    hint: "Click on canvas",
+  },
+  {
+    t: "add-user-actor",
+    label: "User / Actor",
+    title: "Add a user or actor (click on the background)",
+    hint: "Click on canvas",
+  },
+];
+
+const TOOLS_HEADING = "Tools";
 const NODES_HEADING = "Nodes";
-const ANTIPATTERNS_HEADING = "Anti-Patterns";
+const ANTIPATTERNS_HEADING = "Anti-patterns";
+
+const rowBase =
+  "flex w-full items-center gap-1.5 rounded-lg border px-1.5 py-1 text-left text-[10px] transition-all duration-150 sm:gap-2 sm:px-2 sm:py-1.5 sm:text-xs";
+
+/** Default matches `/diagram` toolbox: white tile, black border. */
+const diagramRowIdle = `${rowBase} cursor-pointer border-black bg-white text-black shadow-sm hover:bg-white/85`;
+
+const toneRowClasses = {
+  tool: {
+    idle: diagramRowIdle,
+    active: `${rowBase} cursor-pointer border-amber-500 bg-gradient-to-br from-amber-50 via-white to-amber-100/50 text-black ring-2 ring-amber-400/55 shadow-[0_0_22px_rgba(251,191,36,0.35)]`,
+    iconWrapIdle: "bg-slate-100/90",
+    iconWrapActive: "bg-amber-200/55",
+    hintActive: "text-amber-900/70",
+  },
+  node: {
+    idle: diagramRowIdle,
+    active: `${rowBase} cursor-pointer border-sky-500 bg-gradient-to-br from-sky-50 via-white to-sky-100/45 text-black ring-2 ring-sky-400/50 shadow-[0_0_22px_rgba(56,189,248,0.3)]`,
+    iconWrapIdle: "bg-slate-100/90",
+    iconWrapActive: "bg-sky-200/50",
+    hintActive: "text-sky-900/70",
+  },
+  anti: {
+    idle: diagramRowIdle,
+    pending: `${rowBase} cursor-pointer border-rose-500 bg-gradient-to-br from-rose-50 via-white to-rose-100/50 text-black ring-2 ring-rose-400/50 shadow-[0_0_22px_rgba(251,113,133,0.32)]`,
+    iconWrapIdle: "bg-slate-100/90",
+    iconWrapPending: "bg-rose-200/50",
+    hintPending: "text-rose-900/70",
+  },
+} as const;
 
 type Props = {
   editMode: boolean;
@@ -48,7 +137,6 @@ type Props = {
   defaultCallSync?: boolean;
   onDefaultCallChange?: (kind: CallProtocol, sync: boolean) => void;
   onAddAntiPattern?: (kind: DetectionKind) => void;
-  /** When set, the matching anti-pattern button shows a glowing red "selected for placement" state. */
   pendingAntiPatternKind?: DetectionKind | null;
   variant?: "overlay" | "sidebar";
 };
@@ -58,14 +146,16 @@ export default function EditToolbar({
   tool,
   pendingSourceId,
   onToolChange,
-  defaultCallProtocol = "rest",
-  defaultCallSync = true,
-  onDefaultCallChange,
+  defaultCallProtocol: _defaultCallProtocol = "rest",
+  defaultCallSync: _defaultCallSync = true,
+  onDefaultCallChange: _onDefaultCallChange,
   onAddAntiPattern,
   pendingAntiPatternKind = null,
   variant = "overlay",
 }: Props) {
-  if (!editMode) return null;
+  void _defaultCallProtocol;
+  void _defaultCallSync;
+  void _onDefaultCallChange;
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -74,195 +164,275 @@ export default function EditToolbar({
     [searchQuery],
   );
 
-  const { showNodesSection, nodeToolsToShow, showAntiSection, antiToShow } =
-    useMemo(() => {
-      if (!query) {
-        return {
-          showNodesSection: true,
-          nodeToolsToShow: NODE_TOOLS,
-          showAntiSection: true,
-          antiToShow: EDITABLE_ANTIPATTERNS,
-        };
-      }
-      const nodesHeadingMatches =
-        NODES_HEADING.toLowerCase().includes(query) ||
-        "nodes".includes(query);
-      const antiHeadingMatches =
-        ANTIPATTERNS_HEADING.toLowerCase().replace(/\s/g, "-").includes(query) ||
-        "antipatterns".includes(query) ||
-        "anti-patterns".includes(query) ||
-        "anti patterns".includes(query);
-      const matchingNodeTools = NODE_TOOLS.filter((item) =>
-        item.label.toLowerCase().includes(query),
-      );
-      const matchingAnti = EDITABLE_ANTIPATTERNS.filter((kind) =>
-        antipatternKindLabel(kind).toLowerCase().includes(query),
-      );
+  const {
+    showToolsSection,
+    toolsToShow,
+    showNodesSection,
+    nodesToShow,
+    showAntiSection,
+    antiToShow,
+  } = useMemo(() => {
+    const matchesRow = (item: ToolRowDef) =>
+      item.label.toLowerCase().includes(query) ||
+      item.hint.toLowerCase().includes(query);
+
+    if (!query) {
       return {
-        showNodesSection: nodesHeadingMatches || matchingNodeTools.length > 0,
-        nodeToolsToShow: nodesHeadingMatches ? NODE_TOOLS : matchingNodeTools,
-        showAntiSection: antiHeadingMatches || matchingAnti.length > 0,
-        antiToShow: antiHeadingMatches ? EDITABLE_ANTIPATTERNS : matchingAnti,
+        showToolsSection: true,
+        toolsToShow: INTERACTION_TOOLS,
+        showNodesSection: true,
+        nodesToShow: NODE_ADD_TOOLS,
+        showAntiSection: true,
+        antiToShow: EDITABLE_ANTIPATTERNS,
       };
-    }, [query],
-  );
+    }
 
-  const btnBase =
-    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150";
-  const inactive =
-    "bg-slate-800/80 text-slate-200 hover:bg-slate-700/90 border border-slate-600/60 hover:border-slate-500";
-  const active =
-    "bg-sky-600 text-white border border-sky-500 shadow-md shadow-sky-500/30 ring-1 ring-sky-400/50";
+    const toolsHeadingMatches =
+      (query.length > 0 &&
+        TOOLS_HEADING.toLowerCase().includes(query)) ||
+      query === "tool" ||
+      query === "tools";
+    const nodesHeadingMatches =
+      (query.length > 0 &&
+        NODES_HEADING.toLowerCase().includes(query)) ||
+      query === "node" ||
+      query === "nodes";
+    const antiHeadingMatches =
+      ANTIPATTERNS_HEADING.toLowerCase().replace(/\s/g, "-").includes(query) ||
+      "antipatterns".includes(query) ||
+      "anti-patterns".includes(query) ||
+      "anti patterns".includes(query);
 
-  const ToolBtn = ({
+    const matchingTools = INTERACTION_TOOLS.filter(matchesRow);
+    const matchingNodes = NODE_ADD_TOOLS.filter(matchesRow);
+    const matchingAnti = EDITABLE_ANTIPATTERNS.filter((kind) =>
+      antipatternKindLabel(kind).toLowerCase().includes(query),
+    );
+
+    return {
+      showToolsSection: toolsHeadingMatches || matchingTools.length > 0,
+      toolsToShow: toolsHeadingMatches ? INTERACTION_TOOLS : matchingTools,
+      showNodesSection: nodesHeadingMatches || matchingNodes.length > 0,
+      nodesToShow: nodesHeadingMatches ? NODE_ADD_TOOLS : matchingNodes,
+      showAntiSection: antiHeadingMatches || matchingAnti.length > 0,
+      antiToShow: antiHeadingMatches ? EDITABLE_ANTIPATTERNS : matchingAnti,
+    };
+  }, [query]);
+
+  if (!editMode) return null;
+
+  const ToolRow = ({
     t,
     label,
     title,
-  }: {
-    t: EditTool;
-    label: string;
-    title: string;
-  }) => (
-    <button
-      type="button"
-      title={title}
-      onClick={() => onToolChange(t)}
-      className={`${btnBase} ${tool === t ? active : inactive}`}
-    >
-      <span
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
-          tool === t ? "bg-white/25" : "bg-white/20"
-        }`}
+    hint,
+    tone,
+  }: ToolRowDef & { tone: "tool" | "node" }) => {
+    const active = tool === t;
+    const tc = toneRowClasses[tone];
+    return (
+      <button
+        type="button"
+        title={title}
+        onClick={() => onToolChange(t)}
+        className={active ? tc.active : tc.idle}
       >
-        <img
-          src={TOOL_ICONS[t]}
-          alt=""
-          className="h-4 w-4 object-contain invert"
-        />
-      </span>
-      <span className="truncate">{label}</span>
-    </button>
-  );
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
+            active ? tc.iconWrapActive : tc.iconWrapIdle
+          }`}
+        >
+          <Image
+            width={32}
+            height={32}
+            src={TOOL_ICONS[t]}
+            alt=""
+            className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
+          />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col text-left">
+          <span className="truncate font-bold text-black">{label}</span>
+          <span
+            className={`truncate text-[9px] sm:text-[10px] ${
+              active ? tc.hintActive : "text-black/80"
+            }`}
+          >
+            {hint}
+          </span>
+        </div>
+      </button>
+    );
+  };
 
-  const content = (
+  /** ~⅔ viewport cap (larger than the earlier ~⅓ toolbox); overlay uses the same scale. */
+  const scrollListMaxTwoThirds =
+    "max-h-[min(66dvh,34rem)] sm:max-h-[min(68dvh,36rem)]";
+
+  const scrollOuterClass =
+    variant === "sidebar"
+      ? "flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable]"
+      : `flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable] ${scrollListMaxTwoThirds}`;
+
+  const scrollArea = (
     <div
-      className="w-full rounded-xl border border-slate-700/80 bg-slate-900/95 p-3.5 text-[11px] shadow-xl shadow-black/50 backdrop-blur-sm"
+      className={scrollOuterClass}
       onWheel={(e) => e.stopPropagation()}
     >
-      <div className="mb-3 flex items-center justify-between shrink-0">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-          Edit tools
-        </span>
-        <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-200 border border-amber-400/50">
-          EDIT MODE
-        </span>
-      </div>
+      {showToolsSection && (
+        <>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-200/90 sm:text-[11px]">
+            {TOOLS_HEADING}
+          </div>
+          {toolsToShow.map((row) => (
+            <ToolRow key={row.t} {...row} tone="tool" />
+          ))}
+        </>
+      )}
 
-      <div className="mb-2.5 shrink-0">
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search tools…"
-          className="w-full rounded-lg border border-slate-600/80 bg-slate-800/90 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500/60 focus:border-sky-500/50"
-          aria-label="Search edit tools"
-        />
-      </div>
+      {showNodesSection && (
+        <>
+          <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-sky-200/90 sm:text-[11px]">
+            {NODES_HEADING}
+          </div>
+          {nodesToShow.map((row) => (
+            <ToolRow key={row.t} {...row} tone="node" />
+          ))}
+        </>
+      )}
 
-      {/* Scrollable tools list */}
-      <div
-        className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5 min-h-0"
-        style={{ maxHeight: "320px" }}
-      >
-        {showNodesSection && (
-          <>
-            <div className="mt-0.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              {NODES_HEADING}
-            </div>
-            {nodeToolsToShow.map(({ t, label, title }) => (
-              <ToolBtn key={t} t={t} label={label} title={title} />
-            ))}
-          </>
-        )}
-
-        {showAntiSection && (
-          <>
-            <div className="mt-2.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              {ANTIPATTERNS_HEADING}
-            </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Add a sample graph that triggers this anti-pattern.
-            </p>
-            {antiToShow.map((kind) => {
-              const isPending = pendingAntiPatternKind === kind;
-              return (
-                <button
-                  key={kind}
-                  type="button"
-                  title={`Add a sample graph that triggers ${antipatternKindLabel(kind)}. Then click on the canvas to place it.`}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onAddAntiPattern?.(kind);
-                  }}
-                  className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150 cursor-pointer ${
-                    isPending
-                      ? "bg-rose-900/60 text-rose-100 border-2 border-rose-400 shadow-lg shadow-rose-500/40 ring-2 ring-rose-400/60"
-                      : "bg-slate-800/80 text-slate-200 hover:bg-rose-900/40 border border-slate-600/60 hover:border-rose-500/50"
+      {showAntiSection && (
+        <>
+          <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-rose-200/90 sm:text-[11px]">
+            {ANTIPATTERNS_HEADING}
+          </div>
+          <p className="text-[9px] text-rose-200/60 sm:text-[10px]">
+            Click to place a sample subgraph that triggers the detector.
+          </p>
+          {antiToShow.map((kind) => {
+            const isPending = pendingAntiPatternKind === kind;
+            const ac = toneRowClasses.anti;
+            return (
+              <button
+                key={kind}
+                type="button"
+                title={`Add a sample graph that triggers ${antipatternKindLabel(kind)}. Then click on the canvas to place it.`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onAddAntiPattern?.(kind);
+                }}
+                className={isPending ? ac.pending : ac.idle}
+              >
+                <span
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
+                    isPending ? ac.iconWrapPending : ac.iconWrapIdle
                   }`}
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/20 pointer-events-none">
-                    <img
-                      src={ANTIPATTERN_ICONS[kind]}
-                      alt=""
-                      className="h-4 w-4 object-contain invert pointer-events-none"
-                      draggable={false}
-                      onError={(e) => {
-                        const el = e.currentTarget;
-                        if (!el) return;
-                        const tried = el.getAttribute("data-fallback") ?? "";
-                        const alt = ANTIPATTERN_ICONS_ALT[kind];
-                        if (!tried && alt) {
-                          el.setAttribute("data-fallback", "alt");
-                          el.src = alt;
-                          return;
-                        }
-                        el.setAttribute("data-fallback", "1");
-                        el.src = "/icon/service.png";
-                      }}
-                    />
+                  {/* Native img: reliable src swap on error for SVG→PNG fallback */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={ANTIPATTERN_ICONS[kind]}
+                    alt=""
+                    width={32}
+                    height={32}
+                    className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
+                    draggable={false}
+                    onError={(e) => {
+                      const el = e.currentTarget;
+                      const tried = el.getAttribute("data-fallback") ?? "";
+                      const alt = ANTIPATTERN_ICONS_ALT[kind];
+                      if (!tried && alt) {
+                        el.setAttribute("data-fallback", "alt");
+                        el.src = alt;
+                        return;
+                      }
+                      el.setAttribute("data-fallback", "1");
+                      el.src = DIAGRAM_NODE_ICON_PATHS.service;
+                    }}
+                  />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col text-left">
+                  <span className="truncate font-bold text-black">
+                    {antipatternKindLabel(kind)}
                   </span>
-                  <span className="truncate">{antipatternKindLabel(kind)}</span>
-                </button>
-              );
-            })}
-          </>
-        )}
+                  <span
+                    className={`truncate text-[9px] sm:text-[10px] ${
+                      isPending ? ac.hintPending : "text-black/80"
+                    }`}
+                  >
+                    Click on canvas
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </>
+      )}
 
-        {query && !showNodesSection && !showAntiSection && (
+      {query &&
+        !showToolsSection &&
+        !showNodesSection &&
+        !showAntiSection && (
           <p className="py-4 text-center text-[11px] text-slate-500">
             No tools match &quot;{searchQuery.trim()}&quot;
           </p>
         )}
-      </div>
-
-      {pendingSourceId && (
-        <div className="mt-3 rounded-lg bg-slate-800/90 border border-slate-600/80 p-2 text-[10px] text-slate-200 shrink-0">
-          Source chosen (
-          <span className="font-mono text-sky-300">{pendingSourceId}</span>
-          ). Click on a second node to create the connection.
-        </div>
-      )}
     </div>
   );
 
+  const searchBlock = (
+    <div className="mb-2 shrink-0">
+      <input
+        type="search"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="Search tools…"
+        className="w-full rounded-lg border border-slate-600/80 bg-slate-900/40 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500/60 focus:border-sky-500/50"
+        aria-label="Search edit tools"
+      />
+    </div>
+  );
+
+  const pendingBlock =
+    pendingSourceId ? (
+      <div className="mt-2 shrink-0 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-[10px] text-amber-100">
+        Source{" "}
+        <span className="font-mono text-amber-200">{pendingSourceId}</span>.
+        Click a second node to connect.
+      </div>
+    ) : null;
+
   if (variant === "sidebar") {
-    return <div className="w-full">{content}</div>;
+    return (
+      <div className="flex min-h-0 flex-1 w-full flex-col">
+        {searchBlock}
+        <div
+          className={`mt-0 flex w-full min-h-[11rem] flex-col overflow-hidden rounded-lg border border-slate-700/50 bg-slate-950/40 p-1.5 shadow-inner shadow-black/20 ring-1 ring-white/[0.04] ${scrollListMaxTwoThirds}`}
+        >
+          {scrollArea}
+        </div>
+        {pendingBlock}
+      </div>
+    );
   }
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 z-20 flex flex-col">
-      <div className="pointer-events-auto w-56">{content}</div>
+      <div className="pointer-events-auto w-64 max-w-[min(100vw-2rem,22rem)] rounded-xl border border-slate-700/80 bg-slate-900/95 p-3.5 shadow-xl shadow-black/50 backdrop-blur-sm">
+        <div className="mb-3 flex shrink-0 items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Toolbox
+          </span>
+          <span className="rounded-md border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-200">
+            EDIT MODE
+          </span>
+        </div>
+        {searchBlock}
+        <div className="rounded-lg border border-slate-700/45 bg-slate-900/35 p-1.5 min-h-0">
+          {scrollArea}
+        </div>
+        {pendingBlock}
+      </div>
     </div>
   );
 }

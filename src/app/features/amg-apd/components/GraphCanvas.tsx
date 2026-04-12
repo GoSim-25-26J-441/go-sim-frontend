@@ -19,6 +19,7 @@ import type {
   EditTool,
   DetectionKind,
   CallProtocol,
+  Graph,
 } from "@/app/features/amg-apd/types";
 
 import ControlPanel, {
@@ -32,6 +33,9 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import {
   validateGraphForSave,
   exportGraphToYaml,
+  exportGraphJsonFromCy,
+  nodeLayoutPayloadFromGraph,
+  type NodeLayoutPayload,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
 
@@ -45,9 +49,7 @@ import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomput
 import {
   ChevronLeft,
   ChevronRight,
-  PanelLeftClose,
   PanelRightClose,
-  Wrench,
   Info,
 } from "lucide-react";
 
@@ -89,14 +91,20 @@ export default function GraphCanvas({
   isGenerating = false,
   onGenerateGraph,
   onExportImageReady,
+  onExportGraphJsonReady,
   onDuplicateName,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
-  onGenerateGraph?: (yaml: string) => void | Promise<void>;
+  onGenerateGraph?: (
+    yaml: string,
+    nodeLayout?: NodeLayoutPayload,
+  ) => void | Promise<void>;
   /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
   onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
+  /** Called when cy is ready; parent can call getter to export graph JSON including node x/y from the canvas */
+  onExportGraphJsonReady?: (getGraph: () => Graph | null) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
   onDuplicateName?: (name: string) => void;
 }) {
@@ -347,6 +355,19 @@ export default function GraphCanvas({
     });
   }, [cy, onExportImageReady]);
 
+  useEffect(() => {
+    if (!onExportGraphJsonReady) return;
+    onExportGraphJsonReady(() => {
+      const c = cyRef.current;
+      if (!cyAlive(c)) return null;
+      try {
+        return exportGraphJsonFromCy(c);
+      } catch {
+        return null;
+      }
+    });
+  }, [onExportGraphJsonReady, cy]);
+
   const performDelete = useCallback(() => {
     if (!cyAlive(cy)) return;
 
@@ -489,6 +510,7 @@ export default function GraphCanvas({
     }
 
     const yaml = exportGraphToYaml(cy);
+    const nodeLayout = nodeLayoutPayloadFromGraph(exportGraphJsonFromCy(cy));
     setEditedYaml(yaml);
 
     setEditMode(false);
@@ -498,7 +520,7 @@ export default function GraphCanvas({
     setPendingAntiPatternKind(null);
 
     if (onGenerateGraph) {
-      void Promise.resolve(onGenerateGraph(yaml)).catch(() => {});
+      void Promise.resolve(onGenerateGraph(yaml, nodeLayout)).catch(() => {});
       return;
     }
 
@@ -586,31 +608,46 @@ export default function GraphCanvas({
         {!readOnly &&
           editMode &&
             (leftPanelCollapsed ? (
-            <button
-              type="button"
-              onClick={() => setLeftPanelCollapsed(false)}
-              title="Show edit tools"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
-            >
-              <Wrench className="h-4 w-4 shrink-0" />
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-80" />
-            </button>
+            <div className="w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2 relative z-10">
+              <button
+                type="button"
+                onClick={() => setLeftPanelCollapsed(false)}
+                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+                aria-label="Show toolbox"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <span
+                className="mt-2 text-[9px] text-slate-500"
+                style={{ writingMode: "vertical-rl" }}
+              >
+                Toolbox
+              </span>
+            </div>
           ) : (
-            <aside className="w-64 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden relative z-10 shadow-xl shadow-black/20">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
-                  Edit tools
+            <aside className="w-52 shrink-0 flex h-full min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10">
+              <div className="flex items-center justify-between gap-1 mb-2 shrink-0">
+                <span className="text-xs font-semibold truncate text-slate-200 sm:text-sm">
+                  Toolbox
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setLeftPanelCollapsed(true)}
-                  title="Minimize edit tools"
-                  className="p-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors"
-                >
-                  <PanelLeftClose className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="hidden sm:inline rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-amber-200 border border-amber-500/40">
+                    Edit
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLeftPanelCollapsed(true)}
+                    className="shrink-0 p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+                    aria-label="Hide toolbox"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-subtle p-3">
+              <div className="text-[10px] text-slate-500 mb-2 sm:text-xs sm:mb-3 shrink-0">
+                Click on canvas to add nodes, connect, or place anti-pattern samples.
+              </div>
+              <div className="flex min-h-0 flex-1 w-full flex-col">
                 <EditToolbar
                   editMode={editMode}
                   tool={tool}
@@ -675,7 +712,7 @@ export default function GraphCanvas({
               <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
-            <aside className="w-72 shrink-0 flex flex-col min-h-0 min-w-0 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20">
+            <aside className="w-72 shrink-0 flex h-full min-h-0 min-w-0 flex-col rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20">
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 shrink-0">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
                   Details
