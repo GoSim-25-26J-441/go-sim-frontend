@@ -56,10 +56,95 @@ interface DiagramEdge {
   label?: string;
 }
 
-const NODE_WIDTH = 120;
-const NODE_HEIGHT = 60;
+/**
+ * Node position (x,y) is the icon box top-left only. Labels render outside to the left.
+ * NODE_WIDTH / NODE_HEIGHT match the icon for edges and hit area.
+ */
+const NODE_ICON_SIZE = 80;
+const NODE_WIDTH = NODE_ICON_SIZE;
+const NODE_HEIGHT = NODE_ICON_SIZE;
+const NODE_LABEL_GAP = 10;
 const PAPER_WIDTH = 4000;
 const PAPER_HEIGHT = 3000;
+
+function getNodeIconRect(node: DiagramNode): {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  cx: number;
+  cy: number;
+} {
+  const w = NODE_ICON_SIZE;
+  const h = NODE_ICON_SIZE;
+  return {
+    left: node.x,
+    top: node.y,
+    width: w,
+    height: h,
+    cx: node.x + w / 2,
+    cy: node.y + h / 2,
+  };
+}
+
+/** Point where a ray from icon center toward (tx,ty) exits the icon square */
+function iconRectAnchorToward(
+  node: DiagramNode,
+  targetX: number,
+  targetY: number
+): { x: number; y: number } {
+  const r = getNodeIconRect(node);
+  const dx = targetX - r.cx;
+  const dy = targetY - r.cy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) {
+    return { x: r.left + r.width, y: r.cy };
+  }
+  const ux = dx / len;
+  const uy = dy / len;
+  const hw = r.width / 2;
+  const hh = r.height / 2;
+  const tX = ux !== 0 ? hw / Math.abs(ux) : Infinity;
+  const tY = uy !== 0 ? hh / Math.abs(uy) : Infinity;
+  const t = Math.min(tX, tY);
+  return { x: r.cx + ux * t, y: r.cy + uy * t };
+}
+
+/** Pull segment ends inward so tiny arrowhead clears icon faces */
+function shortenSegment(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  fromStart: number,
+  fromEnd: number
+): { x1: number; y1: number; x2: number; y2: number } {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const maxShorten = (len - 4) / 2;
+  const s0 = Math.min(fromStart, maxShorten);
+  const s1 = Math.min(fromEnd, maxShorten);
+  return {
+    x1: x1 + ux * s0,
+    y1: y1 + uy * s0,
+    x2: x2 - ux * s1,
+    y2: y2 - uy * s1,
+  };
+}
+
+function edgeLineEndpoints(
+  from: DiagramNode,
+  to: DiagramNode
+): { x1: number; y1: number; x2: number; y2: number } {
+  const toR = getNodeIconRect(to);
+  const fromR = getNodeIconRect(from);
+  const p1 = iconRectAnchorToward(from, toR.cx, toR.cy);
+  const p2 = iconRectAnchorToward(to, fromR.cx, fromR.cy);
+  return shortenSegment(p1.x, p1.y, p2.x, p2.y, 2, 4);
+}
 
 const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: any }[] = [
   { kind: "service", label: "Service", icon: S1 },
@@ -111,28 +196,6 @@ function isNameDuplicate(
       n.kind === kind &&
       n.name.trim().toLowerCase() === trimmed
   );
-}
-
-// simple colors for export SVG – no fancy lab/oklch
-function colorForKind(kind: NodeKind): string {
-  switch (kind) {
-    case "service":
-      return "#e0f2fe";
-    case "gateway":
-      return "#fef9c3";
-    case "database":
-      return "#dcfce7";
-    case "topic":
-      return "#fee2e2";
-    case "external":
-      return "#ede9fe";
-    case "client":
-      return "#cffafe";
-    case "user":
-      return "#f5d0fe";
-    default:
-      return "#e5e7eb";
-  }
 }
 
 function extractDiagramVersionIdFromSaveResponse(
@@ -989,8 +1052,9 @@ export default function DrawDiagram() {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
+    const labelReserveX = 200;
     nodes.forEach((n) => {
-      minX = Math.min(minX, n.x);
+      minX = Math.min(minX, n.x - labelReserveX, n.x);
       minY = Math.min(minY, n.y);
       maxX = Math.max(maxX, n.x + NODE_WIDTH);
       maxY = Math.max(maxY, n.y + NODE_HEIGHT);
@@ -1006,8 +1070,8 @@ export default function DrawDiagram() {
 
     const defs = `
       <defs>
-        <marker id="arrowhead-export" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
-          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+        <marker id="arrowhead-export" viewBox="0 0 4 3.2" markerWidth="3.5" markerHeight="3" refX="3.1" refY="1.6" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L4,1.6 L0,3.2 Z" fill="#64748b" />
         </marker>
       </defs>
     `;
@@ -1018,13 +1082,19 @@ export default function DrawDiagram() {
         const to = nodeIndex[e.toId];
         if (!from || !to) return "";
 
-        const x1 = from.x - minX + NODE_WIDTH / 2 + margin;
-        const y1 = from.y - minY + NODE_HEIGHT / 2 + margin;
-        const x2 = to.x - minX + NODE_WIDTH / 2 + margin;
-        const y2 = to.y - minY + NODE_HEIGHT / 2 + margin;
+        const raw = edgeLineEndpoints(from, to);
+        const x1 = raw.x1 - minX + margin;
+        const y1 = raw.y1 - minY + margin;
+        const x2 = raw.x2 - minX + margin;
+        const y2 = raw.y2 - minY + margin;
 
         const midX = (x1 + x2) / 2;
         const midY = (y1 + y2) / 2;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const dLen = Math.hypot(dx, dy) || 1;
+        const lx = midX + (-dy / dLen) * 12;
+        const ly = midY + (dx / dLen) * 12;
 
         const label =
           e.label && e.label.trim().length > 0
@@ -1034,9 +1104,9 @@ export default function DrawDiagram() {
         return `
           <g>
             <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-              stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead-export)" />
-            <text x="${midX}" y="${midY - 4}" text-anchor="middle"
-              font-size="10" fill="#334155"
+              stroke="#64748b" stroke-width="2" stroke-linecap="round" marker-end="url(#arrowhead-export)" />
+            <text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle"
+              font-size="10" font-weight="600" fill="#334155" stroke="#f8fafc" stroke-width="2.5" paint-order="stroke fill"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${label.replace(/&/g, "&amp;")}
             </text>
@@ -1049,23 +1119,24 @@ export default function DrawDiagram() {
       .map((n) => {
         const x = n.x - minX + margin;
         const y = n.y - minY + margin;
-        const fill = colorForKind(n.kind);
         const label = getNodeLabel(n.kind);
+        const tx = x - NODE_LABEL_GAP;
+        const cy = y + NODE_HEIGHT / 2;
 
         return `
           <g>
-            <rect x="${x}" y="${y}" rx="8" ry="8" width="${NODE_WIDTH}" height="${NODE_HEIGHT}"
-              fill="${fill}" stroke="#111827" stroke-width="0.5" />
-            <text x="${x + 8}" y="${y + 22}"
-              font-size="12" font-weight="600" fill="#020617"
+            <text x="${tx}" y="${cy - 7}" text-anchor="end"
+              font-size="11" font-weight="600" fill="#0f172a"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${n.name.replace(/&/g, "&amp;")}
             </text>
-            <text x="${x + 8}" y="${y + 38}"
-              font-size="10" fill="#475569"
+            <text x="${tx}" y="${cy + 9}" text-anchor="end"
+              font-size="9" fill="#64748b"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${label.replace(/&/g, "&amp;")}
             </text>
+            <rect x="${x}" y="${y}" rx="4" ry="4" width="${NODE_WIDTH}" height="${NODE_HEIGHT}"
+              fill="none" stroke="#94a3b8" stroke-width="0.6" stroke-opacity="0.45" />
           </g>
         `;
       })
@@ -1507,23 +1578,27 @@ export default function DrawDiagram() {
               <defs>
                 <marker
                   id="arrowhead"
-                  markerWidth="12"
-                  markerHeight="9"
-                  refX="10"
-                  refY="4.5"
+                  viewBox="0 0 4 3.2"
+                  markerWidth="3.5"
+                  markerHeight="3"
+                  refX="3.1"
+                  refY="1.6"
                   orient="auto"
+                  markerUnits="userSpaceOnUse"
                 >
-                  <polygon points="0 0, 12 4.5, 0 9" fill="#475569" />
+                  <path d="M0,0 L4,1.6 L0,3.2 Z" fill="#475569" />
                 </marker>
                 <marker
                   id="arrowhead-selected"
-                  markerWidth="12"
-                  markerHeight="9"
-                  refX="10"
-                  refY="4.5"
+                  viewBox="0 0 4 3.2"
+                  markerWidth="3.5"
+                  markerHeight="3"
+                  refX="3.1"
+                  refY="1.6"
                   orient="auto"
+                  markerUnits="userSpaceOnUse"
                 >
-                  <polygon points="0 0, 12 4.5, 0 9" fill="#0ea5e9" />
+                  <path d="M0,0 L4,1.6 L0,3.2 Z" fill="#0284c7" />
                 </marker>
               </defs>
               {edges.map((edge) => {
@@ -1531,15 +1606,20 @@ export default function DrawDiagram() {
                 const to = nodes.find((n) => n.id === edge.toId);
                 if (!from || !to) return null;
 
-                const x1 = from.x + NODE_WIDTH / 2;
-                const y1 = from.y + NODE_HEIGHT / 2;
-                const x2 = to.x + NODE_WIDTH / 2;
-                const y2 = to.y + NODE_HEIGHT / 2;
-
+                const { x1, y1, x2, y2 } = edgeLineEndpoints(from, to);
                 const midX = (x1 + x2) / 2;
                 const midY = (y1 + y2) / 2;
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const dLen = Math.hypot(dx, dy) || 1;
+                const nx = (-dy / dLen) * 14;
+                const ny = (dx / dLen) * 14;
+                const lx = midX + nx;
+                const ly = midY + ny;
 
                 const isSelected = edge.id === selectedEdgeId;
+                const stroke = isSelected ? "#0284c7" : "#475569";
+                const strokeW = isSelected ? 2.75 : 2;
 
                 return (
                   <g key={edge.id} data-edge>
@@ -1548,26 +1628,40 @@ export default function DrawDiagram() {
                       y1={y1}
                       x2={x2}
                       y2={y2}
-                      stroke={isSelected ? "#0ea5e9" : "#475569"}
-                      strokeWidth={isSelected ? 3 : 2.5}
+                      stroke="transparent"
+                      strokeWidth={14}
+                      onClick={handleEdgeClick(edge.id)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke={stroke}
+                      strokeWidth={strokeW}
+                      strokeLinecap="round"
                       strokeOpacity={1}
                       markerEnd={
                         isSelected
                           ? "url(#arrowhead-selected)"
                           : "url(#arrowhead)"
                       }
-                      onClick={handleEdgeClick(edge.id)}
-                      style={{ cursor: "pointer" }}
+                      pointerEvents="none"
                     />
                     {edge.label ? (
                       <text
-                        x={midX}
-                        y={midY - 6}
+                        x={lx}
+                        y={ly}
                         textAnchor="middle"
+                        dominantBaseline="middle"
                         className="pointer-events-none select-none"
-                        fontSize={12}
-                        fontWeight={500}
-                        fill={isSelected ? "#0f172a" : "#334155"}
+                        fontSize={11}
+                        fontWeight={600}
+                        fill={isSelected ? "#0c4a6e" : "#334155"}
+                        stroke="#f8fafc"
+                        strokeWidth={3}
+                        paintOrder="stroke fill"
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
                         {edge.label} ({edge.kind}
@@ -1575,13 +1669,17 @@ export default function DrawDiagram() {
                       </text>
                     ) : (
                       <text
-                        x={midX}
-                        y={midY - 6}
+                        x={lx}
+                        y={ly}
                         textAnchor="middle"
+                        dominantBaseline="middle"
                         className="pointer-events-none select-none"
-                        fontSize={12}
-                        fontWeight={500}
-                        fill={isSelected ? "#0f172a" : "#334155"}
+                        fontSize={11}
+                        fontWeight={600}
+                        fill={isSelected ? "#0c4a6e" : "#334155"}
+                        stroke="#f8fafc"
+                        strokeWidth={3}
+                        paintOrder="stroke fill"
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
                         {edge.kind}
@@ -1594,103 +1692,104 @@ export default function DrawDiagram() {
             </svg>
 
             {nodes.map((node) => {
-              const isSelected = node.id === selectedNodeId;
-              const isConnectingFrom = node.id === connectingFromId;
+              const nodeInteractions = {
+                onMouseDown: handleNodeMouseDown(node.id),
+                onClick: handleNodeClick(node.id),
+                onContextMenu: (e: ReactMouseEvent<HTMLDivElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSelectedNodeId(node.id);
+                  setSelectedEdgeId(null);
+                  setContextMenuNodeId(node.id);
+                  setContextMenuPosition({ x: e.clientX, y: e.clientY });
+                },
+                onDoubleClick: (e: ReactMouseEvent<HTMLDivElement>) => {
+                  e.stopPropagation();
+                  setEditingNodeId(node.id);
+                  setSelectedNodeId(node.id);
+                },
+              };
 
               return (
                 <div
                   key={node.id}
-                  style={{
-                    left: node.x,
-                    top: node.y,
-                    width: NODE_WIDTH,
-                    height: NODE_HEIGHT,
-                  }}
-                  className={[
-                    "absolute rounded-lg border bg-white shadow-sm px-3 py-2 cursor-move flex flex-col justify-center",
-                    isSelected
-                      ? "border-sky-400 ring-2 ring-sky-500/40"
-                      : "border-black/10",
-                    isConnectingFrom ? "outline-1 outline-amber-400" : "",
-                  ].join(" ")}
-                  onMouseDown={handleNodeMouseDown(node.id)}
-                  onClick={handleNodeClick(node.id)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSelectedNodeId(node.id);
-                    setSelectedEdgeId(null);
-                    setContextMenuNodeId(node.id);
-                    setContextMenuPosition({ x: e.clientX, y: e.clientY });
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setEditingNodeId(node.id);
-                    setSelectedNodeId(node.id);
-                  }}
+                  className="absolute"
+                  style={{ left: node.x, top: node.y }}
                 >
-                  <div className="flex items-center gap-1">
-                    <Image
-                      width={20}
-                      height={20}
-                      src={getNodeIcon(node.kind)}
-                      alt={node.kind}
-                      className="w-8 h-8 object-contain flex-shrink-0"
-                    />
-                    <div className="min-w-0 flex-1">
-                      {editingNodeId === node.id ? (
-                        <input
-                          type="text"
-                          value={node.name}
-                          autoFocus
-                          className="w-full text-xs font-semibold text-black bg-slate-100 border border-sky-400 rounded px-1 outline-none"
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (!isNameDuplicate(nodes, v, node.kind, node.id)) {
-                              setNodes((prev) =>
-                                prev.map((n) =>
-                                  n.id === node.id ? { ...n, name: v } : n
-                                )
-                              );
-                            }
-                          }}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            if (v && !isNameDuplicate(nodes, v, node.kind, node.id)) {
-                              setNodes((prev) =>
-                                prev.map((n) =>
-                                  n.id === node.id ? { ...n, name: v } : n
-                                )
-                              );
-                            } else if (!v) {
-                              setNodes((prev) =>
-                                prev.map((n) =>
-                                  n.id === node.id
-                                    ? { ...n, name: createNodeName(node.kind, prev) }
-                                    : n
-                                )
-                              );
-                            }
-                            setEditingNodeId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              (e.target as HTMLInputElement).blur();
-                            }
-                            e.stopPropagation();
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          onMouseDown={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        <div className="truncate text-xs font-semibold text-black">
-                          {node.name}
-                        </div>
-                      )}
-                      <div className="text-[10px] text-black/80">
-                        {getNodeLabel(node.kind)}
+                  <div
+                    className="absolute z-[1] flex max-w-[200px] cursor-move select-none flex-col items-end gap-0.5 text-right"
+                    style={{
+                      right: NODE_WIDTH + NODE_LABEL_GAP,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                    }}
+                    {...nodeInteractions}
+                  >
+                    {editingNodeId === node.id ? (
+                      <input
+                        type="text"
+                        value={node.name}
+                        autoFocus
+                        className="w-full min-w-[6rem] max-w-[200px] rounded border border-sky-400 bg-white/95 px-1.5 py-0.5 text-right text-xs font-semibold text-slate-900 shadow-sm outline-none"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!isNameDuplicate(nodes, v, node.kind, node.id)) {
+                            setNodes((prev) =>
+                              prev.map((n) =>
+                                n.id === node.id ? { ...n, name: v } : n
+                              )
+                            );
+                          }
+                        }}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v && !isNameDuplicate(nodes, v, node.kind, node.id)) {
+                            setNodes((prev) =>
+                              prev.map((n) =>
+                                n.id === node.id ? { ...n, name: v } : n
+                              )
+                            );
+                          } else if (!v) {
+                            setNodes((prev) =>
+                              prev.map((n) =>
+                                n.id === node.id
+                                  ? { ...n, name: createNodeName(node.kind, prev) }
+                                  : n
+                              )
+                            );
+                          }
+                          setEditingNodeId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            (e.target as HTMLInputElement).blur();
+                          }
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <div className="max-w-full truncate text-xs font-semibold leading-tight text-slate-900">
+                        {node.name}
                       </div>
+                    )}
+                    <div className="max-w-full truncate text-[10px] font-medium leading-tight text-slate-500">
+                      {getNodeLabel(node.kind)}
                     </div>
+                  </div>
+                  <div
+                    style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
+                    className="relative z-[2] cursor-move bg-transparent"
+                    {...nodeInteractions}
+                  >
+                    <Image
+                      width={NODE_ICON_SIZE}
+                      height={NODE_ICON_SIZE}
+                      src={getNodeIcon(node.kind)}
+                      alt={node.name}
+                      className="h-full w-full object-contain p-0 drop-shadow-[0_1px_2px_rgba(15,23,42,0.2)]"
+                    />
                   </div>
                 </div>
               );
