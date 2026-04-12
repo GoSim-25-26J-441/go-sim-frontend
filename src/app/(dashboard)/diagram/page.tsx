@@ -8,6 +8,7 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  ChangeEvent as ReactChangeEvent,
   MouseEvent as ReactMouseEvent,
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
@@ -209,6 +210,130 @@ const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: string }[] = [
   { kind: "user", label: "User / Actor", icon: NODE_KIND_ICONS.user },
 ];
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function graphKindToCanvasType(kind: string): string {
+  const k = kind.toUpperCase().replace(/-/g, "_");
+  switch (k) {
+    case "API_GATEWAY":
+    case "GATEWAY":
+      return "gateway";
+    case "DATABASE":
+    case "DATASTORE":
+      return "db";
+    case "TOPIC":
+      return "topic";
+    case "CLIENT":
+      return "client";
+    case "USER":
+      return "user";
+    case "EXTERNAL":
+      return "external";
+    default:
+      return "service";
+  }
+}
+
+/** Build canvas { nodes, edges } from AMG-style graph.nodes map + graph.edges[]. */
+function graphToCanvasPayload(
+  nodesObj: Record<string, unknown>,
+  edgesRaw: unknown[]
+): { nodes: unknown[]; edges: unknown[] } {
+  const nodes: unknown[] = [];
+  for (const key of Object.keys(nodesObj)) {
+    const n = nodesObj[key];
+    if (!isRecord(n)) continue;
+    const id = typeof n.id === "string" && n.id.trim() ? n.id : key;
+    const name =
+      typeof n.name === "string" && n.name.trim()
+        ? n.name
+        : (key.includes(":") ? key.split(":").slice(1).join(":") : key);
+    const kindStr = typeof n.kind === "string" ? n.kind : "SERVICE";
+    nodes.push({
+      id,
+      label: name,
+      type: graphKindToCanvasType(kindStr),
+    });
+  }
+
+  const edges: unknown[] = [];
+  let idx = 0;
+  for (const e of edgesRaw) {
+    if (!isRecord(e)) continue;
+    const from = typeof e.from === "string" ? e.from.trim() : "";
+    const to = typeof e.to === "string" ? e.to.trim() : "";
+    if (!from || !to) continue;
+    const attrs = isRecord(e.attrs) ? e.attrs : {};
+    const depKind =
+      typeof attrs.dep_kind === "string"
+        ? attrs.dep_kind
+        : typeof attrs.kind === "string"
+          ? attrs.kind
+          : "rest";
+    const sync = typeof attrs.sync === "boolean" ? attrs.sync : true;
+    const dk = depKind.toLowerCase();
+    const protocol =
+      dk === "grpc"
+        ? sync
+          ? "GRPC"
+          : "GRPC_ASYNC"
+        : dk === "event"
+          ? sync
+            ? "EVENT_SYNC"
+            : "EVENT_ASYNC"
+          : sync
+            ? "REST"
+            : "REST_ASYNC";
+    edges.push({
+      id: `edge-import-${idx++}`,
+      from,
+      to,
+      protocol,
+      sync,
+    });
+  }
+  return { nodes, edges };
+}
+
+/**
+ * Normalize uploaded JSON to a shape {@link loadDiagramFromJson} accepts:
+ * canvas { nodes, edges }, legacy { services, datastores?, topics?, dependencies },
+ * or { graph: { nodes: Record, edges } }. Supports wrapper { diagram_json: ... }.
+ */
+function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
+  if (!isRecord(raw)) {
+    throw new Error("JSON must be an object");
+  }
+  let data: Record<string, unknown> = raw;
+  if (isRecord(data.diagram_json)) {
+    data = data.diagram_json;
+  }
+  if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
+    return data;
+  }
+  const deps = data.dependencies;
+  const hasLegacyDeps = Array.isArray(deps);
+  const hasLegacyNodes =
+    Array.isArray(data.services) ||
+    Array.isArray(data.datastores) ||
+    Array.isArray(data.topics);
+  if (hasLegacyDeps && hasLegacyNodes) {
+    return data;
+  }
+  const graph = data.graph;
+  if (isRecord(graph) && Array.isArray(graph.edges)) {
+    const nodesObj = graph.nodes;
+    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
+      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
+    }
+  }
+  throw new Error(
+    "Unrecognized diagram JSON. Expected { nodes, edges }, legacy { services, datastores?, dependencies }, or { graph: { nodes, edges } }."
+  );
+}
+
 function createNodeName(kind: NodeKind, nodes: DiagramNode[]): string {
   const countOfSameKind = nodes.filter((n) => n.kind === kind).length + 1;
   switch (kind) {
@@ -325,6 +450,7 @@ export default function DrawDiagram() {
     y: number;
   } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const importDiagramJsonInputRef = useRef<HTMLInputElement>(null);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [saveDiagram] = useSaveDiagramMutation();
@@ -1001,6 +1127,36 @@ export default function DrawDiagram() {
     setEdges(newEdges);
     setDiagramLoaded(true);
   }, []);
+
+  const handleImportDiagramJsonClick = () => {
+    importDiagramJsonInputRef.current?.click();
+  };
+
+  const handleImportDiagramJsonSelected = useCallback(
+    (e: ReactChangeEvent<HTMLInputElement>) => {
+      const input = e.target;
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = typeof reader.result === "string" ? reader.result : "";
+          const parsed = JSON.parse(text) as unknown;
+          const normalized = normalizeDiagramJsonForLoader(parsed);
+          loadDiagramFromJson(normalized as any);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Invalid JSON file";
+          window.alert(msg);
+        }
+      };
+      reader.onerror = () => {
+        window.alert("Could not read file");
+      };
+      reader.readAsText(file, "UTF-8");
+    },
+    [loadDiagramFromJson]
+  );
 
   // Reset diagram when projectId changes
   useEffect(() => {
@@ -2191,15 +2347,32 @@ export default function DrawDiagram() {
         )}
 
         <div className="pt-3 border-t border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Export JSON</span>
-            <button
-              type="button"
-              onClick={handleDownloadJson}
-              className="rounded border border-sky-500 bg-sky-600/80 px-2 py-0.5 text-[11px] text-white hover:bg-sky-500"
-            >
-              Download
-            </button>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-400 shrink-0">Export JSON</span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={handleDownloadJson}
+                className="rounded border border-sky-500 bg-sky-600/80 px-2 py-0.5 text-[11px] text-white hover:bg-sky-500"
+              >
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={handleImportDiagramJsonClick}
+                aria-label="Import diagram from JSON file"
+                className="rounded border border-slate-600 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-sky-500"
+              >
+                Upload
+              </button>
+              <input
+                ref={importDiagramJsonInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleImportDiagramJsonSelected}
+              />
+            </div>
           </div>
           <div className="rounded bg-slate-900 border border-slate-800 p-2 max-h-40 overflow-auto text-[10px] font-mono text-slate-100 whitespace-pre">
             {exportJson}
