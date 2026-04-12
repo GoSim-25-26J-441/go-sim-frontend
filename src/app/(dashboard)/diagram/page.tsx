@@ -23,11 +23,6 @@ import {
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 import LoaderModal from "@/components/chat/main/loader/LoaderModal";
 
-import S1 from "../../../../public/diagram-icons/S1.svg";
-import S2 from "../../../../public/diagram-icons/S2.svg";
-import S3 from "../../../../public/diagram-icons/S3.svg";
-import S4 from "../../../../public/diagram-icons/S4.svg";
-
 type NodeKind =
   | "service"
   | "gateway"
@@ -36,6 +31,17 @@ type NodeKind =
   | "external"
   | "client"
   | "user";
+
+/** Served from `public/diagram-icons/` — use URLs; Turbopack does not treat `public/` SVGs as importable modules. */
+const NODE_KIND_ICONS: Record<NodeKind, string> = {
+  service: "/diagram-icons/ms-icon-service.svg",
+  gateway: "/diagram-icons/ms-icon-gateway.svg",
+  database: "/diagram-icons/ms-icon-database.svg",
+  topic: "/diagram-icons/ms-icon-topic.svg",
+  external: "/diagram-icons/ms-icon-external.svg",
+  client: "/diagram-icons/ms-icon-client.svg",
+  user: "/diagram-icons/ms-icon-user.svg",
+};
 
 interface DiagramNode {
   id: string;
@@ -194,14 +200,14 @@ function edgePulsePalette(
   };
 }
 
-const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: any }[] = [
-  { kind: "service", label: "Service", icon: S1 },
-  { kind: "gateway", label: "API Gateway", icon: S2 },
-  { kind: "database", label: "Database", icon: S3 },
-  { kind: "topic", label: "Event Topic", icon: S4 },
-  { kind: "external", label: "External System", icon: S2 },
-  { kind: "client", label: "Client (Web/Mobile)", icon: S3 },
-  { kind: "user", label: "User / Actor", icon: S4 },
+const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: string }[] = [
+  { kind: "service", label: "Service", icon: NODE_KIND_ICONS.service },
+  { kind: "gateway", label: "API Gateway", icon: NODE_KIND_ICONS.gateway },
+  { kind: "database", label: "Database", icon: NODE_KIND_ICONS.database },
+  { kind: "topic", label: "Event Topic", icon: NODE_KIND_ICONS.topic },
+  { kind: "external", label: "External System", icon: NODE_KIND_ICONS.external },
+  { kind: "client", label: "Client (Web/Mobile)", icon: NODE_KIND_ICONS.client },
+  { kind: "user", label: "User / Actor", icon: NODE_KIND_ICONS.user },
 ];
 
 function createNodeName(kind: NodeKind, nodes: DiagramNode[]): string {
@@ -328,9 +334,8 @@ export default function DrawDiagram() {
 
   // Helpers
 
-  const getNodeIcon = (kind: NodeKind): any => {
-    const item = TOOLBOX_ITEMS.find((i) => i.kind === kind);
-    return item?.icon ?? S1;
+  const getNodeIcon = (kind: NodeKind): string => {
+    return NODE_KIND_ICONS[kind] ?? NODE_KIND_ICONS.service;
   };
 
   const getNodeLabel = (kind: NodeKind): string => {
