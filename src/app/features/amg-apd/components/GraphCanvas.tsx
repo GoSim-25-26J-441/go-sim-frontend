@@ -51,6 +51,7 @@ import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCy
 import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyTooltip";
 import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
+import NodeDualLineLabels from "@/app/features/amg-apd/components/graph/NodeDualLineLabels";
 import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import {
   ChevronLeft,
@@ -342,38 +343,68 @@ export default function GraphCanvas({
     if (!onExportImageReady || !cyAlive(cy)) return;
     onExportImageReady(() => {
       const c = cyRef.current;
+      const wrap = containerRef.current;
       if (!c || !cyAlive(c)) return null;
-      try {
-        const pngDataUrl = c.png({
-          full: true,
-          scale: 2,
-          bg: "#ffffff",
-        });
-        return new Promise<string | null>((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            const pad = EXPORT_PADDING;
-            const w = img.width + 2 * pad;
-            const h = img.height + 2 * pad;
-            const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext("2d");
-            if (!ctx) {
-              resolve(pngDataUrl);
-              return;
-            }
-            ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, w, h);
-            ctx.drawImage(img, pad, pad);
-            resolve(canvas.toDataURL("image/png"));
-          };
-          img.onerror = () => resolve(pngDataUrl);
-          img.src = pngDataUrl;
-        });
-      } catch {
-        return null;
-      }
+
+      const padComposite = async (sourceCanvas: HTMLCanvasElement) => {
+        const pad = EXPORT_PADDING;
+        const w = sourceCanvas.width + 2 * pad;
+        const h = sourceCanvas.height + 2 * pad;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return sourceCanvas.toDataURL("image/png");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(sourceCanvas, pad, pad);
+        return canvas.toDataURL("image/png");
+      };
+
+      return (async (): Promise<string | null> => {
+        try {
+          if (wrap) {
+            const { default: html2canvas } = await import("html2canvas");
+            const shot = await html2canvas(wrap, {
+              backgroundColor: "#f9fafb",
+              scale: 2,
+              useCORS: true,
+              allowTaint: true,
+              logging: false,
+            });
+            return padComposite(shot);
+          }
+        } catch {
+          /* fall through to cy.png */
+        }
+
+        try {
+          const pngDataUrl = c.png({
+            full: true,
+            scale: 2,
+            bg: "#ffffff",
+          });
+          return new Promise<string | null>((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement("canvas");
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) {
+                resolve(pngDataUrl);
+                return;
+              }
+              ctx.drawImage(img, 0, 0);
+              void padComposite(canvas).then(resolve);
+            };
+            img.onerror = () => resolve(pngDataUrl);
+            img.src = pngDataUrl;
+          });
+        } catch {
+          return null;
+        }
+      })();
     });
   }, [cy, onExportImageReady]);
 
@@ -721,6 +752,7 @@ export default function GraphCanvas({
           />
 
           <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
+          <NodeDualLineLabels cy={cy} containerEl={containerRef.current} />
           <NodeColorIndicators cy={cy} containerEl={containerRef.current} />
         </div>
 

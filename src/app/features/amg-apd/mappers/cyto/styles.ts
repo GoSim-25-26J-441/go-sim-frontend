@@ -1,9 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { DetectionKind, Severity } from "@/app/features/amg-apd/types";
-import {
-  NODE_KIND_COLOR,
-  colorForDetectionKind,
-} from "@/app/features/amg-apd/utils/colors";
+import { colorForDetectionKind } from "@/app/features/amg-apd/utils/colors";
+import { diagramIconUrlForKind } from "@/app/features/amg-apd/mappers/cyto/diagramNodeStyle";
 import { gradientStops } from "./svg";
 
 type StylesheetLike = Array<{ selector: string; style: Record<string, any> }>;
@@ -15,10 +13,10 @@ const EDGE_KIND_COLOR: Record<string, string> = {
 };
 
 function borderWidthForSeverity(sev: Severity | null) {
-  if (sev === "HIGH") return 7;
-  if (sev === "MEDIUM") return 6;
-  if (sev === "LOW") return 5;
-  return 3;
+  if (sev === "HIGH") return 2;
+  if (sev === "MEDIUM") return 2;
+  if (sev === "LOW") return 2;
+  return 2;
 }
 
 function borderColorForNode(ele: any) {
@@ -67,29 +65,31 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "node",
     style: {
-      "background-color": (ele: any) => {
-        const kind = ele.data("kind") as keyof typeof NODE_KIND_COLOR;
-        return NODE_KIND_COLOR[kind] ?? "#e5e7eb";
-      },
-      label: "data(label)",
-      "text-wrap": "wrap",
-      "text-max-width": 140,
-      "text-valign": "center",
-      "text-halign": "center",
-      "font-size": 14,
-      "min-zoomed-font-size": 8,
-      color: "#0f172a",
-      width: "label",
-      height: "label",
-      padding: (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? "12px 12px 28px 12px" : "12px";
-      },
+      /*
+       * Name + kind are drawn by `NodeDualLineLabels` (per-line font size/color). Keep Cytoscape
+       * `label` empty so text is not painted twice. `padding` adds outside the body in Cytoscape.
+       */
+      "background-color": "#ffffff",
+      "background-image": (ele: any) =>
+        diagramIconUrlForKind(ele.data("kind") as string | undefined),
+      "background-fit": "none",
+      "background-width": "30px",
+      "background-height": "30px",
+      "background-position-x": "50%",
+      "background-position-y": "2px",
+      "background-opacity": 1,
 
+      label: "",
+
+      width: 70,
+      height: 55,
+      padding: "0px",
+
+      /* Anti-pattern border (unchanged behaviour) */
       "border-width": (ele: any) => {
         const sev = (ele.data("severity") as Severity | null) ?? null;
         const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? borderWidthForSeverity(sev) : 3;
+        return kinds.length ? borderWidthForSeverity(sev) : 2;
       },
       "border-color": (ele: any) => borderColorForNode(ele),
 
@@ -98,14 +98,10 @@ export const cyStyles: StylesheetLike = [
         return kinds.length > 1 ? "double" : "solid";
       },
 
-      shape: (ele: any) => {
-        const kind = (ele.data("kind") as string) ?? "";
-        const k = kind.toUpperCase();
-        return k === "DATABASE" || k === "DB" ? "ellipse" : "round-rectangle";
-      },
+      shape: "round-rectangle",
 
       "z-index": 10,
-      "events": "yes",
+      events: "yes",
       "text-events": "yes",
     },
   },
@@ -113,7 +109,7 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "node:selected",
     style: {
-      "border-width": 8,
+      "border-width": 3,
       "border-color": "#0f172a",
       "z-index": 9999,
     },
@@ -130,7 +126,7 @@ export const cyStyles: StylesheetLike = [
       "target-arrow-color": "#1f2937",
       width: 2.5,
       opacity: 1,
-      "events": "yes",
+      events: "yes",
       "z-index": 8,
       label: "data(label)",
       "font-size": 10,
