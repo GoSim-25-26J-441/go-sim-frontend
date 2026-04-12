@@ -7,24 +7,22 @@ import React, {
   useRef,
   useEffect,
   useCallback,
+  useMemo,
+  ChangeEvent as ReactChangeEvent,
   MouseEvent as ReactMouseEvent,
   DragEvent as ReactDragEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
 import {
   useGetProjectSummaryQuery,
   useSaveDiagramMutation,
+  useUpdateDiagramVersionMutation,
   useUploadDiagramImageMutation,
 } from "@/app/store/projectsApi";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 import LoaderModal from "@/components/chat/main/loader/LoaderModal";
-
-import S1 from "../../../../public/diagram-icons/S1.svg";
-import S2 from "../../../../public/diagram-icons/S2.svg";
-import S3 from "../../../../public/diagram-icons/S3.svg";
-import S4 from "../../../../public/diagram-icons/S4.svg";
 
 type NodeKind =
   | "service"
@@ -34,6 +32,16 @@ type NodeKind =
   | "external"
   | "client"
   | "user";
+
+const NODE_KIND_ICONS: Record<NodeKind, string> = {
+  service: "/diagram-icons/ms-icon-service.svg",
+  gateway: "/diagram-icons/ms-icon-gateway.svg",
+  database: "/diagram-icons/ms-icon-database.svg",
+  topic: "/diagram-icons/ms-icon-topic.svg",
+  external: "/diagram-icons/ms-icon-external.svg",
+  client: "/diagram-icons/ms-icon-client.svg",
+  user: "/diagram-icons/ms-icon-user.svg",
+};
 
 interface DiagramNode {
   id: string;
@@ -54,20 +62,277 @@ interface DiagramEdge {
   label?: string;
 }
 
-const NODE_WIDTH = 120;
-const NODE_HEIGHT = 60;
+/**
+ * Node position (x,y) is the icon box top-left only. Labels render outside to the left.
+ * NODE_WIDTH / NODE_HEIGHT match the icon for edges and hit area.
+ */
+const NODE_ICON_SIZE = 80;
+const NODE_WIDTH = NODE_ICON_SIZE;
+const NODE_HEIGHT = NODE_ICON_SIZE;
+const NODE_LABEL_GAP = 10;
 const PAPER_WIDTH = 4000;
 const PAPER_HEIGHT = 3000;
 
-const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: any }[] = [
-  { kind: "service", label: "Service", icon: S1 },
-  { kind: "gateway", label: "API Gateway", icon: S2 },
-  { kind: "database", label: "Database", icon: S3 },
-  { kind: "topic", label: "Event Topic", icon: S4 },
-  { kind: "external", label: "External System", icon: S2 },
-  { kind: "client", label: "Client (Web/Mobile)", icon: S3 },
-  { kind: "user", label: "User / Actor", icon: S4 },
+function getNodeIconRect(node: DiagramNode): {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  cx: number;
+  cy: number;
+} {
+  const w = NODE_ICON_SIZE;
+  const h = NODE_ICON_SIZE;
+  return {
+    left: node.x,
+    top: node.y,
+    width: w,
+    height: h,
+    cx: node.x + w / 2,
+    cy: node.y + h / 2,
+  };
+}
+
+/** Point where a ray from icon center toward (tx,ty) exits the icon square */
+function iconRectAnchorToward(
+  node: DiagramNode,
+  targetX: number,
+  targetY: number
+): { x: number; y: number } {
+  const r = getNodeIconRect(node);
+  const dx = targetX - r.cx;
+  const dy = targetY - r.cy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) {
+    return { x: r.left + r.width, y: r.cy };
+  }
+  const ux = dx / len;
+  const uy = dy / len;
+  const hw = r.width / 2;
+  const hh = r.height / 2;
+  const tX = ux !== 0 ? hw / Math.abs(ux) : Infinity;
+  const tY = uy !== 0 ? hh / Math.abs(uy) : Infinity;
+  const t = Math.min(tX, tY);
+  return { x: r.cx + ux * t, y: r.cy + uy * t };
+}
+
+/** Pull segment ends inward so tiny arrowhead clears icon faces */
+function shortenSegment(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  fromStart: number,
+  fromEnd: number
+): { x1: number; y1: number; x2: number; y2: number } {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const maxShorten = Math.max(0, (len - 2) / 2);
+  const s0 = Math.min(fromStart, maxShorten);
+  const s1 = Math.min(fromEnd, maxShorten);
+  return {
+    x1: x1 + ux * s0,
+    y1: y1 + uy * s0,
+    x2: x2 - ux * s1,
+    y2: y2 - uy * s1,
+  };
+}
+
+function edgeLineEndpoints(
+  from: DiagramNode,
+  to: DiagramNode
+): { x1: number; y1: number; x2: number; y2: number } {
+  const toR = getNodeIconRect(to);
+  const fromR = getNodeIconRect(from);
+  const p1 = iconRectAnchorToward(from, toR.cx, toR.cy);
+  const p2 = iconRectAnchorToward(to, fromR.cx, fromR.cy);
+  // Minimal pull-back so tiny marker clears icon; keeps line close to icon edge
+  return shortenSegment(p1.x, p1.y, p2.x, p2.y, 0, 0.75);
+}
+
+/** Seconds for one flow pulse along an edge (~constant visual speed). Async is slightly slower. */
+function edgeFlowPulseDuration(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  sync: boolean
+): number {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  const base = Math.max(1.5, Math.min(3.4, len / 135));
+  return sync ? base : base * 1.2;
+}
+
+/** Async only: slow start/end, fast middle (queued / non-blocking feel). Sync uses even motion. */
+function edgeFlowMotionKeyAttrs(sync: boolean): {
+  keyPoints?: string;
+  keyTimes?: string;
+} {
+  if (sync) return {};
+  return {
+    keyPoints: "0;0.06;0.94;1",
+    keyTimes: "0;0.35;0.65;1",
+  };
+}
+
+function edgeReturnPath(x1: number, y1: number, x2: number, y2: number): string {
+  return `M ${x2} ${y2} L ${x1} ${y1}`;
+}
+
+function edgePulsePalette(
+  sync: boolean,
+  selected: boolean
+): { outer: string; inner: string; outerOpacity: number } {
+  if (sync) {
+    return {
+      outer: selected ? "#0ea5e9" : "#38bdf8",
+      inner: selected ? "#bae6fd" : "#e0f2fe",
+      outerOpacity: selected ? 0.5 : 0.4,
+    };
+  }
+  return {
+    outer: selected ? "#ea580c" : "#f59e0b",
+    inner: selected ? "#ffedd5" : "#fef3c7",
+    outerOpacity: selected ? 0.52 : 0.44,
+  };
+}
+
+const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: string }[] = [
+  { kind: "service", label: "Service", icon: NODE_KIND_ICONS.service },
+  { kind: "gateway", label: "API Gateway", icon: NODE_KIND_ICONS.gateway },
+  { kind: "database", label: "Database", icon: NODE_KIND_ICONS.database },
+  { kind: "topic", label: "Event Topic", icon: NODE_KIND_ICONS.topic },
+  { kind: "external", label: "External System", icon: NODE_KIND_ICONS.external },
+  { kind: "client", label: "Client (Web/Mobile)", icon: NODE_KIND_ICONS.client },
+  { kind: "user", label: "User / Actor", icon: NODE_KIND_ICONS.user },
 ];
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function graphKindToCanvasType(kind: string): string {
+  const k = kind.toUpperCase().replace(/-/g, "_");
+  switch (k) {
+    case "API_GATEWAY":
+    case "GATEWAY":
+      return "gateway";
+    case "DATABASE":
+    case "DATASTORE":
+      return "db";
+    case "TOPIC":
+      return "topic";
+    case "CLIENT":
+      return "client";
+    case "USER":
+      return "user";
+    case "EXTERNAL":
+      return "external";
+    default:
+      return "service";
+  }
+}
+
+/** Build canvas { nodes, edges } from AMG-style graph.nodes map + graph.edges[]. */
+function graphToCanvasPayload(
+  nodesObj: Record<string, unknown>,
+  edgesRaw: unknown[]
+): { nodes: unknown[]; edges: unknown[] } {
+  const nodes: unknown[] = [];
+  for (const key of Object.keys(nodesObj)) {
+    const n = nodesObj[key];
+    if (!isRecord(n)) continue;
+    const id = typeof n.id === "string" && n.id.trim() ? n.id : key;
+    const name =
+      typeof n.name === "string" && n.name.trim()
+        ? n.name
+        : (key.includes(":") ? key.split(":").slice(1).join(":") : key);
+    const kindStr = typeof n.kind === "string" ? n.kind : "SERVICE";
+    nodes.push({
+      id,
+      label: name,
+      type: graphKindToCanvasType(kindStr),
+    });
+  }
+
+  const edges: unknown[] = [];
+  let idx = 0;
+  for (const e of edgesRaw) {
+    if (!isRecord(e)) continue;
+    const from = typeof e.from === "string" ? e.from.trim() : "";
+    const to = typeof e.to === "string" ? e.to.trim() : "";
+    if (!from || !to) continue;
+    const attrs = isRecord(e.attrs) ? e.attrs : {};
+    const depKind =
+      typeof attrs.dep_kind === "string"
+        ? attrs.dep_kind
+        : typeof attrs.kind === "string"
+          ? attrs.kind
+          : "rest";
+    const sync = typeof attrs.sync === "boolean" ? attrs.sync : true;
+    const dk = depKind.toLowerCase();
+    const protocol =
+      dk === "grpc"
+        ? sync
+          ? "GRPC"
+          : "GRPC_ASYNC"
+        : dk === "event"
+          ? sync
+            ? "EVENT_SYNC"
+            : "EVENT_ASYNC"
+          : sync
+            ? "REST"
+            : "REST_ASYNC";
+    edges.push({
+      id: `edge-import-${idx++}`,
+      from,
+      to,
+      protocol,
+      sync,
+    });
+  }
+  return { nodes, edges };
+}
+
+/**
+ * Normalize uploaded JSON to a shape {@link loadDiagramFromJson} accepts:
+ * canvas { nodes, edges }, legacy { services, datastores?, topics?, dependencies },
+ * or { graph: { nodes: Record, edges } }. Supports wrapper { diagram_json: ... }.
+ */
+function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
+  if (!isRecord(raw)) {
+    throw new Error("JSON must be an object");
+  }
+  let data: Record<string, unknown> = raw;
+  if (isRecord(data.diagram_json)) {
+    data = data.diagram_json;
+  }
+  if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
+    return data;
+  }
+  const deps = data.dependencies;
+  const hasLegacyDeps = Array.isArray(deps);
+  const hasLegacyNodes =
+    Array.isArray(data.services) ||
+    Array.isArray(data.datastores) ||
+    Array.isArray(data.topics);
+  if (hasLegacyDeps && hasLegacyNodes) {
+    return data;
+  }
+  const graph = data.graph;
+  if (isRecord(graph) && Array.isArray(graph.edges)) {
+    const nodesObj = graph.nodes;
+    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
+      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
+    }
+  }
+  throw new Error(
+    "Unrecognized diagram JSON. Expected { nodes, edges }, legacy { services, datastores?, dependencies }, or { graph: { nodes, edges } }."
+  );
+}
 
 function createNodeName(kind: NodeKind, nodes: DiagramNode[]): string {
   const countOfSameKind = nodes.filter((n) => n.kind === kind).length + 1;
@@ -111,36 +376,43 @@ function isNameDuplicate(
   );
 }
 
-// simple colors for export SVG – no fancy lab/oklch
-function colorForKind(kind: NodeKind): string {
-  switch (kind) {
-    case "service":
-      return "#e0f2fe";
-    case "gateway":
-      return "#fef9c3";
-    case "database":
-      return "#dcfce7";
-    case "topic":
-      return "#fee2e2";
-    case "external":
-      return "#ede9fe";
-    case "client":
-      return "#cffafe";
-    case "user":
-      return "#f5d0fe";
-    default:
-      return "#e5e7eb";
+function extractDiagramVersionIdFromSaveResponse(
+  saveRes: Record<string, unknown>
+): string | undefined {
+  const dv = saveRes?.diagram_version_id ?? saveRes?.version_id;
+  const nested = saveRes?.diagram_version as { id?: string } | undefined;
+  if (typeof dv === "string" && dv.length > 0) return dv;
+  if (nested && typeof nested.id === "string" && nested.id.length > 0) {
+    return nested.id;
   }
+  if (typeof saveRes?.id === "string" && String(saveRes.id).startsWith("dver-")) {
+    return saveRes.id as string;
+  }
+  return undefined;
 }
 
 export default function DrawDiagram() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const projectId = searchParams.get("project");
-  
-  const { data: summary, isLoading: loadingSummary } = useGetProjectSummaryQuery(
-    projectId || "",
-    { skip: !projectId }
-  );
+  const threadFromQuery = searchParams.get("thread");
+  const diagramVersionFromQuery =
+    searchParams.get("diagramVersion") ??
+    searchParams.get("diagram_version");
+  const reloadFlag = searchParams.get("reload");
+
+  const {
+    data: summary,
+    isLoading: loadingSummary,
+    refetch: refetchProjectSummary,
+  } = useGetProjectSummaryQuery(projectId || "", { skip: !projectId });
+
+  const diagramVersionIdForSave = useMemo(() => {
+    const fromUrl = diagramVersionFromQuery?.trim();
+    if (fromUrl) return fromUrl;
+    const id = summary?.latest_diagram_version?.id;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+  }, [diagramVersionFromQuery, summary?.latest_diagram_version?.id]);
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
@@ -178,16 +450,17 @@ export default function DrawDiagram() {
     y: number;
   } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const importDiagramJsonInputRef = useRef<HTMLInputElement>(null);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [saveDiagram] = useSaveDiagramMutation();
+  const [updateDiagramVersion] = useUpdateDiagramVersionMutation();
   const [uploadDiagramImage] = useUploadDiagramImageMutation();
 
   // Helpers
 
-  const getNodeIcon = (kind: NodeKind): any => {
-    const item = TOOLBOX_ITEMS.find((i) => i.kind === kind);
-    return item?.icon ?? S1;
+  const getNodeIcon = (kind: NodeKind): string => {
+    return NODE_KIND_ICONS[kind] ?? NODE_KIND_ICONS.service;
   };
 
   const getNodeLabel = (kind: NodeKind): string => {
@@ -583,34 +856,50 @@ export default function DrawDiagram() {
     const kindToType = (kind: NodeKind): string => {
       if (kind === "database") return "db";
       if (kind === "topic") return "topic";
+      if (kind === "gateway") return "gateway";
+      if (kind === "external") return "external";
+      if (kind === "client") return "client";
+      if (kind === "user") return "user";
       return "service";
     };
 
     // Map edge kinds to protocols
     const kindToProtocol = (kind: EdgeKind, sync: boolean): string => {
-      if (kind === "rest") return "REST";
-      if (kind === "grpc") return "gRPC";
+      if (kind === "rest") return sync ? "REST" : "REST_ASYNC";
+      if (kind === "grpc") return sync ? "gRPC" : "GRPC_ASYNC";
       if (kind === "event") return sync ? "EventSync" : "EventAsync";
-      return "REST";
+      return sync ? "REST" : "REST_ASYNC";
     };
 
     const backendNodes = nodes.map((node) => ({
       id: node.id,
       label: node.name,
       type: kindToType(node.kind),
+      x: node.x,
+      y: node.y,
     }));
 
     const backendEdges = edges.map((edge) => ({
+      id: edge.id,
       from: edge.fromId,
       to: edge.toId,
       protocol: kindToProtocol(edge.kind, edge.sync),
+      sync: edge.sync,
+      ...(edge.label ? { label: edge.label } : {}),
     }));
 
     // Build spec_summary
     const services = nodes
       .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
       .map((n) => n.name);
-    
+
+    const service_types: Record<string, string> = {};
+    nodes
+      .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
+      .forEach((n) => {
+        service_types[n.name] = kindToType(n.kind);
+      });
+
     const datastores = nodes
       .filter((n) => n.kind === "database")
       .map((n) => n.name);
@@ -630,6 +919,7 @@ export default function DrawDiagram() {
       },
       spec_summary: {
         services,
+        service_types,
         datastores,
         dependencies,
       },
@@ -650,8 +940,22 @@ export default function DrawDiagram() {
       label?: string;
     }>;
     // New format
-    nodes?: Array<{ id: string; label: string; type: string }>;
-    edges?: Array<{ from: string; to: string; protocol: string }>;
+    nodes?: Array<{
+      id: string;
+      label: string;
+      type: string;
+      x?: unknown;
+      y?: unknown;
+    }>;
+    edges?: Array<{
+      id?: string;
+      from: string;
+      to: string;
+      protocol: string;
+      /** When set (e.g. saved canvas JSON), used for flow styling and round-trip. */
+      sync?: boolean;
+      label?: string;
+    }>;
   }) => {
     const newNodes: DiagramNode[] = [];
     const idToNodeId: Record<string, string> = {};
@@ -661,26 +965,53 @@ export default function DrawDiagram() {
     const START_X = 100;
     const START_Y = 100;
 
+    const gridPosition = (idx: number) => ({
+      x: START_X + (idx % 4) * GRID_SPACING,
+      y: START_Y + Math.floor(idx / 4) * GRID_SPACING,
+    });
+
+    const positionFromSavedOrGrid = (
+      node: { x?: unknown; y?: unknown },
+      idx: number
+    ) => {
+      const nx = Number(node.x);
+      const ny = Number(node.y);
+      if (Number.isFinite(nx) && Number.isFinite(ny)) {
+        return { x: nx, y: ny };
+      }
+      return gridPosition(idx);
+    };
+
     // Check if this is the new format (has nodes/edges)
     if (diagramData.nodes && diagramData.edges) {
       // New format: nodes with id, label, type
       diagramData.nodes.forEach((node, idx) => {
         const nodeId = node.id || `node-${nodeCounter++}`;
-        idToNodeId[node.id] = nodeId;
+        if (node.id) {
+          idToNodeId[node.id] = nodeId;
+        }
+        idToNodeId[nodeId] = nodeId;
         nameToNodeId[node.label] = nodeId;
-        
+
         // Map backend type to frontend kind
         let kind: NodeKind = "service";
-        if (node.type === "db") kind = "database";
-        else if (node.type === "topic") kind = "topic";
-        else if (node.type === "service") kind = "service";
-        
+        const t = (node.type || "service").toLowerCase();
+        if (t === "db" || t === "database") kind = "database";
+        else if (t === "topic") kind = "topic";
+        else if (t === "gateway") kind = "gateway";
+        else if (t === "external") kind = "external";
+        else if (t === "client") kind = "client";
+        else if (t === "user") kind = "user";
+        else if (t === "service") kind = "service";
+
+        const { x, y } = positionFromSavedOrGrid(node, idx);
+
         newNodes.push({
           id: nodeId,
           name: node.label,
           kind,
-          x: START_X + (idx % 4) * GRID_SPACING,
-          y: START_Y + Math.floor(idx / 4) * GRID_SPACING,
+          x,
+          y,
         });
       });
 
@@ -689,25 +1020,39 @@ export default function DrawDiagram() {
       diagramData.edges.forEach((edge, idx) => {
         const fromId = idToNodeId[edge.from] || edge.from;
         const toId = idToNodeId[edge.to] || edge.to;
-        
-        // Map protocol to edge kind and sync
+
+        const protocol = (edge.protocol ?? "REST").toUpperCase();
         let kind: EdgeKind = "rest";
-        let sync = true;
-        const protocol = edge.protocol?.toUpperCase() || "REST";
-        if (protocol === "GRPC") {
+        if (protocol === "GRPC" || protocol.includes("GRPC")) {
           kind = "grpc";
         } else if (protocol.includes("EVENT")) {
           kind = "event";
-          sync = protocol.includes("SYNC");
         }
-        
+
+        let sync: boolean;
+        if (typeof edge.sync === "boolean") {
+          sync = edge.sync;
+        } else if (kind === "event") {
+          sync = protocol.includes("SYNC") && !protocol.includes("ASYNC");
+        } else {
+          sync = !protocol.includes("ASYNC");
+        }
+
+        const edgeId =
+          typeof edge.id === "string" && edge.id.trim().length > 0
+            ? edge.id.trim()
+            : `edge-${idx}`;
+
         if (newNodes.find((n) => n.id === fromId) && newNodes.find((n) => n.id === toId)) {
           newEdges.push({
-            id: `edge-${idx}`,
+            id: edgeId,
             fromId,
             toId,
             kind,
             sync,
+            ...(typeof edge.label === "string" && edge.label.trim().length > 0
+              ? { label: edge.label }
+              : {}),
           });
         }
       });
@@ -772,7 +1117,7 @@ export default function DrawDiagram() {
           fromId,
           toId,
           kind: dep.kind,
-          sync: dep.sync,
+          sync: typeof dep.sync === "boolean" ? dep.sync : true,
           label: dep.label,
         });
       }
@@ -783,6 +1128,36 @@ export default function DrawDiagram() {
     setDiagramLoaded(true);
   }, []);
 
+  const handleImportDiagramJsonClick = () => {
+    importDiagramJsonInputRef.current?.click();
+  };
+
+  const handleImportDiagramJsonSelected = useCallback(
+    (e: ReactChangeEvent<HTMLInputElement>) => {
+      const input = e.target;
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = typeof reader.result === "string" ? reader.result : "";
+          const parsed = JSON.parse(text) as unknown;
+          const normalized = normalizeDiagramJsonForLoader(parsed);
+          loadDiagramFromJson(normalized as any);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Invalid JSON file";
+          window.alert(msg);
+        }
+      };
+      reader.onerror = () => {
+        window.alert("Could not read file");
+      };
+      reader.readAsText(file, "UTF-8");
+    },
+    [loadDiagramFromJson]
+  );
+
   // Reset diagram when projectId changes
   useEffect(() => {
     if (projectId && projectId !== lastLoadedProjectId) {
@@ -792,6 +1167,15 @@ export default function DrawDiagram() {
       setLastLoadedProjectId(projectId);
     }
   }, [projectId, lastLoadedProjectId]);
+
+  // Refetch summary and clear local canvas when returning from chat (?reload=1)
+  useEffect(() => {
+    if (!projectId || reloadFlag !== "1") return;
+    setNodes([]);
+    setEdges([]);
+    setDiagramLoaded(false);
+    void refetchProjectSummary();
+  }, [projectId, reloadFlag, refetchProjectSummary]);
 
   // Load diagram from summary when available
   useEffect(() => {
@@ -818,6 +1202,14 @@ export default function DrawDiagram() {
       console.log("No diagram_json found in summary:", summary);
     }
   }, [projectId, summary, loadingSummary, diagramLoaded, loadDiagramFromJson, lastLoadedProjectId]);
+
+  useEffect(() => {
+    if (reloadFlag !== "1" || !diagramLoaded || !projectId) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("reload");
+    const qs = next.toString();
+    router.replace(qs ? `/diagram?${qs}` : "/diagram", { scroll: false });
+  }, [reloadFlag, diagramLoaded, projectId, router, searchParams]);
 
   const buildExportModel = () => {
     const services = nodes
@@ -885,8 +1277,9 @@ export default function DrawDiagram() {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
+    const labelReserveX = 200;
     nodes.forEach((n) => {
-      minX = Math.min(minX, n.x);
+      minX = Math.min(minX, n.x - labelReserveX, n.x);
       minY = Math.min(minY, n.y);
       maxX = Math.max(maxX, n.x + NODE_WIDTH);
       maxY = Math.max(maxY, n.y + NODE_HEIGHT);
@@ -902,37 +1295,78 @@ export default function DrawDiagram() {
 
     const defs = `
       <defs>
-        <marker id="arrowhead-export" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
-          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+        <marker id="arrowhead-export" viewBox="0 0 3 2.4" markerWidth="2.8" markerHeight="2.4" refX="3" refY="1.2" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L3,1.2 L0,2.4 Z" fill="#64748b" />
         </marker>
+        <filter id="flow-pulse-glow-export" x="-120%" y="-120%" width="340%" height="340%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="1.6" />
+        </filter>
       </defs>
     `;
 
     const edgeEls = edges
-      .map((e) => {
+      .map((e, ei) => {
         const from = nodeIndex[e.fromId];
         const to = nodeIndex[e.toId];
         if (!from || !to) return "";
 
-        const x1 = from.x - minX + NODE_WIDTH / 2 + margin;
-        const y1 = from.y - minY + NODE_HEIGHT / 2 + margin;
-        const x2 = to.x - minX + NODE_WIDTH / 2 + margin;
-        const y2 = to.y - minY + NODE_HEIGHT / 2 + margin;
+        const raw = edgeLineEndpoints(from, to);
+        const x1 = raw.x1 - minX + margin;
+        const y1 = raw.y1 - minY + margin;
+        const x2 = raw.x2 - minX + margin;
+        const y2 = raw.y2 - minY + margin;
 
         const midX = (x1 + x2) / 2;
         const midY = (y1 + y2) / 2;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const dLen = Math.hypot(dx, dy) || 1;
+        const lx = midX + (-dy / dLen) * 10;
+        const ly = midY + (dx / dLen) * 10;
+
+        const pulseDur = edgeFlowPulseDuration(x1, y1, x2, y2, e.sync);
+        const pulseBegin = ((ei % 12) * 0.14).toFixed(2);
+        const motionExtra = e.sync
+          ? ""
+          : ` keyPoints="0;0.06;0.94;1" keyTimes="0;0.35;0.65;1"`;
+        const pulse = edgePulsePalette(e.sync, false);
+        const pulseBeginNum = Number(pulseBegin);
+        const pulseBeginReturn = (pulseBeginNum + pulseDur / 2).toFixed(2);
 
         const label =
           e.label && e.label.trim().length > 0
             ? `${e.label} (${e.kind}${e.sync ? ", sync" : ", async"})`
             : `${e.kind}${e.sync ? " (sync)" : " (async)"}`;
 
+        const pulseBlock = e.sync
+          ? `
+            <g>
+              <animateMotion dur="${pulseDur.toFixed(2)}s" repeatCount="indefinite" begin="${pulseBegin}s" calcMode="linear"
+                path="M ${x1} ${y1} L ${x2} ${y2}" />
+              <circle cx="0" cy="0" r="5.5" fill="${pulse.outer}" fill-opacity="${pulse.outerOpacity}" filter="url(#flow-pulse-glow-export)" />
+              <circle cx="0" cy="0" r="2.2" fill="${pulse.inner}" fill-opacity="0.95" />
+            </g>
+            <g>
+              <animateMotion dur="${pulseDur.toFixed(2)}s" repeatCount="indefinite" begin="${pulseBeginReturn}s" calcMode="linear"
+                path="M ${x2} ${y2} L ${x1} ${y1}" />
+              <circle cx="0" cy="0" r="5.5" fill="${pulse.outer}" fill-opacity="${(pulse.outerOpacity * 0.88).toFixed(2)}" filter="url(#flow-pulse-glow-export)" />
+              <circle cx="0" cy="0" r="2.2" fill="#f0f9ff" fill-opacity="0.92" />
+            </g>`
+          : `
+            <g>
+              <animateMotion dur="${pulseDur.toFixed(2)}s" repeatCount="indefinite" begin="${pulseBegin}s" calcMode="linear"${motionExtra}
+                path="M ${x1} ${y1} L ${x2} ${y2}" />
+              <circle cx="0" cy="0" r="6" fill="${pulse.outer}" fill-opacity="${pulse.outerOpacity}" filter="url(#flow-pulse-glow-export)" />
+              <circle cx="0" cy="0" r="2.4" fill="${pulse.inner}" fill-opacity="0.95" />
+            </g>`;
+
         return `
           <g>
             <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-              stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead-export)" />
-            <text x="${midX}" y="${midY - 4}" text-anchor="middle"
-              font-size="10" fill="#334155"
+              stroke="#64748b" stroke-width="1.85" stroke-linecap="round" marker-end="url(#arrowhead-export)" />
+            ${pulseBlock}
+            <text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle"
+              font-size="9" font-weight="600" fill="#334155" stroke="#f8fafc" stroke-width="2" paint-order="stroke fill"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${label.replace(/&/g, "&amp;")}
             </text>
@@ -945,23 +1379,24 @@ export default function DrawDiagram() {
       .map((n) => {
         const x = n.x - minX + margin;
         const y = n.y - minY + margin;
-        const fill = colorForKind(n.kind);
         const label = getNodeLabel(n.kind);
+        const tx = x - NODE_LABEL_GAP;
+        const cy = y + NODE_HEIGHT / 2;
 
         return `
           <g>
-            <rect x="${x}" y="${y}" rx="8" ry="8" width="${NODE_WIDTH}" height="${NODE_HEIGHT}"
-              fill="${fill}" stroke="#111827" stroke-width="0.5" />
-            <text x="${x + 8}" y="${y + 22}"
-              font-size="12" font-weight="600" fill="#020617"
+            <text x="${tx}" y="${cy - 7}" text-anchor="end"
+              font-size="11" font-weight="600" fill="#0f172a"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${n.name.replace(/&/g, "&amp;")}
             </text>
-            <text x="${x + 8}" y="${y + 38}"
-              font-size="10" fill="#475569"
+            <text x="${tx}" y="${cy + 9}" text-anchor="end"
+              font-size="9" fill="#64748b"
               font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
               ${label.replace(/&/g, "&amp;")}
             </text>
+            <rect x="${x}" y="${y}" rx="4" ry="4" width="${NODE_WIDTH}" height="${NODE_HEIGHT}"
+              fill="none" stroke="#94a3b8" stroke-width="0.6" stroke-opacity="0.45" />
           </g>
         `;
       })
@@ -1077,8 +1512,52 @@ export default function DrawDiagram() {
   };
 
   const [opening, setOpening] = useState(false);
+  const [backToChatBusy, setBackToChatBusy] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string>("");
   const openInChat = useOpenInChat();
+
+  const persistDiagramDefinition = useCallback(
+    async (options?: { imageObjectKey?: string }) => {
+      if (!projectId) {
+        throw new Error("Missing project");
+      }
+      const backendFormat = transformToBackendFormat();
+      const diagramJson = backendFormat.diagram_json;
+      const imageObjectKey = options?.imageObjectKey;
+
+      let saveRes: Record<string, unknown>;
+      if (diagramVersionIdForSave) {
+        saveRes = (await updateDiagramVersion({
+          projectId,
+          versionId: diagramVersionIdForSave,
+          diagram_json: diagramJson,
+          ...(imageObjectKey ? { image_object_key: imageObjectKey } : {}),
+        }).unwrap()) as Record<string, unknown>;
+      } else {
+        saveRes = (await saveDiagram({
+          projectId,
+          diagram: imageObjectKey
+            ? { ...backendFormat, image_object_key: imageObjectKey }
+            : backendFormat,
+        }).unwrap()) as Record<string, unknown>;
+      }
+
+      await refetchProjectSummary();
+      return (
+        extractDiagramVersionIdFromSaveResponse(saveRes) ??
+        diagramVersionIdForSave ??
+        undefined
+      );
+    },
+    [
+      projectId,
+      diagramVersionIdForSave,
+      transformToBackendFormat,
+      updateDiagramVersion,
+      saveDiagram,
+      refetchProjectSummary,
+    ]
+  );
 
   const handleOpenInChat = async () => {
     if (opening || !projectId) return;
@@ -1103,15 +1582,12 @@ export default function DrawDiagram() {
         console.error("Failed to upload diagram image:", imageError);
       }
 
+      let diagramVersionId: string | undefined;
       try {
-        const backendFormat = transformToBackendFormat();
-        setLoadingMessage("Saving diagram definition...");
-        await saveDiagram({
-          projectId,
-          diagram: imageObjectKey
-            ? { ...backendFormat, image_object_key: imageObjectKey }
-            : backendFormat,
-        }).unwrap();
+        setLoadingMessage("Saving diagram definition…");
+        diagramVersionId = await persistDiagramDefinition({
+          imageObjectKey,
+        });
         console.log("Diagram saved successfully");
       } catch (saveError) {
         console.error("Failed to save diagram:", saveError);
@@ -1129,6 +1605,7 @@ export default function DrawDiagram() {
           setOpening(loading);
           if (message) setLoadingMessage(message);
         },
+        diagramVersionId,
       });
     } catch (e) {
       console.error(e);
@@ -1138,9 +1615,46 @@ export default function DrawDiagram() {
     }
   };
 
+  const navigateBackToChat = useCallback(async () => {
+    if (!projectId || !threadFromQuery) return;
+    setBackToChatBusy(true);
+    try {
+      const versionAfterSave = await persistDiagramDefinition();
+      const p = new URLSearchParams();
+      p.set("thread", threadFromQuery);
+      p.set("from", "diagram");
+      const dv = diagramVersionFromQuery ?? versionAfterSave;
+      if (dv) {
+        p.set("diagramVersion", dv);
+      }
+      router.push(`/project/${projectId}/chat?${p.toString()}`);
+    } catch (e) {
+      console.error(e);
+      alert(
+        (e as Error).message ||
+          "Failed to save diagram before returning to chat"
+      );
+    } finally {
+      setBackToChatBusy(false);
+    }
+  }, [
+    projectId,
+    threadFromQuery,
+    diagramVersionFromQuery,
+    persistDiagramDefinition,
+    router,
+  ]);
+
   return (
     <React.Fragment>
-      <LoaderModal isOpen={opening} message={loadingMessage || "Loading..."} />
+      <LoaderModal
+        isOpen={opening || backToChatBusy}
+        message={
+          backToChatBusy
+            ? "Saving diagram…"
+            : loadingMessage || "Loading..."
+        }
+      />
 
       {contextMenuNodeId && contextMenuPosition && (
         <div
@@ -1322,41 +1836,75 @@ export default function DrawDiagram() {
           >
             <svg className="absolute inset-0 h-full w-full">
               <defs>
+                <filter
+                  id="flow-pulse-glow"
+                  x="-120%"
+                  y="-120%"
+                  width="340%"
+                  height="340%"
+                >
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="1.6" />
+                </filter>
                 <marker
                   id="arrowhead"
-                  markerWidth="12"
-                  markerHeight="9"
-                  refX="10"
-                  refY="4.5"
+                  viewBox="0 0 3 2.4"
+                  markerWidth="2.8"
+                  markerHeight="2.4"
+                  refX={3}
+                  refY={1.2}
                   orient="auto"
+                  markerUnits="userSpaceOnUse"
                 >
-                  <polygon points="0 0, 12 4.5, 0 9" fill="#475569" />
+                  <path d="M0,0 L3,1.2 L0,2.4 Z" fill="#475569" />
                 </marker>
                 <marker
                   id="arrowhead-selected"
-                  markerWidth="12"
-                  markerHeight="9"
-                  refX="10"
-                  refY="4.5"
+                  viewBox="0 0 3 2.4"
+                  markerWidth="2.8"
+                  markerHeight="2.4"
+                  refX={3}
+                  refY={1.2}
                   orient="auto"
+                  markerUnits="userSpaceOnUse"
                 >
-                  <polygon points="0 0, 12 4.5, 0 9" fill="#0ea5e9" />
+                  <path d="M0,0 L3,1.2 L0,2.4 Z" fill="#0284c7" />
                 </marker>
               </defs>
-              {edges.map((edge) => {
+              {edges.map((edge, edgeIndex) => {
                 const from = nodes.find((n) => n.id === edge.fromId);
                 const to = nodes.find((n) => n.id === edge.toId);
                 if (!from || !to) return null;
 
-                const x1 = from.x + NODE_WIDTH / 2;
-                const y1 = from.y + NODE_HEIGHT / 2;
-                const x2 = to.x + NODE_WIDTH / 2;
-                const y2 = to.y + NODE_HEIGHT / 2;
-
+                const { x1, y1, x2, y2 } = edgeLineEndpoints(from, to);
                 const midX = (x1 + x2) / 2;
                 const midY = (y1 + y2) / 2;
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const dLen = Math.hypot(dx, dy) || 1;
+                const nx = (-dy / dLen) * 12;
+                const ny = (dx / dLen) * 12;
+                const lx = midX + nx;
+                const ly = midY + ny;
 
                 const isSelected = edge.id === selectedEdgeId;
+                const stroke = isSelected ? "#0284c7" : "#475569";
+                const strokeW = isSelected ? 2.5 : 1.85;
+                const pulseDur = edgeFlowPulseDuration(
+                  x1,
+                  y1,
+                  x2,
+                  y2,
+                  edge.sync
+                );
+                const pulseBegin = ((edgeIndex % 12) * 0.14).toFixed(2);
+                const motionPath = `M ${x1} ${y1} L ${x2} ${y2}`;
+                const motionPathReturn = edgeReturnPath(x1, y1, x2, y2);
+                const motionKeys = edgeFlowMotionKeyAttrs(edge.sync);
+                const pulse = edgePulsePalette(edge.sync, isSelected);
+                const pulseBeginReturn = (
+                  Number(pulseBegin) +
+                  pulseDur / 2
+                ).toFixed(2);
 
                 return (
                   <g key={edge.id} data-edge>
@@ -1365,26 +1913,118 @@ export default function DrawDiagram() {
                       y1={y1}
                       x2={x2}
                       y2={y2}
-                      stroke={isSelected ? "#0ea5e9" : "#475569"}
-                      strokeWidth={isSelected ? 3 : 2.5}
+                      stroke="transparent"
+                      strokeWidth={14}
+                      onClick={handleEdgeClick(edge.id)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke={stroke}
+                      strokeWidth={strokeW}
+                      strokeLinecap="round"
                       strokeOpacity={1}
                       markerEnd={
                         isSelected
                           ? "url(#arrowhead-selected)"
                           : "url(#arrowhead)"
                       }
-                      onClick={handleEdgeClick(edge.id)}
-                      style={{ cursor: "pointer" }}
+                      pointerEvents="none"
                     />
+                    {edge.sync ? (
+                      <>
+                        <g pointerEvents="none">
+                          <animateMotion
+                            dur={`${pulseDur.toFixed(2)}s`}
+                            repeatCount="indefinite"
+                            begin={`${pulseBegin}s`}
+                            calcMode="linear"
+                            path={motionPath}
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 6 : 5.2}
+                            fill={pulse.outer}
+                            fillOpacity={pulse.outerOpacity}
+                            filter="url(#flow-pulse-glow)"
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 2.6 : 2.2}
+                            fill={pulse.inner}
+                            fillOpacity={0.95}
+                          />
+                        </g>
+                        <g pointerEvents="none">
+                          <animateMotion
+                            dur={`${pulseDur.toFixed(2)}s`}
+                            repeatCount="indefinite"
+                            begin={`${pulseBeginReturn}s`}
+                            calcMode="linear"
+                            path={motionPathReturn}
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 6 : 5.2}
+                            fill={pulse.outer}
+                            fillOpacity={pulse.outerOpacity * 0.88}
+                            filter="url(#flow-pulse-glow)"
+                          />
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={isSelected ? 2.6 : 2.2}
+                            fill="#f0f9ff"
+                            fillOpacity={0.92}
+                          />
+                        </g>
+                      </>
+                    ) : (
+                      <g pointerEvents="none">
+                        <animateMotion
+                          dur={`${pulseDur.toFixed(2)}s`}
+                          repeatCount="indefinite"
+                          begin={`${pulseBegin}s`}
+                          calcMode="linear"
+                          path={motionPath}
+                          {...motionKeys}
+                        />
+                        <circle
+                          cx={0}
+                          cy={0}
+                          r={isSelected ? 6.5 : 5.5}
+                          fill={pulse.outer}
+                          fillOpacity={pulse.outerOpacity}
+                          filter="url(#flow-pulse-glow)"
+                        />
+                        <circle
+                          cx={0}
+                          cy={0}
+                          r={isSelected ? 2.8 : 2.4}
+                          fill={pulse.inner}
+                          fillOpacity={0.95}
+                        />
+                      </g>
+                    )}
                     {edge.label ? (
                       <text
-                        x={midX}
-                        y={midY - 6}
+                        x={lx}
+                        y={ly}
                         textAnchor="middle"
+                        dominantBaseline="middle"
                         className="pointer-events-none select-none"
-                        fontSize={12}
-                        fontWeight={500}
-                        fill={isSelected ? "#0f172a" : "#334155"}
+                        fontSize={10}
+                        fontWeight={600}
+                        fill={isSelected ? "#0c4a6e" : "#334155"}
+                        stroke="#f8fafc"
+                        strokeWidth={2.5}
+                        paintOrder="stroke fill"
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
                         {edge.label} ({edge.kind}
@@ -1392,13 +2032,17 @@ export default function DrawDiagram() {
                       </text>
                     ) : (
                       <text
-                        x={midX}
-                        y={midY - 6}
+                        x={lx}
+                        y={ly}
                         textAnchor="middle"
+                        dominantBaseline="middle"
                         className="pointer-events-none select-none"
-                        fontSize={12}
-                        fontWeight={500}
-                        fill={isSelected ? "#0f172a" : "#334155"}
+                        fontSize={10}
+                        fontWeight={600}
+                        fill={isSelected ? "#0c4a6e" : "#334155"}
+                        stroke="#f8fafc"
+                        strokeWidth={2.5}
+                        paintOrder="stroke fill"
                         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
                       >
                         {edge.kind}
@@ -1411,103 +2055,104 @@ export default function DrawDiagram() {
             </svg>
 
             {nodes.map((node) => {
-              const isSelected = node.id === selectedNodeId;
-              const isConnectingFrom = node.id === connectingFromId;
+              const nodeInteractions = {
+                onMouseDown: handleNodeMouseDown(node.id),
+                onClick: handleNodeClick(node.id),
+                onContextMenu: (e: ReactMouseEvent<HTMLDivElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSelectedNodeId(node.id);
+                  setSelectedEdgeId(null);
+                  setContextMenuNodeId(node.id);
+                  setContextMenuPosition({ x: e.clientX, y: e.clientY });
+                },
+                onDoubleClick: (e: ReactMouseEvent<HTMLDivElement>) => {
+                  e.stopPropagation();
+                  setEditingNodeId(node.id);
+                  setSelectedNodeId(node.id);
+                },
+              };
 
               return (
                 <div
                   key={node.id}
-                  style={{
-                    left: node.x,
-                    top: node.y,
-                    width: NODE_WIDTH,
-                    height: NODE_HEIGHT,
-                  }}
-                  className={[
-                    "absolute rounded-lg border bg-white shadow-sm px-3 py-2 cursor-move flex flex-col justify-center",
-                    isSelected
-                      ? "border-sky-400 ring-2 ring-sky-500/40"
-                      : "border-black/10",
-                    isConnectingFrom ? "outline-1 outline-amber-400" : "",
-                  ].join(" ")}
-                  onMouseDown={handleNodeMouseDown(node.id)}
-                  onClick={handleNodeClick(node.id)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSelectedNodeId(node.id);
-                    setSelectedEdgeId(null);
-                    setContextMenuNodeId(node.id);
-                    setContextMenuPosition({ x: e.clientX, y: e.clientY });
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setEditingNodeId(node.id);
-                    setSelectedNodeId(node.id);
-                  }}
+                  className="absolute"
+                  style={{ left: node.x, top: node.y }}
                 >
-                  <div className="flex items-center gap-1">
-                    <Image
-                      width={20}
-                      height={20}
-                      src={getNodeIcon(node.kind)}
-                      alt={node.kind}
-                      className="w-8 h-8 object-contain flex-shrink-0"
-                    />
-                    <div className="min-w-0 flex-1">
-                      {editingNodeId === node.id ? (
-                        <input
-                          type="text"
-                          value={node.name}
-                          autoFocus
-                          className="w-full text-xs font-semibold text-black bg-slate-100 border border-sky-400 rounded px-1 outline-none"
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (!isNameDuplicate(nodes, v, node.kind, node.id)) {
-                              setNodes((prev) =>
-                                prev.map((n) =>
-                                  n.id === node.id ? { ...n, name: v } : n
-                                )
-                              );
-                            }
-                          }}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            if (v && !isNameDuplicate(nodes, v, node.kind, node.id)) {
-                              setNodes((prev) =>
-                                prev.map((n) =>
-                                  n.id === node.id ? { ...n, name: v } : n
-                                )
-                              );
-                            } else if (!v) {
-                              setNodes((prev) =>
-                                prev.map((n) =>
-                                  n.id === node.id
-                                    ? { ...n, name: createNodeName(node.kind, prev) }
-                                    : n
-                                )
-                              );
-                            }
-                            setEditingNodeId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              (e.target as HTMLInputElement).blur();
-                            }
-                            e.stopPropagation();
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          onMouseDown={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        <div className="truncate text-xs font-semibold text-black">
-                          {node.name}
-                        </div>
-                      )}
-                      <div className="text-[10px] text-black/80">
-                        {getNodeLabel(node.kind)}
+                  <div
+                    className="absolute z-[1] flex max-w-[200px] cursor-move select-none flex-col items-end gap-0.5 text-right"
+                    style={{
+                      right: NODE_WIDTH + NODE_LABEL_GAP,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                    }}
+                    {...nodeInteractions}
+                  >
+                    {editingNodeId === node.id ? (
+                      <input
+                        type="text"
+                        value={node.name}
+                        autoFocus
+                        className="w-full min-w-[6rem] max-w-[200px] rounded border border-sky-400 bg-white/95 px-1.5 py-0.5 text-right text-xs font-semibold text-slate-900 shadow-sm outline-none"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!isNameDuplicate(nodes, v, node.kind, node.id)) {
+                            setNodes((prev) =>
+                              prev.map((n) =>
+                                n.id === node.id ? { ...n, name: v } : n
+                              )
+                            );
+                          }
+                        }}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v && !isNameDuplicate(nodes, v, node.kind, node.id)) {
+                            setNodes((prev) =>
+                              prev.map((n) =>
+                                n.id === node.id ? { ...n, name: v } : n
+                              )
+                            );
+                          } else if (!v) {
+                            setNodes((prev) =>
+                              prev.map((n) =>
+                                n.id === node.id
+                                  ? { ...n, name: createNodeName(node.kind, prev) }
+                                  : n
+                              )
+                            );
+                          }
+                          setEditingNodeId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            (e.target as HTMLInputElement).blur();
+                          }
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <div className="max-w-full truncate text-xs font-semibold leading-tight text-slate-900">
+                        {node.name}
                       </div>
+                    )}
+                    <div className="max-w-full truncate text-[10px] font-medium leading-tight text-slate-500">
+                      {getNodeLabel(node.kind)}
                     </div>
+                  </div>
+                  <div
+                    style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
+                    className="relative z-[2] cursor-move bg-transparent"
+                    {...nodeInteractions}
+                  >
+                    <Image
+                      width={NODE_ICON_SIZE}
+                      height={NODE_ICON_SIZE}
+                      src={getNodeIcon(node.kind)}
+                      alt={node.name}
+                      className="h-full w-full object-contain p-0 drop-shadow-[0_1px_2px_rgba(15,23,42,0.2)]"
+                    />
                   </div>
                 </div>
               );
@@ -1681,6 +2326,13 @@ export default function DrawDiagram() {
                 Synchronous call (uncheck = async)
               </label>
             </div>
+            <p className="text-[10px] leading-snug text-slate-500">
+              Flow cue: sync = two cyan pulses shuttling opposite ways
+              (bidirectional); async = one amber pulse along the arrow only
+              (one-way). Matches{" "}
+              <code className="text-slate-400">sync</code> in exported / uploaded
+              JSON.
+            </p>
 
             <div className="pt-1">
               <button
@@ -1695,15 +2347,32 @@ export default function DrawDiagram() {
         )}
 
         <div className="pt-3 border-t border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Export JSON</span>
-            <button
-              type="button"
-              onClick={handleDownloadJson}
-              className="rounded border border-sky-500 bg-sky-600/80 px-2 py-0.5 text-[11px] text-white hover:bg-sky-500"
-            >
-              Download
-            </button>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-400 shrink-0">Export JSON</span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={handleDownloadJson}
+                className="rounded border border-sky-500 bg-sky-600/80 px-2 py-0.5 text-[11px] text-white hover:bg-sky-500"
+              >
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={handleImportDiagramJsonClick}
+                aria-label="Import diagram from JSON file"
+                className="rounded border border-slate-600 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-sky-500"
+              >
+                Upload
+              </button>
+              <input
+                ref={importDiagramJsonInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleImportDiagramJsonSelected}
+              />
+            </div>
           </div>
           <div className="rounded bg-slate-900 border border-slate-800 p-2 max-h-40 overflow-auto text-[10px] font-mono text-slate-100 whitespace-pre">
             {exportJson}
@@ -1737,20 +2406,39 @@ export default function DrawDiagram() {
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Discuss in chat</span>
-            <button
-              type="button"
-              onClick={handleOpenInChat}
-              disabled={opening}
-              className={`rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
+            <span className="text-xs text-slate-400">
+              {"Discuss in chat"}
+            </span>
+            {threadFromQuery && projectId ? (
+              <button
+                type="button"
+                onClick={() => void navigateBackToChat()}
+                disabled={backToChatBusy || opening}
+                className={`flex items-center gap-1 rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
+                  ${
+                    backToChatBusy || opening
+                      ? "bg-emerald-700/60 cursor-not-allowed opacity-70"
+                      : "bg-emerald-600/80 hover:bg-emerald-500"
+                  }`}
+              >
+                <MessageSquare className="w-3 h-3 shrink-0" />
+                {backToChatBusy ? "Saving…" : "Back to chat"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleOpenInChat}
+                disabled={opening}
+                className={`rounded border border-emerald-500 px-2 py-0.5 text-[11px] text-white
         ${
           opening
             ? "bg-emerald-700/60 cursor-not-allowed opacity-70"
             : "bg-emerald-600/80 hover:bg-emerald-500"
         }`}
-            >
-              {opening ? "Opening in Chat…" : "Open in Chat (JSON copied)"}
-            </button>
+              >
+                {opening ? "Opening in Chat…" : "Open in Chat"}
+              </button>
+            )}
           </div>
           <p className="text-[10px] text-slate-500">
             JSON copied to clipboard. Paste into chat to analyse.

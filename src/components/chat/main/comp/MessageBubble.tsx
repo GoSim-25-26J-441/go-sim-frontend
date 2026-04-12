@@ -7,6 +7,10 @@ type MessageBubbleProps = {
   role: "user" | "assistant";
   text: string;
   responseTimeMs?: number;
+  /** Assistant only: diagram version id from API, or missing / null → “No diagram provided” */
+  diagramVersionIdUsed?: string | null;
+  /** When false, assistant bubbles omit the diagram-version footer (e.g. temp chat) */
+  showDiagramVersionFooter?: boolean;
 };
 
 function MdHeading({ children, ...props }: ComponentPropsWithoutRef<"h4">) {
@@ -128,10 +132,17 @@ function formatResponseTime(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
+function diagramVersionFooterLabel(diagramVersionIdUsed?: string | null) {
+  const s = diagramVersionIdUsed?.trim();
+  return s && s.length > 0 ? s : "No diagram provided";
+}
+
 export default function MessageBubble({
   role,
   text,
   responseTimeMs,
+  diagramVersionIdUsed,
+  showDiagramVersionFooter = true,
 }: MessageBubbleProps) {
   const isUser = role === "user";
   const [copied, setCopied] = useState(false);
@@ -187,11 +198,21 @@ export default function MessageBubble({
         {isUser ? (
           text
         ) : (
-          <div className="markdown-root">
-            <Markdown components={assistantMarkdownComponents}>
-              {text}
-            </Markdown>
-          </div>
+          <>
+            <div className="markdown-root">
+              <Markdown components={assistantMarkdownComponents}>
+                {text}
+              </Markdown>
+            </div>
+            {showDiagramVersionFooter ? (
+              <div className="mt-2 pt-2 border-t border-white/10 text-[10px] leading-snug text-white/45 select-text">
+                <span className="text-white/35">Diagram version: </span>
+                <span className="font-mono text-white/55 break-all">
+                  {diagramVersionFooterLabel(diagramVersionIdUsed)}
+                </span>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
 

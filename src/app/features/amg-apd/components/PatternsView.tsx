@@ -16,15 +16,15 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { useOpenInChat } from "@/modules/di/useOpenInChat";
+import { fetchLatestProjectDiagramVersionId } from "@/modules/di/fetchLatestProjectDiagramVersionId";
 import type {
   AnalysisResult,
   AmgApdVersionSummary,
 } from "@/app/features/amg-apd/types";
 
 type PatternsViewProps = {
-  /** When provided, all API calls are project-scoped and Return to Chat links to project chat */
   projectId?: string;
-  /** Custom handler for Return to Chat button */
   onReturnToChat?: () => void;
 };
 
@@ -42,6 +42,7 @@ export default function PatternsView({
   const { userId } = useAuth();
 
   const showToast = useToast((s) => s.showToast);
+  const openInChat = useOpenInChat();
   const headers = () =>
     getAmgApdHeaders({
       userId: userId ?? undefined,
@@ -211,7 +212,15 @@ export default function PatternsView({
     if (onReturnToChat) {
       onReturnToChat();
     } else if (projectId) {
-      router.push(`/project/${projectId}/chat`);
+      void (async () => {
+        try {
+          const diagramVersionId =
+            await fetchLatestProjectDiagramVersionId(projectId);
+          await openInChat(projectId, { diagramVersionId });
+        } catch {
+          showToast("Could not open chat", "error");
+        }
+      })();
     } else {
       showToast("Return to Chat is not available here", "info");
     }

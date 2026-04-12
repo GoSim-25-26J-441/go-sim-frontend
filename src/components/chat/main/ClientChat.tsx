@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import {
   Send,
@@ -13,12 +13,14 @@ import {
   Check,
   ArrowLeft,
   X,
+  PenSquare,
 } from "lucide-react";
 import {
   useGetProjectThreadIdQuery,
   useGetMessagesQuery,
   useSendMessageMutation,
   type ChatMessageItem,
+  type ChatResponse,
 } from "@/app/store/chatApi";
 import { useToast } from "@/hooks/useToast";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
@@ -31,12 +33,30 @@ type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
 type UiChatMessage = ChatMessageItem & { responseTimeMs?: number };
 
+const MAX_MESSAGE_503_RETRIES = 6;
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function getFetchErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const urlThreadId = searchParams.get("thread");
   const fromDiagram = searchParams.get("from") === "diagram";
+  const diagramVersionParam =
+    searchParams.get("diagramVersion") ??
+    searchParams.get("diagram_version");
 
   const [threadId, setThreadId] = useState<string | null>(urlThreadId);
   const [input, setInput] = useState("");
@@ -157,28 +177,53 @@ export default function ClientChat({ id }: Props) {
     router,
   ]);
 
+  const openDiagramCanvas = useCallback(() => {
+    const q = new URLSearchParams();
+    q.set("project", id);
+    if (threadId) {
+      q.set("thread", threadId);
+      q.set("reload", "1");
+    }
+    if (diagramVersionParam) {
+      q.set("diagramVersion", diagramVersionParam);
+    }
+    router.push(`/diagram?${q.toString()}`);
+  }, [id, threadId, diagramVersionParam, router]);
+
   useEffect(() => {
     if (messagesData) {
       const incoming = messagesData.filter((m) => m.message.trim());
       setMessages((prev) => {
         // Preserve frontend-only response timers when history refetches.
         const responseTimeBySignature = new Map<string, number>();
+        const diagramVersionBySignature = new Map<string, string | null>();
         for (const msg of prev) {
-          if (msg.role !== "assistant" || msg.responseTimeMs === undefined) continue;
-          responseTimeBySignature.set(
-            `${msg.role}::${msg.message}`,
-            msg.responseTimeMs,
-          );
+          if (msg.role !== "assistant") continue;
+          const key = `${msg.role}::${msg.message}`;
+          if (msg.responseTimeMs !== undefined) {
+            responseTimeBySignature.set(key, msg.responseTimeMs);
+          }
+          if (msg.diagram_version_id_used !== undefined) {
+            diagramVersionBySignature.set(key, msg.diagram_version_id_used);
+          }
         }
 
         return incoming.map((msg) => {
           if (msg.role !== "assistant") return msg;
-          const preserved = responseTimeBySignature.get(
-            `${msg.role}::${msg.message}`,
-          );
-          return preserved !== undefined
-            ? { ...msg, responseTimeMs: preserved }
-            : msg;
+          const key = `${msg.role}::${msg.message}`;
+          const preserved = responseTimeBySignature.get(key);
+          const preservedDv = diagramVersionBySignature.get(key);
+          const diagram_version_id_used =
+            msg.diagram_version_id_used !== undefined
+              ? msg.diagram_version_id_used
+              : preservedDv !== undefined
+                ? preservedDv
+                : null;
+          return {
+            ...msg,
+            ...(preserved !== undefined ? { responseTimeMs: preserved } : {}),
+            diagram_version_id_used,
+          };
         });
       });
     }
@@ -223,8 +268,14 @@ export default function ClientChat({ id }: Props) {
     const startedAt = Date.now();
     setPendingResponseMs(0);
 
+    const diagramVersionId =
+      searchParams.get("diagramVersion") ??
+      searchParams.get("diagram_version") ??
+      undefined;
+    const hadDiagramVersionParam = Boolean(diagramVersionId);
+
     try {
-      const response = await sendMessage({
+      const baseArg = {
         projectId: id,
         threadId,
         message: text,
@@ -233,10 +284,42 @@ export default function ClientChat({ id }: Props) {
         ...(Object.keys(designAnswers).length > 0
           ? { design: designAnswers }
           : {}),
-      }).unwrap();
+        ...(diagramVersionId ? { diagram_version_id: diagramVersionId } : {}),
+      };
+
+      let response: ChatResponse | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < MAX_MESSAGE_503_RETRIES; attempt++) {
+        try {
+          response = await sendMessage(baseArg).unwrap();
+          break;
+        } catch (e) {
+          lastError = e;
+          const status = getFetchErrorStatus(e);
+          if (status === 503 && attempt < MAX_MESSAGE_503_RETRIES - 1) {
+            if (attempt === 0) {
+              showToast("Diagram is still saving; retrying…", "info");
+            }
+            await delay(450 * (attempt + 1));
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      if (!response) throw lastError ?? new Error("No response");
+
       const responseTimeMs = Date.now() - startedAt;
 
       if (aliveRef.current) {
+        const raw = response as Record<string, unknown>;
+        const dvRaw =
+          raw.diagram_version_id_used ?? raw.diagramVersionIdUsed;
+        const diagram_version_id_used =
+          typeof dvRaw === "string" && dvRaw.trim().length > 0
+            ? dvRaw.trim()
+            : null;
+
         setMessages((prev) => [
           ...prev,
           {
@@ -244,6 +327,7 @@ export default function ClientChat({ id }: Props) {
             message: response.answer || response.message || "No response",
             ts: Date.now(),
             responseTimeMs,
+            diagram_version_id_used,
           },
         ]);
       }
@@ -252,6 +336,14 @@ export default function ClientChat({ id }: Props) {
         window.location.pathname.includes("/chat");
       if (!isOnChatPage) {
         showToast("Chat received a response", "chat");
+      }
+
+      if (hadDiagramVersionParam && aliveRef.current) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("diagramVersion");
+        params.delete("diagram_version");
+        const q = params.toString();
+        router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
       }
     } catch (e) {
       if (aliveRef.current) {
@@ -340,9 +432,10 @@ export default function ClientChat({ id }: Props) {
         >
           <div className="flex items-center gap-3 min-w-0">
             <button
+              type="button"
               onClick={() => router.push(`/project/${id}/summary`)}
               className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
-              aria-label="Go back"
+              aria-label="Back to project summary"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
@@ -429,6 +522,21 @@ export default function ClientChat({ id }: Props) {
             )}
 
             <button
+              type="button"
+              onClick={openDiagramCanvas}
+              disabled={checkingThread}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 shrink-0 bg-amber-400 text-black border border-amber-500/80 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none"
+              title={
+                threadId
+                  ? "Open diagram canvas (reloads latest saved design)"
+                  : "Open diagram canvas for this project"
+              }
+            >
+              <PenSquare className="w-3.5 h-3.5 shrink-0" />
+              Diagram canvas
+            </button>
+
+            <button
               onClick={() => {
                 if (Object.keys(designAnswers).length === 0) {
                   setOpenCheckPatternsAfterDesign(true);
@@ -475,6 +583,11 @@ export default function ClientChat({ id }: Props) {
                 role={m.role}
                 text={m.message}
                 responseTimeMs={m.responseTimeMs}
+                diagramVersionIdUsed={
+                  m.role === "assistant"
+                    ? m.diagram_version_id_used
+                    : undefined
+                }
               />
             ))}
 
