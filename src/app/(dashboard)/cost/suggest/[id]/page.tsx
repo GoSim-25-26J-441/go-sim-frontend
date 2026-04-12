@@ -192,11 +192,11 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
               </p>
             </div>
             <div className="bg-card border border-border p-4 rounded-lg">
-              <p className="text-sm opacity-60">Refined vCPU</p>
+              <p className="text-sm opacity-60">Preferred vCPU</p>
               <p className="text-lg font-semibold">{design.preferred_vcpu}</p>
             </div>
             <div className="bg-card border border-border p-4 rounded-lg">
-              <p className="text-sm opacity-60">Refined Memory</p>
+              <p className="text-sm opacity-60">Preferred Memory</p>
               <p className="text-lg font-semibold">{design.preferred_memory_gb} GB</p>
             </div>
             <div className="bg-card border border-border p-4 rounded-lg">
