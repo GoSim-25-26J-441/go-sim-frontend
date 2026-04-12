@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useOpenInChat } from "./useOpenInChat";
+import { fetchLatestProjectDiagramVersionId } from "./fetchLatestProjectDiagramVersionId";
 
 /**
  * Hook for "Return to Chat" on the patterns page.
@@ -17,8 +18,11 @@ export function useReturnToChatFromPatterns(projectId: string | undefined) {
     if (!projectId) return;
     setReturning(true);
     try {
+      const diagramVersionId =
+        await fetchLatestProjectDiagramVersionId(projectId);
       await openInChat(projectId, {
         onLoadingChange: (loading) => setReturning(loading),
+        diagramVersionId,
       });
     } catch (e) {
       setReturning(false);

@@ -8,13 +8,8 @@ import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 import CheckPatternsLoadingScreen from "@/app/features/amg-apd/components/CheckPatternsLoadingScreen";
 import { ArrowLeft, AlertCircle } from "lucide-react";
+import { navigateToProjectChatWithDiagram } from "@/modules/di/navigateToProjectChatWithDiagram";
 
-/**
- * Intermediate page: when user clicks "Check Anti Patterns" from chat,
- * we navigate here, show a full-page loading animation, fetch latest AMG-APD
- * version (or create from diagram YAML), update store, then redirect to
- * /project/[id]/patterns. Keeps ClientChat minimal.
- */
 export default function ProjectPatternsCheckPage({
   params,
 }: {
@@ -107,7 +102,9 @@ export default function ProjectPatternsCheckPage({
               <p className="text-sm text-white/70">{error}</p>
               <button
                 type="button"
-                onClick={() => router.push(`/project/${projectId}/chat`)}
+                onClick={() =>
+                  void navigateToProjectChatWithDiagram(router, projectId)
+                }
                 className="flex items-center gap-2 rounded-xl border border-white/15 bg-card/80 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 transition-colors"
               >
                 <ArrowLeft className="w-4 h-4" />

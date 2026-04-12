@@ -23,6 +23,8 @@ export interface ChatMessageItem {
   role: "user" | "assistant";
   message: string;
   ts?: number;
+  /** Present on assistant messages when the backend bound a diagram version to the reply */
+  diagram_version_id_used?: string | null;
 }
 
 export interface SendMessageArg {
@@ -32,12 +34,15 @@ export interface SendMessageArg {
   mode?: "thinking" | "default" | "instant";
   detail?: string;
   design?: Record<string, unknown>;
+  /** When set, sent to backend so the first turns can bind to a concrete saved diagram version */
+  diagram_version_id?: string;
 }
 
 export interface ChatResponse {
   answer?: string;
   message?: string;
   source?: "rag" | "llm" | "assistant";
+  diagram_version_id_used?: string | null;
   [key: string]: unknown;
 }
 
@@ -99,11 +104,29 @@ export const chatApi = createApi({
           : Array.isArray(data?.messages)
             ? data.messages
             : [];
-        return arr.map((m: any) => ({
-          role: m.role === "user" ? "user" : "assistant",
-          message: m.message || m.text || m.content || "",
-          ts: m.ts || m.timestamp || Date.now(),
-        }));
+        return arr.map((m: any) => {
+          const role = m.role === "user" ? "user" : "assistant";
+          const rawDv =
+            m.diagram_version_id_used ??
+            m.diagram_version_id ??
+            m.diagramVersionIdUsed;
+          const diagram_version_id_used =
+            role === "assistant" &&
+            typeof rawDv === "string" &&
+            rawDv.trim().length > 0
+              ? rawDv.trim()
+              : role === "assistant"
+                ? null
+                : undefined;
+          return {
+            role,
+            message: m.message || m.text || m.content || "",
+            ts: m.ts || m.timestamp || Date.now(),
+            ...(role === "assistant"
+              ? { diagram_version_id_used }
+              : {}),
+          };
+        });
       },
       providesTags: (_result, _err, arg) => [
         { type: "ChatMessages", id: `${arg.projectId}-${arg.threadId}` },
@@ -111,7 +134,15 @@ export const chatApi = createApi({
     }),
 
     sendMessage: builder.mutation<ChatResponse, SendMessageArg>({
-      query: ({ projectId, threadId, message, mode, detail, design }) => ({
+      query: ({
+        projectId,
+        threadId,
+        message,
+        mode,
+        detail,
+        design,
+        diagram_version_id,
+      }) => ({
         url: `/api/projects/${projectId}/chats/${threadId}/messages`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,6 +151,9 @@ export const chatApi = createApi({
           mode: mode ?? "default",
           ...(mode === "thinking" && detail ? { detail } : {}),
           ...(design && Object.keys(design).length > 0 ? { design } : {}),
+          ...(diagram_version_id
+            ? { diagram_version_id: diagram_version_id }
+            : {}),
         },
       }),
       transformResponse: (res: unknown) => res as ChatResponse,

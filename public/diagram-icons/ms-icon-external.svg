@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512" role="img" aria-label="External system">
+  <rect width="64" height="64" fill="none"/>
+  <rect x="14" y="16" width="36" height="32" rx="2" fill="none" stroke="#475569" stroke-width="2"/>
+  <line x1="18" y1="24" x2="46" y2="24" stroke="#94a3b8" stroke-width="1.75" stroke-linecap="round"/>
+  <line x1="18" y1="32" x2="40" y2="32" stroke="#94a3b8" stroke-width="1.75" stroke-linecap="round"/>
+  <line x1="18" y1="40" x2="34" y2="40" stroke="#94a3b8" stroke-width="1.75" stroke-linecap="round"/>
+  <rect x="8" y="10" width="48" height="44" rx="3" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 3"/>
+</svg>
