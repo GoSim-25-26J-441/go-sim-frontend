@@ -59,8 +59,19 @@ const TOOL_TO_LABEL_PREFIX: Record<EditTool, string> = {
   "delete-element": "node",
 };
 
+/** Label prefix for `getNextUniqueLabel` when adding/pasting a node of this kind. */
+export const NODE_KIND_TO_LABEL_PREFIX: Record<NodeKind, string> = {
+  SERVICE: "service",
+  API_GATEWAY: "api-gateway",
+  DATABASE: "database",
+  EVENT_TOPIC: "event-topic",
+  EXTERNAL_SYSTEM: "external-system",
+  CLIENT: "client",
+  USER_ACTOR: "user-actor",
+};
+
 /** Returns the next unique label for the given prefix (e.g. "service" -> "service-1", "service-2", …). */
-function getNextUniqueLabel(cy: cytoscape.Core, prefix: string): string {
+export function getNextUniqueLabel(cy: cytoscape.Core, prefix: string): string {
   const labels = new Set<string>();
   cy.nodes().forEach((n) => {
     if ((n as any).hasClass?.("halo")) return;

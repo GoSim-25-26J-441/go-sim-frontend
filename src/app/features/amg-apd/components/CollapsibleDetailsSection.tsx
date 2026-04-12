@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 type Props = {
@@ -9,6 +9,8 @@ type Props = {
   /** Title when expanded */
   expandedTitle: string;
   defaultOpen?: boolean;
+  /** Increment (e.g. from parent) to force this section open — e.g. context menu “Rename”. */
+  forceExpandKey?: number;
   children: React.ReactNode;
   className?: string;
 };
@@ -21,10 +23,15 @@ export default function CollapsibleDetailsSection({
   collapsedLabel,
   expandedTitle,
   defaultOpen = false,
+  forceExpandKey = 0,
   children,
   className = "",
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    if (forceExpandKey > 0) setOpen(true);
+  }, [forceExpandKey]);
 
   return (
     <div

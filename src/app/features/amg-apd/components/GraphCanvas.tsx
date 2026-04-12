@@ -20,6 +20,7 @@ import type {
   DetectionKind,
   CallProtocol,
   Graph,
+  NodeKind,
 } from "@/app/features/amg-apd/types";
 
 import ControlPanel, {
@@ -47,7 +48,12 @@ import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChu
 
 import { useToast } from "@/hooks/useToast";
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
-import { useCyInteractions } from "@/app/features/amg-apd/components/graph/useCyInteractions";
+import {
+  useCyInteractions,
+  getNextUniqueLabel,
+  NODE_KIND_TO_LABEL_PREFIX,
+} from "@/app/features/amg-apd/components/graph/useCyInteractions";
+import { useCyContextMenu } from "@/app/features/amg-apd/components/graph/useCyContextMenu";
 import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyTooltip";
 import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
@@ -77,6 +83,21 @@ function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   if (typeof anyCy.container === "function" && !anyCy.container()) return false;
   return true;
 }
+
+type ContextMenuState =
+  | { type: "node"; nodeId: string; relX: number; relY: number }
+  | {
+      type: "canvas";
+      modelX: number;
+      modelY: number;
+      relX: number;
+      relY: number;
+    };
+
+const CONTEXT_MENU_W = 184;
+const CONTEXT_MENU_H = 148;
+
+type CopiedNodeClipboard = { kind: NodeKind; label: string };
 
 type UndoEntry = {
   nodes: cytoscape.ElementDefinition[];
@@ -138,6 +159,7 @@ export default function GraphCanvas({
   const [layoutName, setLayoutName] = useState<LayoutName>("dagre");
   const [selected, setSelected] = useState<SelectedItem>(null);
   const [editMode, setEditMode] = useState(false);
+  const effectiveEditMode = readOnly ? false : editMode;
   const [tool, setTool] = useState<EditTool>("select");
   const [pendingSource, setPendingSource] = useState<string | null>(null);
   const [defaultCallProtocol, setDefaultCallProtocol] =
@@ -145,6 +167,12 @@ export default function GraphCanvas({
   const [defaultCallSync, setDefaultCallSync] = useState(true);
   const [pendingAntiPatternKind, setPendingAntiPatternKind] =
     useState<DetectionKind | null>(null);
+
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [copiedNode, setCopiedNode] = useState<CopiedNodeClipboard | null>(null);
+  const [renameFocusNonce, setRenameFocusNonce] = useState(0);
+  const [nodeDetailsExpandNonce, setNodeDetailsExpandNonce] = useState(0);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [localAdditions, setLocalAdditions] = useState<
     Array<{
@@ -243,7 +271,7 @@ export default function GraphCanvas({
 
   useCyInteractions({
     cy,
-    editMode,
+    editMode: effectiveEditMode,
     tool,
     pendingSource,
     setPendingSource,
@@ -303,6 +331,86 @@ export default function GraphCanvas({
       });
     },
   });
+
+  const openContextMenuAt = useCallback(
+    (
+      spec:
+        | { type: "node"; nodeId: string }
+        | { type: "canvas"; modelX: number; modelY: number },
+      clientX: number,
+      clientY: number,
+    ) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const relX = Math.min(
+        Math.max(4, clientX - r.left),
+        Math.max(4, el.clientWidth - CONTEXT_MENU_W - 4),
+      );
+      const relY = Math.min(
+        Math.max(4, clientY - r.top),
+        Math.max(4, el.clientHeight - CONTEXT_MENU_H - 4),
+      );
+      if (spec.type === "node") {
+        setContextMenu({
+          type: "node",
+          nodeId: spec.nodeId,
+          relX,
+          relY,
+        });
+      } else {
+        setContextMenu({
+          type: "canvas",
+          modelX: spec.modelX,
+          modelY: spec.modelY,
+          relX,
+          relY,
+        });
+      }
+    },
+    [],
+  );
+
+  const onNodeContextMenuOpen = useCallback(
+    (nodeId: string, clientX: number, clientY: number) => {
+      openContextMenuAt({ type: "node", nodeId }, clientX, clientY);
+    },
+    [openContextMenuAt],
+  );
+
+  const onCanvasContextMenuOpen = useCallback(
+    (modelPos: { x: number; y: number }, clientX: number, clientY: number) => {
+      openContextMenuAt(
+        { type: "canvas", modelX: modelPos.x, modelY: modelPos.y },
+        clientX,
+        clientY,
+      );
+    },
+    [openContextMenuAt],
+  );
+
+  useCyContextMenu({
+    cy,
+    onNodeContext: onNodeContextMenuOpen,
+    onCanvasContext: onCanvasContextMenuOpen,
+  });
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (contextMenuRef.current?.contains(e.target as Node)) return;
+      setContextMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     setStats(computeStatsFromData(analysis));
@@ -481,7 +589,7 @@ export default function GraphCanvas({
   }, [cy, analysis]);
 
   useEffect(() => {
-    if (!editMode) return;
+    if (!effectiveEditMode) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
@@ -503,7 +611,7 @@ export default function GraphCanvas({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editMode, performDelete, performUndo]);
+  }, [effectiveEditMode, performDelete, performUndo]);
 
   useEffect(() => {
     if (!cyAlive(cy)) return;
@@ -551,6 +659,7 @@ export default function GraphCanvas({
     setPendingSource(null);
     setSelected(null);
     setPendingAntiPatternKind(null);
+    setContextMenu(null);
   }
 
   function handleSaveChanges() {
@@ -571,6 +680,7 @@ export default function GraphCanvas({
     setPendingSource(null);
     setSelected(null);
     setPendingAntiPatternKind(null);
+    setContextMenu(null);
 
     if (onGenerateGraph) {
       void Promise.resolve(onGenerateGraph(yaml, nodeLayout)).catch(() => {});
@@ -584,13 +694,31 @@ export default function GraphCanvas({
     );
   }
 
-  function handleRenameNode(id: string, newLabel: string) {
-    if (!cyAlive(cy)) return;
-    const trimmed = newLabel.trim();
-    if (!trimmed) return;
+  function patchSelectedNodeLabel(nodeId: string, label: string) {
+    setSelected((prev) => {
+      if (!prev || prev.type !== "node") return prev;
+      if ((prev.data.id as string) !== nodeId) return prev;
+      return { type: "node", data: { ...prev.data, label } };
+    });
+  }
 
+  function handleRenameNodeLive(id: string, value: string) {
+    if (!cyAlive(cy)) return;
     const node = cy.getElementById(id);
     if (node.empty()) return;
+    const next = value.length === 0 ? id : value;
+    node.data("label", next);
+    patchSelectedNodeLabel(id, next);
+  }
+
+  /** Validates duplicate names; returns false if the name is taken by another node. */
+  function handleRenameNode(id: string, newLabel: string): boolean {
+    if (!cyAlive(cy)) return false;
+    const trimmed = newLabel.trim();
+    if (!trimmed) return false;
+
+    const node = cy.getElementById(id);
+    if (node.empty()) return false;
 
     const existing = new Set<string>();
     cy.nodes().forEach((n) => {
@@ -605,9 +733,95 @@ export default function GraphCanvas({
       } else {
         alert(`Sorry, "${trimmed}" already exists. Please choose a different name.`);
       }
-      return;
+      return false;
     }
     node.data("label", trimmed);
+    patchSelectedNodeLabel(id, trimmed);
+    return true;
+  }
+
+  function handleContextRename(nodeId: string) {
+    if (!cyAlive(cy)) return;
+    const node = cy.getElementById(nodeId);
+    if (node.empty()) return;
+    try {
+      cy.elements().unselect();
+      node.select();
+      setSelected({ type: "node", data: node.data() });
+    } catch {}
+    setRightPanelCollapsed(false);
+    setNodeDetailsExpandNonce((n) => n + 1);
+    setContextMenu(null);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setRenameFocusNonce((n) => n + 1);
+      });
+    });
+  }
+
+  function handleContextAddConnection(nodeId: string) {
+    if (!cyAlive(cy)) return;
+    setTool("connect-calls");
+    setPendingAntiPatternKind(null);
+    setPendingSource(nodeId);
+    const node = cy.getElementById(nodeId);
+    if (node.empty()) return;
+    try {
+      cy.elements().unselect();
+      node.select();
+      setSelected({ type: "node", data: node.data() });
+    } catch {}
+    setContextMenu(null);
+  }
+
+  function handleContextCopyNode(nodeId: string) {
+    if (!cyAlive(cy)) return;
+    const node = cy.getElementById(nodeId);
+    if (node.empty()) return;
+    const kind = (node.data("kind") as NodeKind) || "SERVICE";
+    const label = String(node.data("label") ?? "").trim() || nodeId;
+    setCopiedNode({ kind, label });
+    setContextMenu(null);
+  }
+
+  function handleContextPaste() {
+    if (
+      !effectiveEditMode ||
+      !cyAlive(cy) ||
+      !copiedNode ||
+      contextMenu?.type !== "canvas"
+    )
+      return;
+    const prefix = NODE_KIND_TO_LABEL_PREFIX[copiedNode.kind];
+    const label = getNextUniqueLabel(cy, prefix);
+    const idBase = prefix.replace(/-/g, "_");
+    const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 6)}`;
+    const pos = { x: contextMenu.modelX, y: contextMenu.modelY };
+    cy.batch(() => {
+      cy.add({
+        group: "nodes",
+        data: { id, label, kind: copiedNode.kind },
+        position: pos,
+        grabbable: true,
+        selectable: true,
+        locked: false,
+      } as any);
+    });
+    const node = cy.getElementById(id);
+    if (!node.empty()) {
+      try {
+        node.unlock();
+        node.grabify();
+        node.selectify();
+        cy.elements().unselect();
+        node.select();
+        setSelected({ type: "node", data: node.data() });
+      } catch {}
+    }
+    setContextMenu(null);
+    recomputeStats(cy, analysis, setStats);
   }
 
   function callEdgeLabel(protocol: string, sync: boolean): string {
@@ -649,7 +863,7 @@ export default function GraphCanvas({
         onLayoutChange={setLayoutName}
         onFit={handleFit}
         stats={stats}
-        editMode={readOnly ? false : editMode}
+        editMode={effectiveEditMode}
         onToggleEdit={handleToggleEdit}
         onSaveChanges={handleSaveChanges}
         data={analysis}
@@ -659,7 +873,7 @@ export default function GraphCanvas({
 
       <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden items-start">
         {!readOnly &&
-          editMode &&
+          effectiveEditMode &&
             (leftPanelCollapsed ? (
             <div className="w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2 relative z-10">
               <button
@@ -704,7 +918,7 @@ export default function GraphCanvas({
               </div>
               <div className="flex min-h-0 flex-1 w-full flex-col">
                 <EditToolbar
-                  editMode={editMode}
+                  editMode={effectiveEditMode}
                   tool={tool}
                   pendingSourceId={pendingSource}
                   onToolChange={handleToolChange}
@@ -725,6 +939,9 @@ export default function GraphCanvas({
         <div
           ref={containerRef}
           className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+          onContextMenu={(e) => {
+            e.preventDefault();
+          }}
         >
           <CytoscapeComponent
             cy={(c) => {
@@ -754,6 +971,78 @@ export default function GraphCanvas({
           <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
           <NodeDualLineLabels cy={cy} containerEl={containerRef.current} />
           <NodeColorIndicators cy={cy} containerEl={containerRef.current} />
+
+          {contextMenu && (
+            <div
+              ref={contextMenuRef}
+              role="menu"
+              className="absolute z-300 min-w-44 rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-xl"
+              style={{
+                left: contextMenu.relX,
+                top: contextMenu.relY,
+                maxWidth: CONTEXT_MENU_W,
+              }}
+            >
+              {!effectiveEditMode && (
+                <div className="mx-1 mb-1 rounded border border-slate-600/80 bg-slate-800/90 px-2 py-1.5 text-[10px] leading-snug text-slate-400">
+                  Only available in edit mode.
+                </div>
+              )}
+
+              {contextMenu.type === "node" && (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!effectiveEditMode}
+                    className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() =>
+                      effectiveEditMode &&
+                      handleContextRename(contextMenu.nodeId)
+                    }
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!effectiveEditMode}
+                    className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() =>
+                      effectiveEditMode &&
+                      handleContextAddConnection(contextMenu.nodeId)
+                    }
+                  >
+                    Add connection
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!effectiveEditMode}
+                    className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() =>
+                      effectiveEditMode &&
+                      handleContextCopyNode(contextMenu.nodeId)
+                    }
+                  >
+                    Copy
+                  </button>
+                </>
+              )}
+
+              {contextMenu.type === "canvas" && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!effectiveEditMode || !copiedNode}
+                  className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={() => effectiveEditMode && copiedNode && handleContextPaste()}
+                >
+                  Paste
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {!readOnly &&
@@ -801,23 +1090,26 @@ export default function GraphCanvas({
                         ? "Connection details"
                         : "Selection"
                   }
+                  forceExpandKey={nodeDetailsExpandNonce}
                 >
                   <SelectionDetailsMain
                     data={analysis}
                     selected={selected}
-                    editMode={editMode}
+                    editMode={effectiveEditMode}
+                    renameFocusNonce={renameFocusNonce}
                     onRenameNode={handleRenameNode}
+                    onRenameNodeLive={handleRenameNodeLive}
                     onUpdateEdge={handleUpdateEdge}
                   />
                 </CollapsibleDetailsSection>
 
-                {!readOnly && editMode && (
+                {!readOnly && effectiveEditMode && (
                   <CollapsibleDetailsSection
                     collapsedLabel="Show connection tools"
                     expandedTitle="Connection tools"
                   >
                     <ConnectionsToolsPanel
-                      editMode={editMode}
+                      editMode={effectiveEditMode}
                       currentTool={tool}
                       onToolChange={handleToolChange}
                       defaultCallProtocol={defaultCallProtocol}

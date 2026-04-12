@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import type {
   AnalysisResult,
   Detection,
@@ -134,8 +134,12 @@ type SelectionProps = {
   data: AnalysisResult;
   selected: SelectedItem;
   editMode: boolean;
-  onRenameNode: (id: string, newLabel: string) => void;
+  onRenameNode: (id: string, newLabel: string) => boolean;
+  /** Updates the canvas label on every keystroke (no duplicate check). */
+  onRenameNodeLive?: (id: string, value: string) => void;
   onUpdateEdge?: (edgeId: string, attrs: { kind: CallProtocol; sync: boolean }) => void;
+  /** Increment from parent (e.g. context menu “Rename”) to focus the node name field. */
+  renameFocusNonce?: number;
 };
 
 /** Node / edge / empty selection — without anti-pattern list or Calls toolbox. */
@@ -144,7 +148,9 @@ export function SelectionDetailsMain({
   selected,
   editMode,
   onRenameNode,
+  onRenameNodeLive,
   onUpdateEdge,
+  renameFocusNonce = 0,
 }: SelectionProps) {
   const detections = useMemo(
     () => detectionsForSelection(data, selected),
@@ -164,20 +170,35 @@ export function SelectionDetailsMain({
       nodeFromGraph?.kind ??
       (selected!.data.kind as NodeKind | undefined) ??
       "SERVICE";
+    /* Canvas `data(label)` is updated on rename; `graph.nodes[].name` stays stale until save. */
+    const labelFromSelection = selected!.data.label as string | undefined;
     computedInitialName =
+      (typeof labelFromSelection === "string" && labelFromSelection.length > 0
+        ? labelFromSelection
+        : undefined) ??
       nodeFromGraph?.name ??
-      (selected!.data.label as string | undefined) ??
       nodeId;
     nodeAttrs = nodeFromGraph?.attrs ?? {};
   }
 
   const [name, setName] = useState(computedInitialName);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const labelBackupRef = useRef("");
 
   useEffect(() => {
     if (isNode) {
       setName(computedInitialName);
     }
   }, [isNode, computedInitialName]);
+
+  useEffect(() => {
+    if (!editMode || !isNode || !nodeId || !renameFocusNonce) return;
+    const id = requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [renameFocusNonce, editMode, isNode, nodeId]);
 
   const NODE_KIND_LABEL: Record<NodeKind, string> = {
     SERVICE: "Service",
@@ -223,28 +244,33 @@ export function SelectionDetailsMain({
                 {NODE_KIND_LABEL[nodeKind] ?? nodeKind}
               </div>
               {showRename ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const trimmed = name.trim() || nodeId;
-                    onRenameNode(nodeId, trimmed);
-                    setName(trimmed);
-                  }}
-                  className="flex items-center gap-2"
-                >
+                <div className="flex min-w-0 flex-1">
                   <input
-                    className="w-40 rounded-lg border border-white/15 bg-gray-900 px-2.5 py-1.5 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                    ref={renameInputRef}
+                    className="min-w-0 max-w-full flex-1 rounded-lg border border-white/15 bg-gray-900 px-2.5 py-1.5 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setName(v);
+                      onRenameNodeLive?.(nodeId, v);
+                    }}
+                    onFocus={() => {
+                      labelBackupRef.current = name;
+                    }}
+                    onBlur={() => {
+                      const trimmed = name.trim() || nodeId;
+                      const ok = onRenameNode(nodeId, trimmed);
+                      if (!ok) {
+                        const revert = labelBackupRef.current;
+                        setName(revert);
+                        onRenameNodeLive?.(nodeId, revert);
+                      } else {
+                        setName(trimmed);
+                      }
+                    }}
                     placeholder="Node name"
                   />
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-[#9AA4B2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#9AA4B2]/90 transition-colors"
-                  >
-                    Rename
-                  </button>
-                </form>
+                </div>
               ) : (
                 <div className="text-sm font-semibold text-white">{toDisplayName(name)}</div>
               )}
