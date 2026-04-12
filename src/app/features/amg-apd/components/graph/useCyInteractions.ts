@@ -198,6 +198,7 @@ export function useCyInteractions({
           target: targetId,
           kind: edgeKind,
           label,
+          callSync: defaultCallSync,
           attrs: {
             kind: defaultCallProtocol,
             dep_kind: defaultCallProtocol,
@@ -205,7 +206,7 @@ export function useCyInteractions({
           },
         };
 
-        cy.add({ group: "edges", data: edgeData });
+        cy.add({ group: "edges", data: edgeData, classes: "calls" });
 
         setPendingSource(null);
         safeUnselectAll();

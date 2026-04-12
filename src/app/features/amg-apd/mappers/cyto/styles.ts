@@ -6,6 +6,18 @@ import { gradientStops } from "./svg";
 
 type StylesheetLike = Array<{ selector: string; style: Record<string, any> }>;
 
+/** Stroke is half prior widths; `arrow-scale` compensates so heads stay the same visual size. */
+const EDGE_STROKE = {
+  default: 1.25,
+  high: 1.25,
+  medium: 1.25,
+  low: 1.25,
+} as const;
+/** Default Cytoscape arrow-scale is 1; doubling offsets halved stroke for same head size. */
+const ARROW_SCALE_NON_CALLS = 2;
+/** Prior CALLS used 0.62; ×2 matches halved stroke. */
+const ARROW_SCALE_CALLS = 0.64;
+
 const EDGE_KIND_COLOR: Record<string, string> = {
   CALLS: "#1f2937",
   READS: "#06b6d4",
@@ -124,7 +136,8 @@ export const cyStyles: StylesheetLike = [
       "target-arrow-opacity": 1,
       "line-color": "#1f2937",
       "target-arrow-color": "#1f2937",
-      width: 2.5,
+      width: EDGE_STROKE.default,
+      "arrow-scale": ARROW_SCALE_NON_CALLS,
       opacity: 1,
       events: "yes",
       "z-index": 8,
@@ -173,14 +186,30 @@ export const cyStyles: StylesheetLike = [
 
       width: (ele: any) => {
         const severity = ele.data("severity") as Severity | null;
-        if (!severity) return 2.5;
-        return severity === "HIGH" ? 5 : severity === "MEDIUM" ? 4 : 3;
+        if (!severity) return EDGE_STROKE.default;
+        if (severity === "HIGH") return EDGE_STROKE.high;
+        if (severity === "MEDIUM") return EDGE_STROKE.medium;
+        return EDGE_STROKE.low;
       },
+    },
+  },
+
+  {
+    /* Data selector so CALLS styling applies even if the `calls` class is missing (e.g. added in edit mode). */
+    selector: 'edge[kind = "CALLS"]',
+    style: {
+      "arrow-scale": ARROW_SCALE_CALLS,
+      "font-size": 6,
+      "min-zoomed-font-size": 6,
+      "text-background-padding": 1,
+      /* Offset label perpendicular to the edge so it does not sit on the stroke */
+      "edge-text-rotation": "autorotate",
+      "text-margin-y": -12,
     },
   },
 
   { selector: "edge.reads", style: { "line-style": "dashed" } },
   { selector: ".has-detection-edge", style: { "line-style": "solid" } },
-  { selector: "edge:hover", style: { cursor: "pointer", width: 4 } },
-  { selector: "edge:selected", style: { "z-index": 9998, width: 4 } },
+  { selector: "edge:hover", style: { cursor: "pointer" } },
+  { selector: "edge:selected", style: { "z-index": 9998 } },
 ];

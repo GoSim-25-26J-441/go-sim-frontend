@@ -330,10 +330,11 @@ export function SelectionDetailsMain({
     (selected.data.kind as EdgeKind | undefined) ??
     "CALLS";
 
-  const rawAttrs =
-    edgeFromGraph?.attrs ??
-    (selected.data.attrs as Record<string, any> | undefined) ??
-    {};
+  /* Live canvas attrs (when edited) must win over static analysis `edgeFromGraph`. */
+  const rawAttrs = {
+    ...(edgeFromGraph?.attrs ?? {}),
+    ...((selected.data.attrs as Record<string, any> | undefined) ?? {}),
+  };
   const attrs = rawAttrs || {};
 
   const endpoints = Array.isArray(attrs.endpoints)
@@ -354,7 +355,12 @@ export function SelectionDetailsMain({
       : (typeof attrs.dep_kind === "string" && (attrs.dep_kind === "rest" || attrs.dep_kind === "grpc" || attrs.dep_kind === "event"))
       ? attrs.dep_kind
       : "rest";
-  const callSync = typeof attrs.sync === "boolean" ? attrs.sync : true;
+  const callSync =
+    typeof (selected.data as { callSync?: boolean }).callSync === "boolean"
+      ? (selected.data as { callSync: boolean }).callSync
+      : typeof attrs.sync === "boolean"
+        ? attrs.sync
+        : true;
   const protocolLabel = callProtocol === "grpc" ? "gRPC" : callProtocol === "event" ? "Event" : "REST";
   const firstDetectionColor = detections.length > 0
     ? colorForDetectionKind(normalizeDetectionKind((detections[0] as any).kind) ?? "")

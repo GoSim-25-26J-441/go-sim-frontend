@@ -66,12 +66,14 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     const attrs = e?.attrs ?? {};
     let label = e?.kind ?? "";
 
+    let callSync: boolean | undefined;
     if (e?.kind === "CALLS") {
       const protocol =
         (typeof attrs.dep_kind === "string" && attrs.dep_kind.trim()) ||
         (typeof attrs.kind === "string" && attrs.kind.trim()) ||
         "rest";
       const sync = typeof attrs.sync === "boolean" ? attrs.sync : true;
+      callSync = sync;
       const protocolDisplay =
         protocol === "grpc" ? "gRPC" : protocol === "event" ? "Event" : "REST";
       const syncLabel = sync ? "sync" : "async";
@@ -111,6 +113,7 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
         kind: e?.kind ?? "",
         edgeIndex: i,
         attrs,
+        ...(callSync !== undefined ? { callSync } : {}),
         severity: meta?.severity ?? null,
         primaryDetectionKind,
         detectionKinds: kinds,

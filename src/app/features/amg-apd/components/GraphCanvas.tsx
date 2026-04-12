@@ -58,6 +58,7 @@ import { useCyTooltip } from "@/app/features/amg-apd/components/graph/useCyToolt
 import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
 import NodeDualLineLabels from "@/app/features/amg-apd/components/graph/NodeDualLineLabels";
+import EdgeCallFlowBolts from "@/app/features/amg-apd/components/graph/EdgeCallFlowBolts";
 import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import {
   ChevronLeft,
@@ -849,9 +850,24 @@ export default function GraphCanvas({
       };
 
       edge.data("attrs", newAttrs);
+      edge.data("callSync", attrs.sync);
       edge.data("label", callEdgeLabel(attrs.kind, attrs.sync));
+
+      setSelected((prev) => {
+        if (prev?.type !== "edge") return prev;
+        if ((prev.data.id as string) !== edgeId) return prev;
+        const d = edge.data() as Record<string, unknown>;
+        const mc = (prev.data as { _multiCount?: number })._multiCount;
+        return {
+          type: "edge",
+          data:
+            typeof mc === "number"
+              ? { ...d, _multiCount: mc }
+              : { ...d },
+        };
+      });
     },
-    [cy],
+    [cy, setSelected],
   );
 
   return (
@@ -968,6 +984,7 @@ export default function GraphCanvas({
             wheelSensitivity={0.2}
           />
 
+          <EdgeCallFlowBolts cy={cy} containerEl={containerRef.current} />
           <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
           <NodeDualLineLabels cy={cy} containerEl={containerRef.current} />
           <NodeColorIndicators cy={cy} containerEl={containerRef.current} />
