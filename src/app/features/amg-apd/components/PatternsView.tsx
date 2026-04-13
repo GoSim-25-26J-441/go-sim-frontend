@@ -44,6 +44,8 @@ export default function PatternsView({
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const regenerating = useAmgApdStore((s) => s.regenerating);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const commitGraphBaseline = useAmgApdStore((s) => s.commitGraphBaseline);
+  const resetGraphBaseline = useAmgApdStore((s) => s.resetGraphBaseline);
   const { userId } = useAuth();
 
   const showToast = useToast((s) => s.showToast);
@@ -59,7 +61,6 @@ export default function PatternsView({
   const [applyLoading, setApplyLoading] = useState(false);
   const [sugs, setSugs] = useState<Suggestion[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [graphRegenerating, setGraphRegenerating] = useState(false);
   const [graphVersion, setGraphVersion] = useState(0);
   const [versionCount, setVersionCount] = useState<number | null>(null);
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
@@ -80,7 +81,16 @@ export default function PatternsView({
   const restoreStartedRef = useRef(false);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
-  const showGraphOverlay = graphRegenerating || regenerating;
+
+  function handleResetCanvas() {
+    const ok = resetGraphBaseline();
+    if (ok) {
+      setGraphVersion((v) => v + 1);
+      showToast("Graph reset to the last saved version", "success");
+    } else {
+      showToast("No saved baseline to reset to yet.", "warning");
+    }
+  }
 
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
@@ -195,13 +205,28 @@ export default function PatternsView({
 
         setLast(data);
         setEditedYaml(yamlContent);
+        commitGraphBaseline();
       } catch {
         // Leave graph empty
       } finally {
         setRegenerating(false);
       }
     })();
-  }, [last?.graph, projectId, setLast, setEditedYaml, setRegenerating]);
+  }, [
+    last?.graph,
+    projectId,
+    setLast,
+    setEditedYaml,
+    setRegenerating,
+    commitGraphBaseline,
+  ]);
+
+  /** Baseline is not persisted; seed it when session storage rehydrates `last` + YAML. */
+  useEffect(() => {
+    if (!last?.graph || editedYaml == null || editedYaml === "") return;
+    const st = useAmgApdStore.getState();
+    if (!st.baselineLast?.graph) st.commitGraphBaseline();
+  }, [last?.graph, last?.version_id, editedYaml]);
 
   useEffect(() => {
     if (!last?.graph) return;
@@ -417,11 +442,10 @@ export default function PatternsView({
           nodeLayout,
         );
         setLast(saved);
-        setGraphRegenerating(true);
+        commitGraphBaseline();
         setGraphVersion((v) => v + 1);
         await refetchVersions();
         setVersionsRefreshTrigger((t) => t + 1);
-        setTimeout(() => setGraphRegenerating(false), 400);
         showToast("Suggestions applied successfully", "success");
       } catch (e: any) {
         setErr(e?.message ?? "Failed to save as new version");
@@ -455,6 +479,7 @@ export default function PatternsView({
       );
       setLast(data);
       setEditedYaml(yaml);
+      commitGraphBaseline();
       setGraphVersion((v) => v + 1);
       await refetchVersions();
       setVersionsRefreshTrigger((t) => t + 1);
@@ -478,6 +503,7 @@ export default function PatternsView({
         "Failed to generate graph: " + (err?.message ?? "Unknown error"),
         "error",
       );
+      throw err;
     } finally {
       setRegenerating(false);
     }
@@ -684,27 +710,41 @@ export default function PatternsView({
         </div>
       </div>
 
-      <div className="bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0">
-        {showGraphOverlay ? (
-          <div className="relative flex-1 min-h-[50vh] flex items-center justify-center bg-black/30">
-            <div className="flex flex-col items-center gap-4">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
-              <span className="text-sm font-medium text-white/90">
-                Regenerating graph…
-              </span>
-              <span className="text-xs text-white/50">
-                {regenerating
-                  ? "Loading YAML, building graph, and detecting anti-patterns"
-                  : "Applying fixes and updating visualization"}
-              </span>
+      <div className="relative w-full min-w-0">
+        {fullscreenOpen && (
+          <div
+            className="min-h-[min(600px,70vh)] rounded-xl border border-white/5 bg-card/30"
+            aria-hidden
+          />
+        )}
+        <div
+          className={
+            fullscreenOpen
+              ? "fixed inset-0 z-[99998] flex flex-col gap-1.5 bg-slate-950 p-2 sm:p-2.5 min-w-0"
+              : "bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0"
+          }
+        >
+          {fullscreenOpen && (
+            <div className="shrink-0 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/75 px-2.5 py-1.5 sm:px-3 sm:py-2">
+              <Legend
+                versionCount={versionCount ?? undefined}
+                showNodeTypes={false}
+              />
             </div>
-          </div>
-        ) : (
-          <div className="flex-1 min-h-0 flex flex-col">
+          )}
+          <div
+            className={
+              fullscreenOpen
+                ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-card/80 backdrop-blur-sm"
+                : "flex-1 min-h-0 flex flex-col"
+            }
+          >
             <GraphCanvas
               key={`amg-apd-graph-v${graphVersion}`}
               data={last}
               isGenerating={regenerating}
+              showRegeneratingOverlay={regenerating}
+              layoutMode={fullscreenOpen ? "fullscreen" : "default"}
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
@@ -713,56 +753,19 @@ export default function PatternsView({
               }}
               onDuplicateName={(name) => setDuplicateNameForModal(name)}
               onGenerateGraph={(yaml, nodeLayout) =>
-                generateGraphFromYaml(yaml, nodeLayout)
+                generateGraphFromYaml(yaml, nodeLayout, {
+                  exitFullscreenAfterSuccess: fullscreenOpen,
+                })
               }
+              onResetCanvas={handleResetCanvas}
               fullscreenButton={{
-                onClick: () => setFullscreenOpen(true),
-                isFullscreen: false,
+                onClick: () => setFullscreenOpen((o) => !o),
+                isFullscreen: fullscreenOpen,
               }}
             />
           </div>
-        )}
+        </div>
       </div>
-
-      {fullscreenOpen &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div className="fixed inset-0 z-[99998] bg-slate-950">
-            <div className="flex h-full min-h-0 flex-col gap-1.5 p-2 sm:p-2.5">
-              <div className="shrink-0 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/75 px-2.5 py-1.5 sm:px-3 sm:py-2">
-                <Legend
-                  versionCount={versionCount ?? undefined}
-                  showNodeTypes={false}
-                />
-              </div>
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-card/80 backdrop-blur-sm">
-                <GraphCanvas
-                  key={`amg-apd-graph-full-v${graphVersion}`}
-                  data={last}
-                  isGenerating={regenerating}
-                  layoutMode="fullscreen"
-                  onExportImageReady={(fn) => {
-                    exportImageRef.current = fn;
-                  }}
-                  onExportGraphJsonReady={(getGraph) => {
-                    exportGraphJsonRef.current = getGraph;
-                  }}
-                  onDuplicateName={(name) => setDuplicateNameForModal(name)}
-                  onGenerateGraph={(yaml, nodeLayout) =>
-                    generateGraphFromYaml(yaml, nodeLayout, {
-                      exitFullscreenAfterSuccess: true,
-                    })
-                  }
-                  fullscreenButton={{
-                    onClick: () => setFullscreenOpen(false),
-                    isFullscreen: true,
-                  }}
-                />
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
 
       {fullscreenGenPhase &&
         typeof document !== "undefined" &&

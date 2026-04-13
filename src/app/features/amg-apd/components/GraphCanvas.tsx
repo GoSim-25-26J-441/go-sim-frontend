@@ -137,16 +137,20 @@ export default function GraphCanvas({
   data,
   readOnly = false,
   isGenerating = false,
+  showRegeneratingOverlay = false,
   layoutMode = "default",
   onGenerateGraph,
   onExportImageReady,
   onExportGraphJsonReady,
   onDuplicateName,
+  onResetCanvas,
   fullscreenButton,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
+  /** Spinner over the graph workspace without unmounting Cytoscape (keeps edits). */
+  showRegeneratingOverlay?: boolean;
   layoutMode?: "default" | "fullscreen";
   fullscreenButton?: {
     onClick: () => void;
@@ -156,6 +160,8 @@ export default function GraphCanvas({
     yaml: string,
     nodeLayout?: NodeLayoutPayload,
   ) => void | Promise<void>;
+  /** Restore graph + YAML to last committed baseline (Patterns view). */
+  onResetCanvas?: () => void;
   /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
   onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
   /** Called when cy is ready; parent can call getter to export graph JSON including node x/y from the canvas */
@@ -792,7 +798,7 @@ export default function GraphCanvas({
     setContextMenu(null);
   }
 
-  function handleSaveChanges() {
+  async function handleSaveChanges() {
     if (!cyAlive(cy)) return;
 
     const error = validateGraphForSave(cy);
@@ -805,17 +811,27 @@ export default function GraphCanvas({
     const nodeLayout = nodeLayoutPayloadFromGraph(exportGraphJsonFromCy(cy));
     setEditedYaml(yaml);
 
+    if (onGenerateGraph) {
+      try {
+        await Promise.resolve(onGenerateGraph(yaml, nodeLayout));
+        setEditMode(false);
+        setTool("select");
+        setPendingSource(null);
+        setSelected(null);
+        setPendingAntiPatternKind(null);
+        setContextMenu(null);
+      } catch {
+        /* Parent already toasts; keep edit mode and canvas state */
+      }
+      return;
+    }
+
     setEditMode(false);
     setTool("select");
     setPendingSource(null);
     setSelected(null);
     setPendingAntiPatternKind(null);
     setContextMenu(null);
-
-    if (onGenerateGraph) {
-      void Promise.resolve(onGenerateGraph(yaml, nodeLayout)).catch(() => {});
-      return;
-    }
 
     // No callback: user is in a context where regenerate is not available (e.g. compare view)
     showToast(
@@ -1034,16 +1050,33 @@ export default function GraphCanvas({
         stats={stats}
         editMode={effectiveEditMode}
         onToggleEdit={handleToggleEdit}
-        onSaveChanges={handleSaveChanges}
+        onSaveChanges={() => void handleSaveChanges()}
         data={analysis}
         isGenerating={isGenerating}
         readOnly={readOnly}
+        onResetCanvas={onResetCanvas}
+        resetDisabled={isGenerating}
         fullscreenButton={fullscreenButton}
       />
 
       <div
         className={`flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden ${layoutMode === "fullscreen" ? "items-stretch" : "items-start"}`}
       >
+        {showRegeneratingOverlay && (
+          <div
+            className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/35 backdrop-blur-[2px]"
+            aria-busy
+            aria-live="polite"
+          >
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
+            <span className="text-sm font-medium text-white/90">
+              Regenerating graph…
+            </span>
+            <span className="text-xs text-white/50 px-4 text-center max-w-sm">
+              Loading YAML, building graph, and detecting anti-patterns
+            </span>
+          </div>
+        )}
         {!readOnly &&
           effectiveEditMode &&
             (leftPanelCollapsed ? (
@@ -1376,6 +1409,7 @@ export default function GraphCanvas({
                 <CollapsibleDetailsSection
                   collapsedLabel="Show anti-pattern details"
                   expandedTitle="Anti-pattern details"
+                  className="!border-white/10 !bg-gray-900/55 !shadow-none !ring-1 !ring-white/10"
                 >
                   <AntiPatternDetailsPanel
                     data={analysis}

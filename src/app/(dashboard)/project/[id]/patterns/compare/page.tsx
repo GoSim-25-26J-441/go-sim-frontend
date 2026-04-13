@@ -51,11 +51,14 @@ export default function ProjectPatternsComparePage({
   const [loadingVersions, setLoadingVersions] = useState(true);
   const [leftId, setLeftId] = useState("");
   const [rightId, setRightId] = useState("");
-  const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(
+    null,
+  );
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [simulationModalOpen, setSimulationModalOpen] = useState(false);
-  const [simulationSelectedVersion, setSimulationSelectedVersion] = useState("");
+  const [simulationSelectedVersion, setSimulationSelectedVersion] =
+    useState("");
   const exportLeftGraphRef = useRef<(() => Graph | null) | null>(null);
   const exportRightGraphRef = useRef<(() => Graph | null) | null>(null);
   const exportLeftImageRef = useRef<
@@ -131,7 +134,9 @@ export default function ProjectPatternsComparePage({
       }
     : null;
 
-  const patternsHref = projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns";
+  const patternsHref = projectId
+    ? `/project/${projectId}/patterns`
+    : "/dashboard/patterns";
 
   function downloadCompareJson(side: "left" | "right") {
     if (!compareResult) return;
@@ -253,15 +258,15 @@ export default function ProjectPatternsComparePage({
         </button>
       </div>
 
-      <div className="min-w-0 flex flex-col gap-6 flex-1 min-h-[calc(100dvh-280px)] max-w-[1600px] mx-auto">
-        <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-6 shadow-xl shadow-black/20 flex-shrink-0">
+      <div className="min-w-0 flex flex-col gap-6 flex-1 min-h-[calc(100dvh-280px)] max-w-400 mx-auto">
+        <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-6 shadow-xl shadow-black/20 shrink-0">
           <div className="flex flex-wrap items-end justify-center gap-5">
             <div className="flex flex-col gap-2">
               <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
                 Left version
               </label>
               <select
-                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
+                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-55 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 scheme-dark"
                 value={leftId}
                 onChange={(e) => setLeftId(e.target.value)}
                 disabled={loadingVersions}
@@ -279,7 +284,7 @@ export default function ProjectPatternsComparePage({
                 Right version
               </label>
               <select
-                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 [color-scheme:dark]"
+                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-55 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 scheme-dark"
                 value={rightId}
                 onChange={(e) => setRightId(e.target.value)}
                 disabled={loadingVersions}
@@ -324,18 +329,18 @@ export default function ProjectPatternsComparePage({
             ).map(([kind, side, onClick]) => {
               const sideLabel = side === "left" ? "Left" : "Right";
               return (
-              <button
-                key={`${kind}-${side}`}
-                type="button"
-                disabled={!compareResult}
-                onClick={onClick}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
-              >
-                {kind === "json" && `Download JSON ${sideLabel}`}
-                {kind === "yaml" && `Download YAML ${sideLabel}`}
-                {kind === "image" && `Download Image ${sideLabel}`}
-              </button>
-            );
+                <button
+                  key={`${kind}-${side}`}
+                  type="button"
+                  disabled={!compareResult}
+                  onClick={onClick}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                >
+                  {kind === "json" && `Download JSON ${sideLabel}`}
+                  {kind === "yaml" && `Download YAML ${sideLabel}`}
+                  {kind === "image" && `Download Image ${sideLabel}`}
+                </button>
+              );
             })}
             <button
               type="button"
@@ -347,126 +352,126 @@ export default function ProjectPatternsComparePage({
           </div>
         </div>
 
-      {simulationModalOpen && (
-        <div
-          className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          onClick={(e) =>
-            e.target === e.currentTarget && setSimulationModalOpen(false)
-          }
-        >
+        {simulationModalOpen && (
           <div
-            className="w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-sm p-6 shadow-xl shadow-black/30"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={(e) =>
+              e.target === e.currentTarget && setSimulationModalOpen(false)
+            }
           >
-            <h3 className="text-lg font-semibold text-white mb-1">
-              Proceed to Performance Simulation
-            </h3>
-            <p className="text-sm text-white/60 mb-4">
-              Select which version to use for the simulation.
-            </p>
+            <div
+              className="w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-sm p-6 shadow-xl shadow-black/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold text-white mb-1">
+                Proceed to Performance Simulation
+              </h3>
+              <p className="text-sm text-white/60 mb-4">
+                Select which version to use for the simulation.
+              </p>
 
-            <div className="flex flex-col gap-2 mb-4">
-              <label className="text-xs font-semibold text-[#9AA4B2] uppercase tracking-wider">
-                Version
-              </label>
-              <select
-                className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white scheme-dark focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
-                value={simulationSelectedVersion}
-                onChange={(e) => setSimulationSelectedVersion(e.target.value)}
-              >
-                <option value="">Select version…</option>
-                {versions.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    #{v.version_number} {v.title || "Untitled"}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div className="flex flex-col gap-2 mb-4">
+                <label className="text-xs font-semibold text-[#9AA4B2] uppercase tracking-wider">
+                  Version
+                </label>
+                <select
+                  className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white scheme-dark focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                  value={simulationSelectedVersion}
+                  onChange={(e) => setSimulationSelectedVersion(e.target.value)}
+                >
+                  <option value="">Select version…</option>
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      #{v.version_number} {v.title || "Untitled"}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setSimulationModalOpen(false)}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSimulationConfirm}
-                disabled={!simulationSelectedVersion}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Proceed
-              </button>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSimulationModalOpen(false)}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSimulationConfirm}
+                  disabled={!simulationSelectedVersion}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Proceed
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300 flex-shrink-0">
-          {error}
-        </div>
-      )}
+        {error && (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300 shrink-0">
+            {error}
+          </div>
+        )}
 
-      {compareResult && leftData && rightData && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
-          <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
-            <div className="border-b border-white/10 bg-white/5 px-5 py-3 flex-shrink-0">
-              <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
-                Left
-              </span>
-              <span className="text-sm font-semibold text-white">
-                #{compareResult.left.version_number}{" "}
-                {compareResult.left.title || "Version"}
-              </span>
+        {compareResult && leftData && rightData && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
+            <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
+              <div className="border-b border-white/10 bg-white/5 px-5 py-3 shrink-0">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
+                  Left
+                </span>
+                <span className="text-sm font-semibold text-white">
+                  #{compareResult.left.version_number}{" "}
+                  {compareResult.left.title || "Version"}
+                </span>
+              </div>
+              <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
+                <GraphCanvas
+                  data={leftData}
+                  readOnly
+                  onExportImageReady={(exportPng) => {
+                    exportLeftImageRef.current = exportPng;
+                  }}
+                  onExportGraphJsonReady={(getGraph) => {
+                    exportLeftGraphRef.current = getGraph;
+                  }}
+                />
+              </div>
             </div>
-            <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
-              <GraphCanvas
-                data={leftData}
-                readOnly
-                onExportImageReady={(exportPng) => {
-                  exportLeftImageRef.current = exportPng;
-                }}
-                onExportGraphJsonReady={(getGraph) => {
-                  exportLeftGraphRef.current = getGraph;
-                }}
-              />
+            <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
+              <div className="border-b border-white/10 bg-white/5 px-5 py-3 shrink-0">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
+                  Right
+                </span>
+                <span className="text-sm font-semibold text-white">
+                  #{compareResult.right.version_number}{" "}
+                  {compareResult.right.title || "Version"}
+                </span>
+              </div>
+              <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
+                <GraphCanvas
+                  data={rightData}
+                  readOnly
+                  onExportImageReady={(exportPng) => {
+                    exportRightImageRef.current = exportPng;
+                  }}
+                  onExportGraphJsonReady={(getGraph) => {
+                    exportRightGraphRef.current = getGraph;
+                  }}
+                />
+              </div>
             </div>
           </div>
-          <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
-            <div className="border-b border-white/10 bg-white/5 px-5 py-3 flex-shrink-0">
-              <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
-                Right
-              </span>
-              <span className="text-sm font-semibold text-white">
-                #{compareResult.right.version_number}{" "}
-                {compareResult.right.title || "Version"}
-              </span>
-            </div>
-            <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
-              <GraphCanvas
-                data={rightData}
-                readOnly
-                onExportImageReady={(exportPng) => {
-                  exportRightImageRef.current = exportPng;
-                }}
-                onExportGraphJsonReady={(getGraph) => {
-                  exportRightGraphRef.current = getGraph;
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+        )}
 
-      {!compareResult && !loadingCompare && !error && (
-        <p className="text-sm text-white/60 max-w-xl flex-shrink-0 mt-2">
-          Select two versions and click Compare to view them side by side (e.g.
-          initial graph vs after suggestions).
-        </p>
-      )}
+        {!compareResult && !loadingCompare && !error && (
+          <p className="text-sm text-white/60 max-w-xl shrink-0 mt-2">
+            Select two versions and click Compare to view them side by side
+            (e.g. initial graph vs after suggestions).
+          </p>
+        )}
       </div>
     </div>
   );

@@ -157,6 +157,13 @@ export function SelectionDetailsMain({
     [selected, data],
   );
 
+  const antiPatternCountLabel = useMemo(() => {
+    const n = detections.length;
+    if (n === 0) return "No anti-patterns on this selection";
+    if (n === 1) return "1 anti-pattern";
+    return `${n} anti-patterns`;
+  }, [detections.length]);
+
   const isNode = selected?.type === "node";
   const nodeId = isNode ? (selected!.data.id as string) : null;
   const nodeFromGraph = nodeId ? data.graph.nodes[nodeId] : undefined;
@@ -190,6 +197,52 @@ export function SelectionDetailsMain({
       setName(computedInitialName);
     }
   }, [isNode, computedInitialName]);
+
+  const nodeConnectionSummary = useMemo(() => {
+    if (!isNode || !nodeId) return null;
+    const n = data.graph.nodes[nodeId];
+    const labelFromSelection = selected!.data.label as string | undefined;
+    const displayName =
+      (typeof labelFromSelection === "string" && labelFromSelection.length > 0
+        ? labelFromSelection
+        : undefined) ??
+      n?.name ??
+      nodeId;
+    const aliases = new Set<string>();
+    if (n?.name) aliases.add(n.name);
+    if (displayName) aliases.add(displayName);
+    if (nodeId) aliases.add(nodeId);
+
+    const edges = Array.isArray(data.graph.edges) ? data.graph.edges : [];
+    const outgoing = edges.filter((e) => aliases.has(e.from));
+    const incoming = edges.filter((e) => aliases.has(e.to));
+    const uniqOut = [...new Set(outgoing.map((e) => e.to))];
+    const uniqIn = [...new Set(incoming.map((e) => e.from))];
+
+    return {
+      outgoingCount: outgoing.length,
+      incomingCount: incoming.length,
+      uniqOut,
+      uniqIn,
+      displayName,
+    };
+  }, [isNode, nodeId, data.graph, selected]);
+
+  const edgeParallelSummary = useMemo(() => {
+    if (selected?.type !== "edge") return null;
+    const idx = Number(selected.data.edgeIndex);
+    const eg =
+      Number.isFinite(idx) && idx >= 0 ? data.graph.edges[idx] : undefined;
+    const from =
+      eg?.from ?? (selected.data.source as string | undefined) ?? "";
+    const to = eg?.to ?? (selected.data.target as string | undefined) ?? "";
+    if (!from || !to) return { betweenCount: 1 };
+    const edges = Array.isArray(data.graph.edges) ? data.graph.edges : [];
+    const betweenCount = edges.filter(
+      (e) => e.from === from && e.to === to,
+    ).length;
+    return { betweenCount };
+  }, [selected, data.graph.edges]);
 
   useEffect(() => {
     if (!editMode || !isNode || !nodeId || !renameFocusNonce) return;
@@ -278,6 +331,80 @@ export function SelectionDetailsMain({
             <div className="text-[10px] text-white/50 font-mono shrink-0">ID: {nodeId}</div>
           </div>
         </div>
+
+        {nodeConnectionSummary && (
+          <div
+            className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
+            style={{
+              borderLeftWidth: "4px",
+              borderLeftColor: nodeColor,
+            }}
+          >
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+              Overview
+            </div>
+            <p className="text-[11px] text-white/75 leading-relaxed mb-2">
+              <span className="font-semibold text-white">{antiPatternCountLabel}</span>
+              {detections.length > 0
+                ? " reference this node (see list below)."
+                : "."}
+            </p>
+            <p className="text-[11px] text-white/70 leading-relaxed mb-2">
+              In the saved graph,{" "}
+              <span className="text-white/90 font-medium">
+                {toDisplayName(nodeConnectionSummary.displayName)}
+              </span>{" "}
+              has{" "}
+              <span className="font-semibold text-[#9AA4B2]">
+                {nodeConnectionSummary.outgoingCount}
+              </span>{" "}
+              outgoing and{" "}
+              <span className="font-semibold text-[#9AA4B2]">
+                {nodeConnectionSummary.incomingCount}
+              </span>{" "}
+              incoming dependencies (edges).
+            </p>
+            {nodeConnectionSummary.uniqOut.length > 0 && (
+              <div className="mb-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/45 mb-0.5">
+                  Calls / depends toward
+                </div>
+                <p className="text-[11px] text-white/65 leading-snug">
+                  {nodeConnectionSummary.uniqOut.slice(0, 10).map((t, i) => (
+                    <span key={`o-${t}-${i}`}>
+                      {i > 0 ? ", " : ""}
+                      {toDisplayName(t)}
+                    </span>
+                  ))}
+                  {nodeConnectionSummary.uniqOut.length > 10 ? "…" : ""}
+                </p>
+              </div>
+            )}
+            {nodeConnectionSummary.uniqIn.length > 0 && (
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/45 mb-0.5">
+                  Incoming from
+                </div>
+                <p className="text-[11px] text-white/65 leading-snug">
+                  {nodeConnectionSummary.uniqIn.slice(0, 10).map((t, i) => (
+                    <span key={`i-${t}-${i}`}>
+                      {i > 0 ? ", " : ""}
+                      {toDisplayName(t)}
+                    </span>
+                  ))}
+                  {nodeConnectionSummary.uniqIn.length > 10 ? "…" : ""}
+                </p>
+              </div>
+            )}
+            {nodeConnectionSummary.uniqOut.length === 0 &&
+              nodeConnectionSummary.uniqIn.length === 0 && (
+                <p className="text-[11px] text-white/45 italic">
+                  No edges reference this node in the last saved graph (canvas-only
+                  connections appear after you generate).
+                </p>
+              )}
+          </div>
+        )}
 
         <div
           className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
@@ -378,6 +505,41 @@ export function SelectionDetailsMain({
       <div className="mb-2 text-sm font-semibold text-white">
         {toDisplayName(fromName)} → {toDisplayName(toName)}
       </div>
+
+      <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+          Overview
+        </div>
+        <p className="text-[11px] text-white/75 leading-relaxed">
+          {detections.length === 0 ? (
+            <>No anti-patterns flagged for this connection.</>
+          ) : (
+            <>
+              <span className="font-semibold text-white">
+                {detections.length === 1
+                  ? "1 anti-pattern"
+                  : `${detections.length} anti-patterns`}
+              </span>{" "}
+              reference this connection (see list below).
+            </>
+          )}
+        </p>
+        {edgeParallelSummary && edgeParallelSummary.betweenCount > 1 && (
+          <p className="text-[11px] text-white/65 mt-1.5 leading-relaxed">
+            The saved graph has{" "}
+            <span className="font-semibold text-[#9AA4B2]">
+              {edgeParallelSummary.betweenCount}
+            </span>{" "}
+            parallel edges (same source → target).
+          </p>
+        )}
+        <p className="text-[11px] text-white/60 mt-1.5 leading-relaxed">
+          Models a <span className="text-white/85">{kind}</span> dependency from{" "}
+          <span className="text-white/85">{toDisplayName(fromName)}</span> to{" "}
+          <span className="text-white/85">{toDisplayName(toName)}</span>.
+        </p>
+      </div>
+
       <div className="mb-3 text-[11px] text-white/70">
         Kind: <span className="font-semibold text-[#9AA4B2]">{kind}</span>
       </div>
@@ -488,7 +650,7 @@ export function AntiPatternDetailsPanel({ data, selected }: AntiProps) {
   return (
     <div className="space-y-2">
       {!selected && (
-        <p className="text-[11px] text-white/55 leading-relaxed">
+        <p className="text-[11px] leading-relaxed text-white/50">
           Anti-patterns detected across the whole graph. Select a node or connection to filter to that item.
         </p>
       )}
@@ -520,19 +682,19 @@ function DetectionsList({
       : "Anti-patterns affecting this item";
 
   return (
-    <div>
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+    <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-2.5">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/55">
           {heading}
         </span>
-        <span className="flex gap-1">
+        <span className="flex flex-wrap gap-1">
           {detections.map((d, idx) => {
             const kind = normalizeDetectionKind((d as any).kind);
             const color = colorForDetectionKind(kind ?? "");
             return (
               <span
                 key={idx}
-                className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white/20 shrink-0"
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/15"
                 style={{ background: color }}
                 title={antipatternKindLabel(kind ?? "")}
               />
@@ -547,27 +709,27 @@ function DetectionsList({
           return (
             <li
               key={idx}
-              className="rounded-lg border-l-4 pl-3 py-2 pr-3"
-              style={{
-                borderLeftColor: color,
-                backgroundColor: color.startsWith("#") && color.length === 7 ? `${color}18` : "rgba(255,255,255,0.05)",
-              }}
+              className="rounded-lg border border-white/10 bg-slate-950/40 px-2.5 py-2"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-start gap-2">
                 <span
-                  className="inline-block h-3 w-3 rounded-full shrink-0 ring-1 ring-white/20"
+                  className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/15"
                   style={{ background: color }}
                 />
-                <span className="text-[11px] font-semibold text-white/95">
-                  {d.title}{" "}
-                  <span className="text-[10px] uppercase font-medium opacity-80" style={{ color }}>
-                    ({d.severity})
-                  </span>
-                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-semibold leading-snug text-white/90">
+                    {d.title}{" "}
+                    <span className="text-[10px] font-medium uppercase text-white/45">
+                      ({d.severity})
+                    </span>
+                  </div>
+                  {d.summary && (
+                    <div className="mt-1 text-[11px] leading-relaxed text-white/55">
+                      {d.summary}
+                    </div>
+                  )}
+                </div>
               </div>
-              {d.summary && (
-                <div className="text-[11px] text-white/60 mt-1 ml-5">{d.summary}</div>
-              )}
             </li>
           );
         })}

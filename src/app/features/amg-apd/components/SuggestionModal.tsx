@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import BeforeAfterPreview from "./BeforeAfterPreview";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { X } from "lucide-react";
@@ -76,11 +77,11 @@ export default function SuggestionModal({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+  const modal = (
+    <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
       <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40">
-        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0">
-          <div>
+        <div className="relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95">
+          <div className="min-w-0 pr-2">
             <h2 className="text-lg font-semibold text-white">
               Fix anti-patterns
             </h2>
@@ -95,7 +96,8 @@ export default function SuggestionModal({
               e.stopPropagation();
               onClose();
             }}
-            className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150 bg-white/10 text-white/80 hover:bg-white/20 hover:text-white border border-white/10"
+            className="relative z-[2] flex shrink-0 items-center justify-center w-9 h-9 rounded-lg transition-all duration-150 bg-white text-black hover:bg-gray-200 border border-white/20 shadow-sm"
+            aria-label="Close"
           >
             <X className="w-4 h-4" />
           </button>
@@ -259,4 +261,7 @@ export default function SuggestionModal({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(modal, document.body);
 }
