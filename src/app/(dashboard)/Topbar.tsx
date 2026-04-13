@@ -12,8 +12,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 export default function Topbar() {
   const pathname = usePathname();
-  const scrollTopbarWithContent =
-    isAmgApdScrollWithContentPath(pathname);
+  const scrollTopbarWithContent = isAmgApdScrollWithContentPath(pathname);
 
   const router = useRouter();
   const { signOut, userProfile, user } = useAuth();
@@ -78,7 +77,7 @@ export default function Topbar() {
           : "sticky top-0 z-40 h-20 mx-6 shrink-0"
       }
     >
-      <div className="flex h-full max-w-[1800px] mx-auto items-center justify-between">
+      <div className="flex h-full max-w-450 mx-auto items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />
         </Link>
