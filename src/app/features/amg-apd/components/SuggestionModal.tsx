@@ -10,6 +10,11 @@ export type Suggestion = {
   kind: string;
   title: string;
   bullets: string[];
+  /** Ordered dependency endpoints for previews (detection order; id may be sorted differently). */
+  preview_from?: string;
+  preview_to?: string;
+  /** Ping-pong: "top" | "bottom" — which row’s call is removed in the preview. */
+  preview_remove_leg?: string;
   auto_fix_applied?: boolean;
   auto_fix_notes?: string[];
 };
@@ -194,7 +199,13 @@ export default function SuggestionModal({
                         ))}
                       </ul>
 
-                      <BeforeAfterPreview suggestionId={s.id} kind={s.kind} />
+                      <BeforeAfterPreview
+                        suggestionId={s.id}
+                        kind={s.kind}
+                        previewFrom={s.preview_from}
+                        previewTo={s.preview_to}
+                        previewRemoveLeg={s.preview_remove_leg}
+                      />
 
                       {s.auto_fix_notes?.length ? (
                         <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
