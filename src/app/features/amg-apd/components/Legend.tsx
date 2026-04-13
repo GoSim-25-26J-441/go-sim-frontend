@@ -56,7 +56,13 @@ const SEVERITY_EXPLANATION = `How Low, Medium, and High are set:
 • LOW = Minor, address when convenient
   - Used for less critical issues or when impact is limited.`;
 
-export default function Legend({ versionCount }: { versionCount?: number }) {
+export default function Legend({
+  versionCount,
+  showNodeTypes = true,
+}: {
+  versionCount?: number;
+  showNodeTypes?: boolean;
+}) {
   const [showHelp, setShowHelp] = useState(false);
   const last = useAmgApdStore((s) => s.last);
 
@@ -91,18 +97,20 @@ export default function Legend({ versionCount }: { versionCount?: number }) {
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-white/80 text-xs">Node types:</span>
-          {Object.entries(NODE_KIND_COLOR).map(([k, c]) => (
-            <span key={k} className="inline-flex items-center gap-1.5">
-              <span
-                style={{ background: c }}
-                className="inline-block h-2.5 w-2.5 rounded-sm border border-white/20"
-              />
-              <span className="text-white/80 text-xs">{prettyLabel(k)}</span>
-            </span>
-          ))}
-        </div>
+        {showNodeTypes && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-white/80 text-xs">Node types:</span>
+            {Object.entries(NODE_KIND_COLOR).map(([k, c]) => (
+              <span key={k} className="inline-flex items-center gap-1.5">
+                <span
+                  style={{ background: c }}
+                  className="inline-block h-2.5 w-2.5 rounded-sm border border-white/20"
+                />
+                <span className="text-white/80 text-xs">{prettyLabel(k)}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-white/80 text-xs">Anti-patterns:</span>
           <button

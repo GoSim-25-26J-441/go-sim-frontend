@@ -137,14 +137,21 @@ export default function GraphCanvas({
   data,
   readOnly = false,
   isGenerating = false,
+  layoutMode = "default",
   onGenerateGraph,
   onExportImageReady,
   onExportGraphJsonReady,
   onDuplicateName,
+  fullscreenButton,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
+  layoutMode?: "default" | "fullscreen";
+  fullscreenButton?: {
+    onClick: () => void;
+    isFullscreen: boolean;
+  };
   onGenerateGraph?: (
     yaml: string,
     nodeLayout?: NodeLayoutPayload,
@@ -165,6 +172,11 @@ export default function GraphCanvas({
   }
 
   const analysis = data as AnalysisResult;
+  /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
+  const workAreaHeightClass =
+    layoutMode === "fullscreen"
+      ? "min-h-0 h-full max-h-full self-stretch"
+      : GRAPH_WORK_AREA_HEIGHT_CLASS;
 
   const showToast = useToast((s) => s.showToast);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1013,7 +1025,7 @@ export default function GraphCanvas({
 
   return (
     <div
-      className={`flex flex-col gap-3 p-4 min-h-[70vh] min-w-0 ${readOnly ? "flex-1" : ""}`}
+      className={`flex flex-col min-w-0 ${layoutMode === "fullscreen" ? "min-h-0 h-full gap-2 px-2 py-2 sm:px-3 sm:py-2" : "min-h-[70vh] gap-3 p-4"} ${readOnly ? "flex-1" : ""}`}
     >
       <ControlPanel
         layoutName={layoutName}
@@ -1026,13 +1038,18 @@ export default function GraphCanvas({
         data={analysis}
         isGenerating={isGenerating}
         readOnly={readOnly}
+        fullscreenButton={fullscreenButton}
       />
 
-      <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden items-start">
+      <div
+        className={`flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden ${layoutMode === "fullscreen" ? "items-stretch" : "items-start"}`}
+      >
         {!readOnly &&
           effectiveEditMode &&
             (leftPanelCollapsed ? (
-            <div className="w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2 relative z-10">
+            <div
+              className={`w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2 relative z-10 ${layoutMode === "fullscreen" ? "min-h-0 h-full self-stretch" : ""}`}
+            >
               <button
                 type="button"
                 onClick={() => setLeftPanelCollapsed(false)}
@@ -1050,7 +1067,7 @@ export default function GraphCanvas({
             </div>
           ) : (
             <aside
-              className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+              className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${workAreaHeightClass}`}
             >
               <div className="flex items-center justify-between gap-1 mb-2 shrink-0">
                 <span className="text-xs font-semibold truncate text-slate-200 sm:text-sm">
@@ -1096,7 +1113,7 @@ export default function GraphCanvas({
 
         <div
           ref={containerRef}
-          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${workAreaHeightClass}`}
           onContextMenu={(e) => {
             e.preventDefault();
           }}
@@ -1292,7 +1309,7 @@ export default function GraphCanvas({
             </button>
           ) : (
             <aside
-              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${workAreaHeightClass}`}
             >
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900/80 px-3 py-2.5">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-200">

@@ -1,5 +1,6 @@
 "use client";
 
+import { Maximize2, Minimize2 } from "lucide-react";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 
 export type LayoutName = "dagre" | "cose-bilkent" | "cola" | "elk";
@@ -31,6 +32,12 @@ type Props = {
   readOnly?: boolean;
 
   data?: AnalysisResult;
+
+  /** Patterns fullscreen workspace: same visual style as Edit Graph (white/black). */
+  fullscreenButton?: {
+    onClick: () => void;
+    isFullscreen: boolean;
+  };
 };
 
 export default function ControlPanel({
@@ -43,6 +50,7 @@ export default function ControlPanel({
   onSaveChanges,
   isGenerating = false,
   readOnly = false,
+  fullscreenButton,
 }: Props) {
   const {
     services,
@@ -133,6 +141,26 @@ export default function ControlPanel({
             >
               {editMode ? "Exit Edit Mode" : "Edit Graph"}
             </button>
+
+            {fullscreenButton && (
+              <button
+                type="button"
+                onClick={fullscreenButton.onClick}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                title={
+                  fullscreenButton.isFullscreen
+                    ? "Exit fullscreen workspace"
+                    : "Open fullscreen workspace"
+                }
+              >
+                {fullscreenButton.isFullscreen ? (
+                  <Minimize2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                {fullscreenButton.isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              </button>
+            )}
           </div>
         )}
       </div>

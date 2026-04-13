@@ -310,7 +310,7 @@ export default function ProjectPatternsComparePage({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 pb-1 border-b border-white/10">
-          <Legend versionCount={versions.length} />
+          <Legend versionCount={versions.length} showNodeTypes={false} />
           <div className="flex flex-wrap items-center gap-2 justify-end max-w-full">
             {(
               [

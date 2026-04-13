@@ -70,6 +70,10 @@ export default function PatternsView({
   const [duplicateNameForModal, setDuplicateNameForModal] = useState<
     string | null
   >(null);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [fullscreenGenPhase, setFullscreenGenPhase] = useState<
+    null | "generating" | "success"
+  >(null);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
@@ -433,6 +437,52 @@ export default function PatternsView({
     }
   }
 
+  async function generateGraphFromYaml(
+    yaml: string,
+    nodeLayout?: NodeLayoutPayload,
+    opts?: { exitFullscreenAfterSuccess?: boolean },
+  ) {
+    const exitAfter = opts?.exitFullscreenAfterSuccess === true;
+    if (exitAfter) {
+      setFullscreenGenPhase("generating");
+    }
+    setRegenerating(true);
+    try {
+      const data = await analyzeAndSaveAsNewVersion(
+        yaml,
+        undefined,
+        nodeLayout,
+      );
+      setLast(data);
+      setEditedYaml(yaml);
+      setGraphVersion((v) => v + 1);
+      await refetchVersions();
+      setVersionsRefreshTrigger((t) => t + 1);
+      showToast("Graph generated successfully", "success");
+      if (exitAfter) {
+        setFullscreenGenPhase("success");
+        await new Promise((r) => window.setTimeout(r, 950));
+        setFullscreenOpen(false);
+        setFullscreenGenPhase(null);
+        if (projectId) {
+          router.push(`/project/${projectId}/patterns`);
+        } else {
+          router.refresh();
+        }
+      }
+    } catch (err: any) {
+      if (exitAfter) {
+        setFullscreenGenPhase(null);
+      }
+      showToast(
+        "Failed to generate graph: " + (err?.message ?? "Unknown error"),
+        "error",
+      );
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   if (!last?.graph) {
     if (regenerating) {
       return (
@@ -469,7 +519,7 @@ export default function PatternsView({
   }
 
   return (
-    <div className="space-y-6 max-w-400 mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
+    <div className="space-y-2 max-w-400 mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
       {simulationModalOpen && (
         <div
           className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -557,8 +607,8 @@ export default function PatternsView({
           document.body,
         )}
 
-      <div className="sticky top-0 z-20 p-3 shadow-xl shadow-black/20 overflow-hidden shrink-0 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
-        <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-white/10">
+      <div className="sticky top-0 z-20 px-3 pt-2 pb-2 shadow-xl shadow-black/20 overflow-hidden shrink-0 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
+        <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-white/10">
           <VersionSidebar
             refreshTrigger={versionsRefreshTrigger}
             projectId={projectId}
@@ -619,8 +669,8 @@ export default function PatternsView({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
-          <Legend versionCount={versionCount ?? undefined} />
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <Legend versionCount={versionCount ?? undefined} showNodeTypes={false} />
 
           <div className="shrink-0">
             <button
@@ -662,34 +712,130 @@ export default function PatternsView({
                 exportGraphJsonRef.current = getGraph;
               }}
               onDuplicateName={(name) => setDuplicateNameForModal(name)}
-              onGenerateGraph={async (yaml, nodeLayout) => {
-                setRegenerating(true);
-                try {
-                  const data = await analyzeAndSaveAsNewVersion(
-                    yaml,
-                    undefined,
-                    nodeLayout,
-                  );
-                  setLast(data);
-                  setEditedYaml(yaml);
-                  setGraphVersion((v) => v + 1);
-                  await refetchVersions();
-                  setVersionsRefreshTrigger((t) => t + 1);
-                  showToast("Graph generated successfully", "success");
-                } catch (err: any) {
-                  showToast(
-                    "Failed to generate graph: " +
-                      (err?.message ?? "Unknown error"),
-                    "error",
-                  );
-                } finally {
-                  setRegenerating(false);
-                }
+              onGenerateGraph={(yaml, nodeLayout) =>
+                generateGraphFromYaml(yaml, nodeLayout)
+              }
+              fullscreenButton={{
+                onClick: () => setFullscreenOpen(true),
+                isFullscreen: false,
               }}
             />
           </div>
         )}
       </div>
+
+      {fullscreenOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[99998] bg-slate-950">
+            <div className="flex h-full min-h-0 flex-col gap-1.5 p-2 sm:p-2.5">
+              <div className="shrink-0 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/75 px-2.5 py-1.5 sm:px-3 sm:py-2">
+                <Legend
+                  versionCount={versionCount ?? undefined}
+                  showNodeTypes={false}
+                />
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-card/80 backdrop-blur-sm">
+                <GraphCanvas
+                  key={`amg-apd-graph-full-v${graphVersion}`}
+                  data={last}
+                  isGenerating={regenerating}
+                  layoutMode="fullscreen"
+                  onExportImageReady={(fn) => {
+                    exportImageRef.current = fn;
+                  }}
+                  onExportGraphJsonReady={(getGraph) => {
+                    exportGraphJsonRef.current = getGraph;
+                  }}
+                  onDuplicateName={(name) => setDuplicateNameForModal(name)}
+                  onGenerateGraph={(yaml, nodeLayout) =>
+                    generateGraphFromYaml(yaml, nodeLayout, {
+                      exitFullscreenAfterSuccess: true,
+                    })
+                  }
+                  fullscreenButton={{
+                    onClick: () => setFullscreenOpen(false),
+                    isFullscreen: true,
+                  }}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {fullscreenGenPhase &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 animate-in fade-in duration-300"
+            aria-live="polite"
+            aria-busy={fullscreenGenPhase === "generating"}
+          >
+            {/* Match CheckPatternsOverlay (chat “Check Anti-Patterns”) */}
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              aria-hidden
+            />
+            <div className="relative z-10 w-full max-w-sm rounded-lg border border-white/[0.08] bg-[#111]/98 shadow-xl p-5 animate-fade-in-up">
+              {fullscreenGenPhase === "generating" ? (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="h-8 w-8 rounded-full border-2 border-white/20 border-t-white/60 animate-spin" />
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-medium text-white">
+                      Generating new graph
+                    </p>
+                    <p className="text-xs text-white/50">
+                      Saving a new version, rebuilding the canvas, and running
+                      anti-pattern detection…
+                    </p>
+                  </div>
+                  <div className="w-full h-px bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-white/15 rounded-full animate-check-patterns-progress"
+                      style={{ width: "32%" }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="relative">
+                    <div className="absolute inset-0 rounded-full bg-emerald-500/25 animate-ping [animation-duration:2s]" />
+                    <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600/90 shadow-lg shadow-emerald-500/20">
+                      <svg
+                        className="h-6 w-6 text-white"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2.5}
+                        aria-hidden
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-medium text-white">Graph ready</p>
+                    <p className="text-xs text-white/50">
+                      Taking you back to the patterns view…
+                    </p>
+                  </div>
+                  <div className="w-full h-px bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 animate-check-patterns-progress"
+                      style={{ width: "55%" }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
