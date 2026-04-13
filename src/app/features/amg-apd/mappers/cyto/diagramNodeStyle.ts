@@ -1,8 +1,8 @@
 import { DIAGRAM_NODE_ICON_PATHS } from "@/app/features/amg-apd/utils/diagramNodeIcons";
 
 /** DOM overlay on the patterns graph (Cytoscape cannot style two label lines differently). */
-export const CY_NODE_LABEL_NAME_FONT_PX = 8;
-export const CY_NODE_LABEL_TYPE_FONT_PX = 6;
+export const CY_NODE_LABEL_NAME_FONT_PX = 5;
+export const CY_NODE_LABEL_TYPE_FONT_PX = 4;
 export const CY_NODE_LABEL_NAME_COLOR = "#000000";
 export const CY_NODE_LABEL_TYPE_COLOR = "#64748b";
 /** Positive: shift the label block downward from the node center, as a fraction of rendered height. */

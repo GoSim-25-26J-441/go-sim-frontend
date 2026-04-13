@@ -45,6 +45,7 @@ import {
   type NodeLayoutPayload,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
+import { applyReciprocalCallLanes } from "@/app/features/amg-apd/utils/reciprocalCallLanes";
 
 import { useToast } from "@/hooks/useToast";
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
@@ -227,9 +228,14 @@ export default function GraphCanvas({
           /* Do not bypass `width` — stylesheet controls thin stroke + arrow-scale (gradient lines). */
           e.removeStyle("width");
           e.removeStyle("arrow-scale");
-          e.style("curve-style", "bezier");
+          e.removeStyle("source-endpoint");
+          e.removeStyle("target-endpoint");
+          e.style("curve-style", "straight");
+          e.style("source-arrow-shape", "none");
           e.style("target-arrow-shape", "triangle");
         });
+
+        applyReciprocalCallLanes(cy);
 
         cy.style().update();
         cy.resize();
@@ -310,7 +316,7 @@ export default function GraphCanvas({
           opacity: 1,
           "line-opacity": 1,
           "target-arrow-opacity": 1,
-          "curve-style": "bezier",
+          "curve-style": "straight",
           "target-arrow-shape": "triangle",
           "line-color": "#475569",
           "target-arrow-color": "#475569",
@@ -569,6 +575,11 @@ export default function GraphCanvas({
       toRemove.remove();
     });
 
+    applyReciprocalCallLanes(cy);
+    try {
+      cy.style().update();
+    } catch {}
+
     setSelected(null);
     setPendingSource(null);
     recomputeStats(cy, analysis, setStats);
@@ -584,6 +595,11 @@ export default function GraphCanvas({
       if (last.nodes.length) cy.add(last.nodes);
       if (last.edges.length) cy.add(last.edges);
     });
+
+    applyReciprocalCallLanes(cy);
+    try {
+      cy.style().update();
+    } catch {}
 
     setSelected(null);
     setPendingSource(null);
