@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     fetchSuggestions,
@@ -43,6 +43,7 @@ interface SuggestionResponse {
         suggestions: string[];
     }>;
     storage_id: string;
+    design?: DesignRequirements;
 }
 
 interface DesignRequirements {
@@ -122,6 +123,18 @@ type SuggestPageProps = {
     projectId?: string;
 };
 
+function normalizeDesignFromApi(raw: DesignRequirements | undefined): DesignRequirements | null {
+    if (!raw) return null;
+    return {
+        preferred_vcpu: raw.preferred_vcpu ?? 0,
+        preferred_memory_gb: raw.preferred_memory_gb ?? 0,
+        workload: {
+            concurrent_users: raw.workload?.concurrent_users ?? 0,
+        },
+        budget: raw.budget ?? 0,
+    };
+}
+
 function mapRunCandidatesToSuggest(candidates: RunCandidateItem[]): Candidate[] {
     return candidates.map((c) => ({
         id: c.id,
@@ -153,62 +166,68 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
     const { user, userId: firebaseUid } = useAuth();
     const projectId = projectIdProp ?? searchParams.get('projectId') ?? '';
 
-    const hasFetchedRef = useRef(false);
+    const runIdFromQuery =
+        searchParams.get('run_id') ?? searchParams.get('runId') ?? '';
+    const candidatesParam = searchParams.get('candidates');
+    const projectIdFromSearch = searchParams.get('projectId') ?? '';
 
     useEffect(() => {
         if (!firebaseUid) return;
-        if (hasFetchedRef.current) return;
-        hasFetchedRef.current = true;
+
+        const resolvedProjectId = projectIdProp ?? projectIdFromSearch;
+
+        if (resolvedProjectId && !runIdFromQuery && !candidatesParam) {
+            return;
+        }
+
+        let cancelled = false;
 
         const loadSuggestions = async () => {
             setLoading(true);
             setError(null);
 
-            const runIdFromQuery = searchParams.get('run_id') ?? searchParams.get('runId') ?? '';
-            const candidatesParam = searchParams.get('candidates');
-            const resolvedProjectId = projectIdProp ?? searchParams.get('projectId') ?? '';
-
             try {
                 if (resolvedProjectId && runIdFromQuery && !candidatesParam) {
                     const runData = await fetchRunCandidates(runIdFromQuery);
+                    if (cancelled) return;
                     const mappedCandidates = mapRunCandidatesToSuggest(runData.candidates ?? []);
                     if (mappedCandidates.length === 0) {
                         setError('No candidates found for this run');
                         setDesign(DUMMY_DESIGN);
                         setSimulation(runData.simulation ?? DUMMY_SIMULATION);
                         setSuggestionData(null);
-                        setLoading(false);
                         return;
                     }
                     setCandidates(mappedCandidates);
                     const sim = runData.simulation ?? { nodes: 0 };
                     setSimulation(sim);
-                    setDesign({
+                    const fallbackDesign: DesignRequirements = {
                         ...DUMMY_DESIGN,
                         preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
                         preferred_memory_gb: mappedCandidates[0]?.spec.memory_gb ?? 0,
                         workload: {
                             concurrent_users: mappedCandidates[0]?.sim_workload.concurrent_users ?? 0,
                         },
-                    });
-                    const data = await fetchSuggestionsFromRun(
+                    };
+                    const data = (await fetchSuggestionsFromRun(
                         firebaseUid,
                         resolvedProjectId,
                         runIdFromQuery,
                         sim,
                         mappedCandidates,
-                    );
+                    )) as SuggestionResponse;
+                    if (cancelled) return;
                     setSuggestionData(data);
-                    setLoading(false);
+                    setDesign(normalizeDesignFromApi(data.design) ?? fallbackDesign);
                     return;
                 }
 
                 // Flow 2: runId + candidates in URL (existing flow with design from stored request)
                 if (!runIdFromQuery || !candidatesParam) {
+                    if (cancelled) return;
                     setDesign(DUMMY_DESIGN);
                     setSimulation(DUMMY_SIMULATION);
                     setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
-                    setLoading(false);
                     return;
                 }
 
@@ -222,6 +241,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     resolvedProjectId,
                     runIdFromQuery,
                 );
+                if (cancelled) return;
 
                 const storedRequest = stored.request as {
                     design: DesignRequirements;
@@ -235,28 +255,38 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 setDesign(resolvedDesign);
                 setSimulation(resolvedSimulation);
 
-                const data = await fetchSuggestions(
+                const data = (await fetchSuggestions(
                     firebaseUid,
                     resolvedDesign,
                     resolvedSimulation,
                     decodedCandidates,
                     resolvedProjectId,
                     runIdFromQuery,
-                );
+                )) as SuggestionResponse;
+                if (cancelled) return;
                 setSuggestionData(data);
+                setDesign(
+                    normalizeDesignFromApi(data.design) ?? resolvedDesign,
+                );
             } catch (err) {
+                if (cancelled) return;
                 console.error('Error fetching suggestions:', err);
                 setError(err instanceof Error ? err.message : 'An error occurred');
                 setDesign(DUMMY_DESIGN);
                 setSimulation(DUMMY_SIMULATION);
                 setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
             } finally {
-                setLoading(false);
+                if (!cancelled) {
+                    setLoading(false);
+                }
             }
         };
 
         loadSuggestions();
-    }, [firebaseUid, searchParams]);
+        return () => {
+            cancelled = true;
+        };
+    }, [firebaseUid, projectIdProp, projectIdFromSearch, runIdFromQuery, candidatesParam]);
 
     const formatPercentage = (value: number) => {
         return `${value.toFixed(1)}%`;
@@ -322,7 +352,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
 
                         <div>
                             <h1 className="text-md font-bold text-white flex items-center gap-2">
-                                Metrices Analysis
+                                Metrics Analysis
                             </h1>
                         </div>
                     </div>
@@ -344,11 +374,11 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                         <h2 className="text-xl font-semibold mb-4">Design Requirements</h2>
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                             <div className="bg-card border border-border p-4 rounded-lg">
-                                <p className="text-sm opacity-60">User (Firebase)</p>
+                                <p className="text-sm opacity-60">User</p>
                                 {user ? (
                                     <>
-                                        <p className="text-sm font-medium">
-                                            {user.displayName || user.email || "Unnamed user"}
+                                        <p className="text-lg font-semibold">
+                                            {user?.displayName || user?.email || "Unnamed user"}
                                         </p>
                                     </>
                                 ) : (
