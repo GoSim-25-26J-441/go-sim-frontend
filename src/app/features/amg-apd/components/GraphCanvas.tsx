@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import CytoscapeComponent from "react-cytoscapejs";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
@@ -88,6 +89,7 @@ function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
 
 type ContextMenuState =
   | { type: "node"; nodeId: string; relX: number; relY: number }
+  | { type: "edge"; edgeId: string; relX: number; relY: number }
   | {
       type: "canvas";
       modelX: number;
@@ -98,6 +100,19 @@ type ContextMenuState =
 
 const CONTEXT_MENU_W = 184;
 const CONTEXT_MENU_H = 148;
+const DND_NODE_MIME = "application/x-pattern-node-kind";
+const DND_ANTI_PATTERN_MIME = "application/x-pattern-antipattern-kind";
+const DND_NODE_TEXT_PREFIX = "__pattern_node__:";
+const DND_ANTI_TEXT_PREFIX = "__pattern_antipattern__:";
+const NODE_KIND_VALUES: NodeKind[] = [
+  "SERVICE",
+  "API_GATEWAY",
+  "DATABASE",
+  "EVENT_TOPIC",
+  "EXTERNAL_SYSTEM",
+  "CLIENT",
+  "USER_ACTOR",
+];
 
 type CopiedNodeClipboard = { kind: NodeKind; label: string };
 
@@ -169,6 +184,9 @@ export default function GraphCanvas({
   const [defaultCallSync, setDefaultCallSync] = useState(true);
   const [pendingAntiPatternKind, setPendingAntiPatternKind] =
     useState<DetectionKind | null>(null);
+  const [draggingAntiPatternKind, setDraggingAntiPatternKind] =
+    useState<DetectionKind | null>(null);
+  const draggingNodeKindRef = useRef<NodeKind | null>(null);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [copiedNode, setCopiedNode] = useState<CopiedNodeClipboard | null>(null);
@@ -262,37 +280,42 @@ export default function GraphCanvas({
     setTool(t);
   }, []);
 
-  const handleAddAntiPattern = useCallback((kind: DetectionKind) => {
-    setPendingSource(null);
-    setTool("select");
-    setPendingAntiPatternKind((prev) => (prev === kind ? null : kind));
-  }, []);
+  const addNodeAt = useCallback(
+    (kind: NodeKind, pos: { x: number; y: number }) => {
+      if (!cyAlive(cy)) return;
+      const prefix = NODE_KIND_TO_LABEL_PREFIX[kind];
+      const label = getNextUniqueLabel(cy, prefix);
+      const idBase = prefix.replace(/-/g, "_");
+      const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`;
+      cy.add({
+        group: "nodes",
+        data: { id, label, kind },
+        position: pos,
+        grabbable: true,
+        selectable: true,
+        locked: false,
+      });
+      const node = cy.getElementById(id);
+      if (!node.empty()) {
+        try {
+          node.unlock();
+          node.grabify();
+          node.selectify();
+          cy.elements().unselect();
+        } catch {}
+        node.select();
+        setSelected({ type: "node", data: node.data() });
+      }
+      recomputeStats(cy, analysis, setStats);
+    },
+    [cy, analysis],
+  );
 
-  const { tooltip } = useCyTooltip({
-    cy,
-    data: analysis,
-    containerRef,
-  });
-
-  useEffect(() => {
-    setLocalAdditions([]);
-  }, [data]);
-
-  useCyInteractions({
-    cy,
-    editMode: effectiveEditMode,
-    tool,
-    pendingSource,
-    setPendingSource,
-    setSelected,
-    recomputeStats: () => recomputeStats(cy, analysis, setStats),
-    defaultCallProtocol,
-    defaultCallSync,
-    pendingAntiPatternKind,
-    setPendingAntiPatternKind,
-    onAddAntiPatternAt: (kind, pos) => {
+  const addAntiPatternAt = useCallback(
+    (kind: DetectionKind, pos: { x: number; y: number }) => {
       const { nodes, edges } = getAntiPatternChunk(kind);
-
       const offsetNodes = nodes.map((el) => {
         const p = el.position;
         if (!p) return el;
@@ -323,11 +346,7 @@ export default function GraphCanvas({
         },
       }));
 
-      setLocalAdditions((prev) => [
-        ...prev,
-        { nodes: offsetNodes, edges: preparedEdges },
-      ]);
-
+      setLocalAdditions((prev) => [...prev, { nodes: offsetNodes, edges: preparedEdges }]);
       setSelected(null);
       setPendingSource(null);
       setPendingAntiPatternKind(null);
@@ -338,6 +357,63 @@ export default function GraphCanvas({
         recomputeStats(cy, analysis, setStats);
       });
     },
+    [cy, analysis],
+  );
+
+  const handleNodeDragStart = useCallback(
+    (kind: NodeKind) => (e: ReactDragEvent<HTMLButtonElement>) => {
+      if (!effectiveEditMode) return;
+      e.dataTransfer.setData(DND_NODE_MIME, kind);
+      e.dataTransfer.setData("application/x-node-kind", kind);
+      e.dataTransfer.setData("text/plain", `${DND_NODE_TEXT_PREFIX}${kind}`);
+      e.dataTransfer.effectAllowed = "copy";
+      draggingNodeKindRef.current = kind;
+      setDraggingAntiPatternKind(null);
+    },
+    [effectiveEditMode],
+  );
+
+  const handleAntiPatternDragStart = useCallback(
+    (kind: DetectionKind) => (e: ReactDragEvent<HTMLButtonElement>) => {
+      if (!effectiveEditMode) return;
+      e.dataTransfer.setData(DND_ANTI_PATTERN_MIME, kind);
+      e.dataTransfer.setData("text/plain", `${DND_ANTI_TEXT_PREFIX}${kind}`);
+      e.dataTransfer.effectAllowed = "copy";
+      setDraggingAntiPatternKind(kind);
+      draggingNodeKindRef.current = null;
+    },
+    [effectiveEditMode],
+  );
+
+  const clearToolDragState = useCallback(() => {
+    draggingNodeKindRef.current = null;
+    setDraggingAntiPatternKind(null);
+    setPendingAntiPatternKind(null);
+  }, []);
+
+  const { tooltip } = useCyTooltip({
+    cy,
+    data: analysis,
+    containerRef,
+  });
+
+  useEffect(() => {
+    setLocalAdditions([]);
+  }, [data]);
+
+  useCyInteractions({
+    cy,
+    editMode: effectiveEditMode,
+    tool,
+    pendingSource,
+    setPendingSource,
+    setSelected,
+    recomputeStats: () => recomputeStats(cy, analysis, setStats),
+    defaultCallProtocol,
+    defaultCallSync,
+    pendingAntiPatternKind,
+    setPendingAntiPatternKind,
+    onAddAntiPatternAt: addAntiPatternAt,
   });
 
   const openContextMenuAt = useCallback(
@@ -386,6 +462,29 @@ export default function GraphCanvas({
     [openContextMenuAt],
   );
 
+  const onEdgeContextMenuOpen = useCallback(
+    (edgeId: string, clientX: number, clientY: number) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const relX = Math.min(
+        Math.max(4, clientX - r.left),
+        Math.max(4, el.clientWidth - CONTEXT_MENU_W - 4),
+      );
+      const relY = Math.min(
+        Math.max(4, clientY - r.top),
+        Math.max(4, el.clientHeight - CONTEXT_MENU_H - 4),
+      );
+      setContextMenu({
+        type: "edge",
+        edgeId,
+        relX,
+        relY,
+      });
+    },
+    [],
+  );
+
   const onCanvasContextMenuOpen = useCallback(
     (modelPos: { x: number; y: number }, clientX: number, clientY: number) => {
       openContextMenuAt(
@@ -400,6 +499,7 @@ export default function GraphCanvas({
   useCyContextMenu({
     cy,
     onNodeContext: onNodeContextMenuOpen,
+    onEdgeContext: onEdgeContextMenuOpen,
     onCanvasContext: onCanvasContextMenuOpen,
   });
 
@@ -802,6 +902,30 @@ export default function GraphCanvas({
     setContextMenu(null);
   }
 
+  function handleContextDeleteNode(nodeId: string) {
+    if (!effectiveEditMode || !cyAlive(cy)) return;
+    const node = cy.getElementById(nodeId);
+    if (node.empty()) return;
+    try {
+      cy.elements().unselect();
+      node.select();
+    } catch {}
+    performDelete();
+    setContextMenu(null);
+  }
+
+  function handleContextDeleteEdge(edgeId: string) {
+    if (!effectiveEditMode || !cyAlive(cy)) return;
+    const edge = cy.getElementById(edgeId);
+    if (edge.empty()) return;
+    try {
+      cy.elements().unselect();
+      edge.select();
+    } catch {}
+    performDelete();
+    setContextMenu(null);
+  }
+
   function handleContextPaste() {
     if (
       !effectiveEditMode ||
@@ -947,23 +1071,24 @@ export default function GraphCanvas({
                 </div>
               </div>
               <div className="text-[10px] text-slate-500 mb-2 sm:text-xs sm:mb-3 shrink-0">
-                Click on canvas to add nodes, connect, or place anti-pattern samples.
+                Drag nodes or anti-patterns from the toolbox into the canvas.
               </div>
               <div className="flex min-h-0 flex-1 w-full flex-col">
                 <EditToolbar
                   editMode={effectiveEditMode}
-                  tool={tool}
                   pendingSourceId={pendingSource}
-                  onToolChange={handleToolChange}
                   defaultCallProtocol={defaultCallProtocol}
                   defaultCallSync={defaultCallSync}
                   onDefaultCallChange={(kind, sync) => {
                     setDefaultCallProtocol(kind);
                     setDefaultCallSync(sync);
                   }}
-                  onAddAntiPattern={handleAddAntiPattern}
                   pendingAntiPatternKind={pendingAntiPatternKind}
                   variant="sidebar"
+                  onNodeDragStart={handleNodeDragStart}
+                  onAntiPatternDragStart={handleAntiPatternDragStart}
+                  onToolDragEnd={clearToolDragState}
+                  draggingAntiPatternKind={draggingAntiPatternKind}
                 />
               </div>
             </aside>
@@ -974,6 +1099,54 @@ export default function GraphCanvas({
           className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
           onContextMenu={(e) => {
             e.preventDefault();
+          }}
+          onDragOver={(e) => {
+            if (!effectiveEditMode) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={(e) => {
+            if (!effectiveEditMode || !cyAlive(cy)) return;
+            e.preventDefault();
+            const antiRawPrimary = e.dataTransfer.getData(DND_ANTI_PATTERN_MIME);
+            const nodeRawPrimary = e.dataTransfer.getData(DND_NODE_MIME);
+            const nodeRawLegacy = e.dataTransfer.getData("application/x-node-kind");
+            const textRaw = e.dataTransfer.getData("text/plain");
+            const textAnti = textRaw.startsWith(DND_ANTI_TEXT_PREFIX)
+              ? textRaw.slice(DND_ANTI_TEXT_PREFIX.length)
+              : "";
+            const textNode = textRaw.startsWith(DND_NODE_TEXT_PREFIX)
+              ? textRaw.slice(DND_NODE_TEXT_PREFIX.length)
+              : textRaw;
+            const textAsNode = NODE_KIND_VALUES.includes(textNode as NodeKind)
+              ? (textNode as NodeKind)
+              : "";
+            const antiRaw = antiRawPrimary || textAnti || draggingAntiPatternKind || "";
+            const nodeRaw = nodeRawPrimary || nodeRawLegacy || textAsNode;
+            const resolvedNodeRaw = nodeRaw || draggingNodeKindRef.current || "";
+            if (!antiRaw && !resolvedNodeRaw) {
+              clearToolDragState();
+              return;
+            }
+            const container = containerRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const renderedPos = {
+              x: e.clientX - rect.left,
+              y: e.clientY - rect.top,
+            };
+            const zoom = cy.zoom();
+            const pan = cy.pan();
+            const modelPos = {
+              x: (renderedPos.x - pan.x) / zoom,
+              y: (renderedPos.y - pan.y) / zoom,
+            };
+            if (antiRaw) {
+              addAntiPatternAt(antiRaw as DetectionKind, modelPos);
+            } else if (resolvedNodeRaw) {
+              addNodeAt(resolvedNodeRaw as NodeKind, modelPos);
+            }
+            clearToolDragState();
           }}
         >
           <CytoscapeComponent
@@ -1061,7 +1234,34 @@ export default function GraphCanvas({
                   >
                     Copy
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!effectiveEditMode}
+                    className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() =>
+                      effectiveEditMode &&
+                      handleContextDeleteNode(contextMenu.nodeId)
+                    }
+                  >
+                    Delete
+                  </button>
                 </>
+              )}
+
+              {contextMenu.type === "edge" && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!effectiveEditMode}
+                  className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={() =>
+                    effectiveEditMode &&
+                    handleContextDeleteEdge(contextMenu.edgeId)
+                  }
+                >
+                  Delete connection
+                </button>
               )}
 
               {contextMenu.type === "canvas" && (
@@ -1109,6 +1309,25 @@ export default function GraphCanvas({
               </div>
               {/* Single scroll surface for the whole panel (like Edit Tools); subsections do not scroll on their own */}
               <div className="isolate flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 pr-2 [scrollbar-gutter:stable] scrollbar-toolbox">
+                {!readOnly && effectiveEditMode && (
+                  <div className="rounded-xl border border-white/10 bg-gray-900/55 px-2.5 py-2.5">
+                    <div className="mb-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/65">
+                      Connection tools
+                    </div>
+                    <ConnectionsToolsPanel
+                      editMode={effectiveEditMode}
+                      currentTool={tool}
+                      onToolChange={handleToolChange}
+                      defaultCallProtocol={defaultCallProtocol}
+                      defaultCallSync={defaultCallSync}
+                      onDefaultCallChange={(kind, sync) => {
+                        setDefaultCallProtocol(kind);
+                        setDefaultCallSync(sync);
+                      }}
+                    />
+                  </div>
+                )}
+
                 <CollapsibleDetailsSection
                   collapsedLabel={
                     selected?.type === "node"
@@ -1136,25 +1355,6 @@ export default function GraphCanvas({
                     onUpdateEdge={handleUpdateEdge}
                   />
                 </CollapsibleDetailsSection>
-
-                {!readOnly && effectiveEditMode && (
-                  <CollapsibleDetailsSection
-                    collapsedLabel="Show connection tools"
-                    expandedTitle="Connection tools"
-                  >
-                    <ConnectionsToolsPanel
-                      editMode={effectiveEditMode}
-                      currentTool={tool}
-                      onToolChange={handleToolChange}
-                      defaultCallProtocol={defaultCallProtocol}
-                      defaultCallSync={defaultCallSync}
-                      onDefaultCallChange={(kind, sync) => {
-                        setDefaultCallProtocol(kind);
-                        setDefaultCallSync(sync);
-                      }}
-                    />
-                  </CollapsibleDetailsSection>
-                )}
 
                 <CollapsibleDetailsSection
                   collapsedLabel="Show anti-pattern details"
