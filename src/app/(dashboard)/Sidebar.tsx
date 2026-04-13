@@ -333,7 +333,7 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="h-[95%] flex flex-row">
+    <aside className="h-full min-h-0 flex flex-row">
       <div className="w-64 md:w-[280px] lg:w-[320px] h-full flex flex-col px-5 pt-5">
         <div className="p-4 border-b border-gray-800 flex justify-end">
           <button
@@ -348,7 +348,7 @@ export default function Sidebar() {
 
         <div
           ref={projectsScrollRef}
-          className="flex-1 overflow-y-auto py-4 space-y-6"
+          className="flex-1 overflow-y-auto py-4 space-y-6 scrollbar-sidebar"
         >
           <div>
             <div className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider mb-2 px-2">
