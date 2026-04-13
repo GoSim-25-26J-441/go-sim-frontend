@@ -96,10 +96,10 @@ export default function SuggestionModal({
               e.stopPropagation();
               onClose();
             }}
-            className="relative z-[2] flex shrink-0 items-center justify-center w-9 h-9 rounded-lg transition-all duration-150 bg-white text-black hover:bg-gray-200 border border-white/20 shadow-sm"
+            className="relative z-[2] -mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/45 transition-colors duration-150 hover:bg-white/10 hover:text-white"
             aria-label="Close"
           >
-            <X className="w-4 h-4" />
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
           </button>
         </div>
 

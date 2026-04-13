@@ -16,6 +16,10 @@ type State = {
   regenerating: boolean;
   setRegenerating: (v: boolean) => void;
 
+  /** Patterns graph fullscreen workspace — dashboard Topbar scrolls away with content when true. */
+  patternsGraphFullscreen: boolean;
+  setPatternsGraphFullscreen: (v: boolean) => void;
+
   /**
    * Last “committed” graph + YAML (after load, successful generate, version switch, or apply).
    * Not persisted — used only to reset canvas edits in-session.
@@ -41,6 +45,10 @@ export const useAmgApdStore = create<State>()(
 
       regenerating: false,
       setRegenerating: (v: boolean) => set({ regenerating: v }),
+
+      patternsGraphFullscreen: false,
+      setPatternsGraphFullscreen: (v: boolean) =>
+        set({ patternsGraphFullscreen: v }),
 
       baselineLast: undefined,
       baselineEditedYaml: undefined,

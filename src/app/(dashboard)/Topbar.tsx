@@ -3,13 +3,18 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { isAmgApdScrollWithContentPath } from "@/app/features/amg-apd/utils/amgApdDashboardRoutes";
 import { LogOut, User, FileText } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 export default function Topbar() {
+  const pathname = usePathname();
+  const scrollTopbarWithContent =
+    isAmgApdScrollWithContentPath(pathname);
+
   const router = useRouter();
   const { signOut, userProfile, user } = useAuth();
 
@@ -66,7 +71,13 @@ export default function Topbar() {
     .slice(0, 2);
 
   return (
-    <header className="sticky top-0 z-40 h-20 mx-6">
+    <header
+      className={
+        scrollTopbarWithContent
+          ? "relative z-40 h-20 mx-6 shrink-0"
+          : "sticky top-0 z-40 h-20 mx-6 shrink-0"
+      }
+    >
       <div className="flex h-full max-w-[1800px] mx-auto items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />

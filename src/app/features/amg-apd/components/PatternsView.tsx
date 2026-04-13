@@ -46,6 +46,9 @@ export default function PatternsView({
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
   const commitGraphBaseline = useAmgApdStore((s) => s.commitGraphBaseline);
   const resetGraphBaseline = useAmgApdStore((s) => s.resetGraphBaseline);
+  const setPatternsGraphFullscreen = useAmgApdStore(
+    (s) => s.setPatternsGraphFullscreen,
+  );
   const { userId } = useAuth();
 
   const showToast = useToast((s) => s.showToast);
@@ -75,6 +78,14 @@ export default function PatternsView({
   const [fullscreenGenPhase, setFullscreenGenPhase] = useState<
     null | "generating" | "success"
   >(null);
+
+  useEffect(() => {
+    setPatternsGraphFullscreen(fullscreenOpen);
+  }, [fullscreenOpen, setPatternsGraphFullscreen]);
+
+  useEffect(() => {
+    return () => setPatternsGraphFullscreen(false);
+  }, [setPatternsGraphFullscreen]);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
@@ -545,7 +556,13 @@ export default function PatternsView({
   }
 
   return (
-    <div className="space-y-2 max-w-400 mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
+    <div
+      className={
+        fullscreenOpen
+          ? "mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
+          : "mx-auto flex min-h-0 w-full max-w-400 flex-col space-y-2 overflow-x-hidden pb-6"
+      }
+    >
       {simulationModalOpen && (
         <div
           className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -633,103 +650,110 @@ export default function PatternsView({
           document.body,
         )}
 
-      <div className="sticky top-0 z-20 px-3 pt-2 pb-2 shadow-xl shadow-black/20 overflow-hidden shrink-0 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
-        <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-white/10">
-          <VersionSidebar
-            refreshTrigger={versionsRefreshTrigger}
-            projectId={projectId}
-          />
+      {!fullscreenOpen && (
+        <div className="sticky top-0 z-20 shrink-0 overflow-hidden px-3 pt-2 pb-2 shadow-xl shadow-black/20 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
+          <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-2">
+            <VersionSidebar
+              refreshTrigger={versionsRefreshTrigger}
+              projectId={projectId}
+            />
 
-          <button
-            type="button"
-            onClick={openSuggestions}
-            disabled={!hasDetections || !editedYaml}
-            className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
-              hasDetections && editedYaml
-                ? "bg-white text-black hover:bg-gray-200"
-                : "bg-gray-500/50 text-white/60 cursor-not-allowed"
-            }`}
-            title={
-              !editedYaml
-                ? "No current YAML available"
-                : hasDetections
-                  ? "View suggestions to fix detected anti-patterns"
-                  : "No anti-patterns detected"
-            }
-          >
-            View Suggestions
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadYaml}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          >
-            Download YAML
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadJson}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          >
-            Download JSON
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadImage}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          >
-            Download Image
-          </button>
-
-          {!onReturnToChat && (
             <button
               type="button"
-              onClick={handleReturnToChat}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              onClick={openSuggestions}
+              disabled={!hasDetections || !editedYaml}
+              className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+                hasDetections && editedYaml
+                  ? "bg-white text-black hover:bg-gray-200"
+                  : "bg-gray-500/50 text-white/60 cursor-not-allowed"
+              }`}
+              title={
+                !editedYaml
+                  ? "No current YAML available"
+                  : hasDetections
+                    ? "View suggestions to fix detected anti-patterns"
+                    : "No anti-patterns detected"
+              }
             >
-              Return to Chat
+              View Suggestions
             </button>
-          )}
-        </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          <Legend versionCount={versionCount ?? undefined} showNodeTypes={false} />
-
-          <div className="shrink-0">
             <button
               type="button"
-              onClick={() => setSimulationModalOpen(true)}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              onClick={handleDownloadYaml}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
             >
-              Proceed to Performance Simulator
+              Download YAML
             </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadJson}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            >
+              Download JSON
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadImage}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            >
+              Download Image
+            </button>
+
+            {!onReturnToChat && (
+              <button
+                type="button"
+                onClick={handleReturnToChat}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              >
+                Return to Chat
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <Legend versionCount={versionCount ?? undefined} showNodeTypes={false} />
+
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => setSimulationModalOpen(true)}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              >
+                Proceed to Performance Simulator
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="relative w-full min-w-0">
-        {fullscreenOpen && (
-          <div
-            className="min-h-[min(600px,70vh)] rounded-xl border border-white/5 bg-card/30"
-            aria-hidden
-          />
-        )}
+      <div
+        className={
+          fullscreenOpen
+            ? "relative flex min-h-0 w-full min-w-0 flex-1 flex-col"
+            : "relative min-w-0 w-full"
+        }
+      >
         <div
           className={
             fullscreenOpen
-              ? "fixed inset-0 z-[99998] flex flex-col gap-1.5 bg-slate-950 p-2 sm:p-2.5 min-w-0"
-              : "bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0"
+              ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2 bg-slate-950 p-2 sm:p-2.5"
+              : "flex min-w-0 flex-col overflow-hidden bg-card/80 shadow-xl shadow-black/20 backdrop-blur-sm"
           }
         >
           {fullscreenOpen && (
-            <div className="shrink-0 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/75 px-2.5 py-1.5 sm:px-3 sm:py-2">
-              <Legend
-                versionCount={versionCount ?? undefined}
-                showNodeTypes={false}
-              />
+            <div className="shrink-0 border-b border-white/15 bg-slate-950 px-3 py-2.5 sm:px-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+                Anti-pattern legend
+              </div>
+              <div className="mt-2 min-w-0">
+                <Legend
+                  versionCount={versionCount ?? undefined}
+                  showNodeTypes={false}
+                />
+              </div>
             </div>
           )}
           <div
@@ -771,7 +795,7 @@ export default function PatternsView({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 animate-in fade-in duration-300"
+            className="fixed inset-0 z-[350000] flex items-center justify-center p-4 animate-in fade-in duration-300"
             aria-live="polite"
             aria-busy={fullscreenGenPhase === "generating"}
           >

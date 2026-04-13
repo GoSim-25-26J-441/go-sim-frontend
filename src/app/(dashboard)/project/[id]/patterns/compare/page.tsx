@@ -259,44 +259,64 @@ export default function ProjectPatternsComparePage({
       </div>
 
       <div className="min-w-0 flex flex-col gap-6 flex-1 min-h-[calc(100dvh-280px)] max-w-400 mx-auto">
-        <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm p-6 shadow-xl shadow-black/20 shrink-0">
-          <div className="flex flex-wrap items-end justify-center gap-5">
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
+        <div className="shrink-0 rounded-2xl border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur-sm sm:p-6">
+          <div className="mb-4 border-b border-white/10 pb-4">
+            <h2 className="text-sm font-semibold text-white/95">
+              Choose versions
+            </h2>
+            <p className="mt-1 text-xs leading-relaxed text-white/45">
+              Select two different saved diagram versions. They open side by side
+              below once you run the comparison.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 sm:gap-5">
+            <div className="flex min-w-0 flex-col rounded-xl border border-white/10 bg-gray-900/35 p-4">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
                 Left version
-              </label>
+              </span>
               <select
-                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-55 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 scheme-dark"
+                className="mt-2 w-full min-w-0 cursor-pointer rounded-lg border border-white/10 bg-gray-800/90 px-3 py-2 text-sm text-white shadow-inner shadow-black/20 transition-colors scheme-dark hover:border-white/15 focus:border-[#9AA4B2]/40 focus:outline-none focus:ring-1 focus:ring-[#9AA4B2]/35 disabled:cursor-not-allowed disabled:opacity-50"
                 value={leftId}
                 onChange={(e) => setLeftId(e.target.value)}
                 disabled={loadingVersions}
               >
-                <option value="">Select…</option>
+                <option value="">Select a version…</option>
                 {versions.map((v) => (
                   <option key={v.id} value={v.id}>
-                    #{v.version_number} {v.title || "Untitled"}
+                    #{v.version_number} — {v.title || "Untitled"}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2]">
+            <div className="flex min-w-0 flex-col rounded-xl border border-white/10 bg-gray-900/35 p-4">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
                 Right version
-              </label>
+              </span>
               <select
-                className="rounded-2xl border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white min-w-55 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50 focus:border-[#9AA4B2]/50 scheme-dark"
+                className="mt-2 w-full min-w-0 cursor-pointer rounded-lg border border-white/10 bg-gray-800/90 px-3 py-2 text-sm text-white shadow-inner shadow-black/20 transition-colors scheme-dark hover:border-white/15 focus:border-[#9AA4B2]/40 focus:outline-none focus:ring-1 focus:ring-[#9AA4B2]/35 disabled:cursor-not-allowed disabled:opacity-50"
                 value={rightId}
                 onChange={(e) => setRightId(e.target.value)}
                 disabled={loadingVersions}
               >
-                <option value="">Select…</option>
+                <option value="">Select a version…</option>
                 {versions.map((v) => (
                   <option key={v.id} value={v.id}>
-                    #{v.version_number} {v.title || "Untitled"}
+                    #{v.version_number} — {v.title || "Untitled"}
                   </option>
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="mt-5 flex flex-col items-stretch gap-2 border-t border-white/10 pt-5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[11px] text-white/35">
+              {loadingVersions
+                ? "Loading versions…"
+                : versions.length === 0
+                  ? "No versions available yet."
+                  : `${versions.length} version${versions.length === 1 ? "" : "s"} available`}
+            </p>
             <button
               type="button"
               onClick={runCompare}
@@ -307,7 +327,7 @@ export default function ProjectPatternsComparePage({
                 !rightId ||
                 leftId === rightId
               }
-              className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+              className="inline-flex items-center justify-center rounded-md px-4 py-2 text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-white sm:shrink-0"
             >
               {loadingCompare ? "Loading…" : "Compare"}
             </button>
