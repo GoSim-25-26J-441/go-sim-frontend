@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512" role="img" aria-label="Select">
+  <rect width="64" height="64" fill="none"/>
+  <path
+    d="M 22 12 L 22 44 L 30 36 L 36 52 L 42 50 L 36 34 L 46 34 Z"
+    fill="none"
+    stroke="#334155"
+    stroke-width="2.2"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  />
+  <rect x="14" y="14" width="22" height="16" rx="2" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.9"/>
+</svg>

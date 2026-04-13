@@ -1,12 +1,19 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { DetectionKind, Severity } from "@/app/features/amg-apd/types";
-import {
-  NODE_KIND_COLOR,
-  colorForDetectionKind,
-} from "@/app/features/amg-apd/utils/colors";
+import { colorForDetectionKind } from "@/app/features/amg-apd/utils/colors";
+import { diagramIconUrlForKind } from "@/app/features/amg-apd/mappers/cyto/diagramNodeStyle";
 import { gradientStops } from "./svg";
 
 type StylesheetLike = Array<{ selector: string; style: Record<string, any> }>;
+
+/**
+ * Thin stroke for patterns graph; keep multi-color `line-fill: linear-gradient` (unchanged below).
+ * Arrow heads: width × arrow-scale — bump scales so heads match the prior ~1.25px stroke look.
+ */
+const EDGE_LINE_WIDTH = 0.98;
+const REF_STROKE = 1.25;
+const ARROW_SCALE_NON_CALLS = (REF_STROKE * 2) / EDGE_LINE_WIDTH;
+const ARROW_SCALE_CALLS = (REF_STROKE * 0.42) / EDGE_LINE_WIDTH;
 
 const EDGE_KIND_COLOR: Record<string, string> = {
   CALLS: "#1f2937",
@@ -15,10 +22,10 @@ const EDGE_KIND_COLOR: Record<string, string> = {
 };
 
 function borderWidthForSeverity(sev: Severity | null) {
-  if (sev === "HIGH") return 7;
-  if (sev === "MEDIUM") return 6;
-  if (sev === "LOW") return 5;
-  return 3;
+  if (sev === "HIGH") return 2;
+  if (sev === "MEDIUM") return 2;
+  if (sev === "LOW") return 2;
+  return 2;
 }
 
 function borderColorForNode(ele: any) {
@@ -67,29 +74,31 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "node",
     style: {
-      "background-color": (ele: any) => {
-        const kind = ele.data("kind") as keyof typeof NODE_KIND_COLOR;
-        return NODE_KIND_COLOR[kind] ?? "#e5e7eb";
-      },
-      label: "data(label)",
-      "text-wrap": "wrap",
-      "text-max-width": 140,
-      "text-valign": "center",
-      "text-halign": "center",
-      "font-size": 14,
-      "min-zoomed-font-size": 8,
-      color: "#0f172a",
-      width: "label",
-      height: "label",
-      padding: (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? "12px 12px 28px 12px" : "12px";
-      },
+      /*
+       * Name + kind are drawn by `NodeDualLineLabels` (per-line font size/color). Keep Cytoscape
+       * `label` empty so text is not painted twice. `padding` adds outside the body in Cytoscape.
+       */
+      "background-color": "#ffffff",
+      "background-image": (ele: any) =>
+        diagramIconUrlForKind(ele.data("kind") as string | undefined),
+      "background-fit": "none",
+      "background-width": "30px",
+      "background-height": "30px",
+      "background-position-x": "50%",
+      "background-position-y": "2px",
+      "background-opacity": 1,
 
+      label: "",
+
+      width: 70,
+      height: 55,
+      padding: "0px",
+
+      /* Anti-pattern border (unchanged behaviour) */
       "border-width": (ele: any) => {
         const sev = (ele.data("severity") as Severity | null) ?? null;
         const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? borderWidthForSeverity(sev) : 3;
+        return kinds.length ? borderWidthForSeverity(sev) : 2;
       },
       "border-color": (ele: any) => borderColorForNode(ele),
 
@@ -98,14 +107,10 @@ export const cyStyles: StylesheetLike = [
         return kinds.length > 1 ? "double" : "solid";
       },
 
-      shape: (ele: any) => {
-        const kind = (ele.data("kind") as string) ?? "";
-        const k = kind.toUpperCase();
-        return k === "DATABASE" || k === "DB" ? "ellipse" : "round-rectangle";
-      },
+      shape: "round-rectangle",
 
       "z-index": 10,
-      "events": "yes",
+      events: "yes",
       "text-events": "yes",
     },
   },
@@ -113,7 +118,7 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "node:selected",
     style: {
-      "border-width": 8,
+      "border-width": 3,
       "border-color": "#0f172a",
       "z-index": 9999,
     },
@@ -128,9 +133,12 @@ export const cyStyles: StylesheetLike = [
       "target-arrow-opacity": 1,
       "line-color": "#1f2937",
       "target-arrow-color": "#1f2937",
-      width: 2.5,
+      width: EDGE_LINE_WIDTH,
+      "arrow-scale": ARROW_SCALE_NON_CALLS,
+      "line-outline-width": 0,
+      "line-cap": "butt",
       opacity: 1,
-      "events": "yes",
+      events: "yes",
       "z-index": 8,
       label: "data(label)",
       "font-size": 10,
@@ -175,16 +183,26 @@ export const cyStyles: StylesheetLike = [
         return EDGE_KIND_COLOR[kind] ?? "#1f2937";
       },
 
-      width: (ele: any) => {
-        const severity = ele.data("severity") as Severity | null;
-        if (!severity) return 2.5;
-        return severity === "HIGH" ? 5 : severity === "MEDIUM" ? 4 : 3;
-      },
+      width: EDGE_LINE_WIDTH,
+    },
+  },
+
+  {
+    /* Data selector so CALLS styling applies even if the `calls` class is missing (e.g. added in edit mode). */
+    selector: 'edge[kind = "CALLS"]',
+    style: {
+      "arrow-scale": ARROW_SCALE_CALLS,
+      "font-size": 6,
+      "min-zoomed-font-size": 6,
+      "text-background-padding": 1,
+      /* Offset label perpendicular to the edge so it does not sit on the stroke */
+      "edge-text-rotation": "autorotate",
+      "text-margin-y": -12,
     },
   },
 
   { selector: "edge.reads", style: { "line-style": "dashed" } },
   { selector: ".has-detection-edge", style: { "line-style": "solid" } },
-  { selector: "edge:hover", style: { cursor: "pointer", width: 4 } },
-  { selector: "edge:selected", style: { "z-index": 9998, width: 4 } },
+  { selector: "edge:hover", style: { cursor: "pointer" } },
+  { selector: "edge:selected", style: { "z-index": 9998 } },
 ];

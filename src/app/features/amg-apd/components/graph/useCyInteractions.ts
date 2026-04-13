@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type cytoscape from "cytoscape";
 import type {
   EditTool,
@@ -29,6 +29,7 @@ const TOOL_TO_KIND: Record<EditTool, NodeKind> = {
   "add-client": "CLIENT",
   "add-user-actor": "USER_ACTOR",
   "connect-calls": "SERVICE",
+  "delete-element": "SERVICE",
 };
 
 const TOOL_TO_LABEL: Record<EditTool, string> = {
@@ -41,6 +42,7 @@ const TOOL_TO_LABEL: Record<EditTool, string> = {
   "add-client": "new-client",
   "add-user-actor": "new-user-actor",
   "connect-calls": "node",
+  "delete-element": "node",
 };
 
 /** Prefix used for next unique label per tool (e.g. "service", "database"). */
@@ -54,10 +56,22 @@ const TOOL_TO_LABEL_PREFIX: Record<EditTool, string> = {
   "add-client": "client",
   "add-user-actor": "user-actor",
   "connect-calls": "node",
+  "delete-element": "node",
+};
+
+/** Label prefix for `getNextUniqueLabel` when adding/pasting a node of this kind. */
+export const NODE_KIND_TO_LABEL_PREFIX: Record<NodeKind, string> = {
+  SERVICE: "service",
+  API_GATEWAY: "api-gateway",
+  DATABASE: "database",
+  EVENT_TOPIC: "event-topic",
+  EXTERNAL_SYSTEM: "external-system",
+  CLIENT: "client",
+  USER_ACTOR: "user-actor",
 };
 
 /** Returns the next unique label for the given prefix (e.g. "service" -> "service-1", "service-2", …). */
-function getNextUniqueLabel(cy: cytoscape.Core, prefix: string): string {
+export function getNextUniqueLabel(cy: cytoscape.Core, prefix: string): string {
   const labels = new Set<string>();
   cy.nodes().forEach((n) => {
     if ((n as any).hasClass?.("halo")) return;
@@ -109,6 +123,9 @@ export function useCyInteractions({
     pos: { x: number; y: number },
   ) => void;
 }) {
+  const sameNodeReselectRef = useRef<string | null>(null);
+  const sameEdgeReselectRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!cy) return;
 
@@ -125,11 +142,25 @@ export function useCyInteractions({
 
       const shiftKey = evt.originalEvent?.shiftKey === true;
 
+      if (editMode && tool === "delete-element") {
+        try {
+          node.remove();
+        } catch {}
+        sameNodeReselectRef.current = null;
+        sameEdgeReselectRef.current = null;
+        setSelected(null);
+        safeUnselectAll();
+        recomputeStats();
+        return;
+      }
+
       if (editMode && tool === "connect-calls") {
         const edgeKind: EdgeKind = "CALLS";
         const id = node.id();
 
         if (!pendingSource) {
+          sameNodeReselectRef.current = null;
+          sameEdgeReselectRef.current = null;
           setPendingSource(id);
           safeUnselectAll();
           node.select();
@@ -141,6 +172,8 @@ export function useCyInteractions({
           setPendingSource(null);
           safeUnselectAll();
           setSelected(null);
+          sameNodeReselectRef.current = null;
+          sameEdgeReselectRef.current = null;
           return;
         }
 
@@ -165,6 +198,7 @@ export function useCyInteractions({
           target: targetId,
           kind: edgeKind,
           label,
+          callSync: defaultCallSync,
           attrs: {
             kind: defaultCallProtocol,
             dep_kind: defaultCallProtocol,
@@ -172,15 +206,36 @@ export function useCyInteractions({
           },
         };
 
-        cy.add({ group: "edges", data: edgeData });
+        cy.add({ group: "edges", data: edgeData, classes: "calls" });
 
         setPendingSource(null);
         safeUnselectAll();
         recomputeStats();
+        sameNodeReselectRef.current = null;
+        sameEdgeReselectRef.current = null;
         return;
       }
 
+      if (
+        editMode &&
+        tool === "select" &&
+        !shiftKey &&
+        !pendingAntiPatternKind &&
+        !pendingSource
+      ) {
+        const id = node.id();
+        if (sameNodeReselectRef.current === id) {
+          sameNodeReselectRef.current = null;
+          sameEdgeReselectRef.current = null;
+          safeUnselectAll();
+          setSelected(null);
+          return;
+        }
+      }
+
       if (shiftKey) {
+        sameNodeReselectRef.current = null;
+        sameEdgeReselectRef.current = null;
         node.select();
         const sel = cy.elements(":selected");
         setSelected({
@@ -191,6 +246,13 @@ export function useCyInteractions({
         safeUnselectAll();
         node.select();
         setSelected({ type: "node", data: node.data() });
+        if (editMode) {
+          sameNodeReselectRef.current = node.id();
+          sameEdgeReselectRef.current = null;
+        } else {
+          sameNodeReselectRef.current = null;
+          sameEdgeReselectRef.current = null;
+        }
       }
     };
 
@@ -200,7 +262,40 @@ export function useCyInteractions({
 
       const shiftKey = evt.originalEvent?.shiftKey === true;
 
+      if (editMode && tool === "delete-element") {
+        try {
+          edge.remove();
+        } catch {}
+        sameNodeReselectRef.current = null;
+        sameEdgeReselectRef.current = null;
+        setSelected(null);
+        safeUnselectAll();
+        recomputeStats();
+        return;
+      }
+
+      if (
+        editMode &&
+        tool === "select" &&
+        !shiftKey &&
+        !pendingAntiPatternKind &&
+        !pendingSource
+      ) {
+        const eid = edge.id();
+        if (sameEdgeReselectRef.current === eid) {
+          sameEdgeReselectRef.current = null;
+          sameNodeReselectRef.current = null;
+          try {
+            cy.elements().unselect();
+          } catch {}
+          setSelected(null);
+          return;
+        }
+      }
+
       if (shiftKey) {
+        sameNodeReselectRef.current = null;
+        sameEdgeReselectRef.current = null;
         edge.select();
         const sel = cy.elements(":selected");
         setSelected({
@@ -213,6 +308,13 @@ export function useCyInteractions({
         } catch {}
         edge.select();
         setSelected({ type: "edge", data: edge.data() });
+        if (editMode) {
+          sameEdgeReselectRef.current = edge.id();
+          sameNodeReselectRef.current = null;
+        } else {
+          sameNodeReselectRef.current = null;
+          sameEdgeReselectRef.current = null;
+        }
       }
     };
 
@@ -224,6 +326,8 @@ export function useCyInteractions({
       if (editMode && pendingAntiPatternKind && onAddAntiPatternAt) {
         onAddAntiPatternAt(pendingAntiPatternKind, pos);
         setPendingAntiPatternKind?.(null);
+        sameNodeReselectRef.current = null;
+        sameEdgeReselectRef.current = null;
         return;
       }
 
@@ -258,6 +362,10 @@ export function useCyInteractions({
         }
 
         recomputeStats();
+        if (editMode) {
+          sameNodeReselectRef.current = id;
+          sameEdgeReselectRef.current = null;
+        }
         return;
       }
 
@@ -265,6 +373,8 @@ export function useCyInteractions({
       setSelected(null);
       setPendingSource(null);
       setPendingAntiPatternKind?.(null);
+      sameNodeReselectRef.current = null;
+      sameEdgeReselectRef.current = null;
     };
 
     cy.on("tap", "node", onNodeTap);
