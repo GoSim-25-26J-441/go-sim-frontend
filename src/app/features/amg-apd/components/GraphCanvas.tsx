@@ -47,6 +47,15 @@ import {
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
 import { applyReciprocalCallLanes } from "@/app/features/amg-apd/utils/reciprocalCallLanes";
+import {
+  compositeHeaderAndGraph,
+  EXPORT_IMAGE_FRAME_BG,
+  MIN_EXPORT_GRAPH_PIXEL_WIDTH,
+  padCanvasUniform,
+  renderExportImageHeader,
+  scaleCanvasToMinWidth,
+} from "@/app/features/amg-apd/utils/exportImageComposite";
+import { diagramNodeLabelText } from "@/app/features/amg-apd/mappers/cyto/diagramNodeStyle";
 
 import { useToast } from "@/hooks/useToast";
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
@@ -61,7 +70,10 @@ import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
 import NodeDualLineLabels from "@/app/features/amg-apd/components/graph/NodeDualLineLabels";
 import EdgeCallFlowBolts from "@/app/features/amg-apd/components/graph/EdgeCallFlowBolts";
-import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
+import {
+  getGraphStatsFromCy,
+  recomputeStats,
+} from "@/app/features/amg-apd/components/graph/recomputeStats";
 import {
   ChevronLeft,
   ChevronRight,
@@ -85,6 +97,179 @@ function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   if (typeof anyCy.destroyed === "function" && anyCy.destroyed()) return false;
   if (typeof anyCy.container === "function" && !anyCy.container()) return false;
   return true;
+}
+
+const CY_EXPORT_LABEL_KEYS = [
+  "label",
+  "font-size",
+  "color",
+  "text-valign",
+  "text-halign",
+  "text-margin-y",
+  "text-wrap",
+  "text-max-width",
+  "text-background-color",
+  "text-background-opacity",
+  "text-background-padding",
+] as const;
+
+/** Rasterize graph with two-line node labels (name + type) for PNG when html2canvas fails. */
+async function exportCyToCanvasWithNodeLabels(
+  cy: cytoscape.Core,
+): Promise<HTMLCanvasElement | null> {
+  const nodes = cy.nodes().filter((n) => !n.hasClass("halo"));
+
+  try {
+    cy.batch(() => {
+      nodes.forEach((n) => {
+        n.style({
+          label: diagramNodeLabelText({ data: (key) => n.data(key) }),
+          "font-size": 6,
+          color: "#0f172a",
+          "text-valign": "top",
+          "text-halign": "center",
+          "text-margin-y": "-14px",
+          "text-wrap": "wrap",
+          "text-max-width": "90px",
+          "text-background-color": "#ffffff",
+          "text-background-opacity": 0.93,
+          "text-background-padding": 2,
+        });
+      });
+    });
+    cy.style().update();
+
+    const pngDataUrl = cy.png({
+      full: true,
+      scale: 2,
+      bg: "#f9fafb",
+    });
+
+    return await new Promise<HTMLCanvasElement | null>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas);
+      };
+      img.onerror = () => resolve(null);
+      img.src = pngDataUrl;
+    });
+  } catch {
+    return null;
+  } finally {
+    try {
+      cy.batch(() => {
+        nodes.forEach((n) => {
+          for (const k of CY_EXPORT_LABEL_KEYS) {
+            n.removeStyle(k);
+          }
+        });
+      });
+      cy.style().update();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Wider CSS width so html2canvas + cytoscape fit() spread nodes horizontally. */
+const MIN_EXPORT_GRAPH_CSS_WIDTH = 1260;
+
+async function captureGraphRegionHtmlToCanvas(
+  wrap: HTMLDivElement,
+): Promise<HTMLCanvasElement | null> {
+  try {
+    const { default: html2canvas } = await import("html2canvas");
+    return await html2canvas(wrap, {
+      backgroundColor: "#f9fafb",
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      ignoreElements: (node) => {
+        const el = node as HTMLElement;
+        return (
+          el.getAttribute?.("role") === "menu" ||
+          !!el.closest?.('[role="menu"]')
+        );
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Temporarily widens the graph panel, re-fits the graph, captures, then restores
+ * viewport so the PNG uses horizontal space like a wide layout.
+ */
+async function captureGraphWithExpandedViewport(
+  wrap: HTMLDivElement,
+  cy: cytoscape.Core,
+): Promise<HTMLCanvasElement | null> {
+  const row = wrap.parentElement;
+  const savedZoom = cy.zoom();
+  const p = cy.pan();
+  const savedPan = { x: p.x, y: p.y };
+  const prevWrap = {
+    minWidth: wrap.style.minWidth,
+    width: wrap.style.width,
+    maxWidth: wrap.style.maxWidth,
+    flex: wrap.style.flex,
+    boxSizing: wrap.style.boxSizing,
+  };
+  const prevRow = row
+    ? { overflow: row.style.overflow, minWidth: row.style.minWidth }
+    : null;
+
+  const rectW = wrap.getBoundingClientRect().width;
+  const vw =
+    typeof window !== "undefined" ? window.innerWidth : MIN_EXPORT_GRAPH_CSS_WIDTH;
+  const targetCss = Math.max(
+    rectW,
+    Math.min(MIN_EXPORT_GRAPH_CSS_WIDTH, Math.floor(vw * 0.94)),
+  );
+
+  wrap.style.boxSizing = "border-box";
+  wrap.style.minWidth = `${targetCss}px`;
+  wrap.style.width = `${targetCss}px`;
+  wrap.style.maxWidth = "none";
+  if (row) {
+    row.style.overflow = "visible";
+    row.style.minWidth = `${targetCss}px`;
+  }
+
+  try {
+    cy.resize();
+    cy.fit(cy.elements(), 72);
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => setTimeout(r, 70));
+    return await captureGraphRegionHtmlToCanvas(wrap);
+  } catch {
+    return null;
+  } finally {
+    wrap.style.minWidth = prevWrap.minWidth;
+    wrap.style.width = prevWrap.width;
+    wrap.style.maxWidth = prevWrap.maxWidth;
+    wrap.style.flex = prevWrap.flex;
+    wrap.style.boxSizing = prevWrap.boxSizing;
+    if (row && prevRow) {
+      row.style.overflow = prevRow.overflow;
+      row.style.minWidth = prevRow.minWidth;
+    }
+    cy.resize();
+    cy.zoom(savedZoom);
+    cy.pan(savedPan);
+  }
 }
 
 type ContextMenuState =
@@ -571,7 +756,7 @@ export default function GraphCanvas({
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
 
-  const EXPORT_PADDING = 64;
+  const EXPORT_PADDING = 32;
 
   useEffect(() => {
     if (!onExportImageReady || !cyAlive(cy)) return;
@@ -580,67 +765,55 @@ export default function GraphCanvas({
       const wrap = containerRef.current;
       if (!c || !cyAlive(c)) return null;
 
-      const padComposite = async (sourceCanvas: HTMLCanvasElement) => {
-        const pad = EXPORT_PADDING;
-        const w = sourceCanvas.width + 2 * pad;
-        const h = sourceCanvas.height + 2 * pad;
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return sourceCanvas.toDataURL("image/png");
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(sourceCanvas, pad, pad);
-        return canvas.toDataURL("image/png");
-      };
+      const detections = analysis.detections;
 
       return (async (): Promise<string | null> => {
-        try {
-          if (wrap) {
-            const { default: html2canvas } = await import("html2canvas");
-            const shot = await html2canvas(wrap, {
-              backgroundColor: "#f9fafb",
-              scale: 2,
-              useCORS: true,
-              allowTaint: true,
-              logging: false,
-            });
-            return padComposite(shot);
+        let graphCanvas: HTMLCanvasElement | null = null;
+
+        if (wrap) {
+          graphCanvas = await captureGraphWithExpandedViewport(wrap, c);
+          if (!graphCanvas) {
+            graphCanvas = await captureGraphRegionHtmlToCanvas(wrap);
           }
-        } catch {
-          /* fall through to cy.png */
         }
 
+        if (!graphCanvas) {
+          graphCanvas = await exportCyToCanvasWithNodeLabels(c);
+        }
+
+        if (!graphCanvas) return null;
+
+        graphCanvas = scaleCanvasToMinWidth(
+          graphCanvas,
+          MIN_EXPORT_GRAPH_PIXEL_WIDTH,
+        );
+
+        const exportStats =
+          getGraphStatsFromCy(c, analysis) ?? computeStatsFromData(analysis);
+        const header = renderExportImageHeader(
+          graphCanvas.width,
+          detections,
+          exportStats,
+        );
+        const merged = compositeHeaderAndGraph(header, graphCanvas, {
+          gap: 16,
+          pad: 12,
+          background: EXPORT_IMAGE_FRAME_BG,
+        });
+        const padded = padCanvasUniform(
+          merged,
+          EXPORT_PADDING,
+          EXPORT_IMAGE_FRAME_BG,
+        );
+
         try {
-          const pngDataUrl = c.png({
-            full: true,
-            scale: 2,
-            bg: "#ffffff",
-          });
-          return new Promise<string | null>((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-              const canvas = document.createElement("canvas");
-              canvas.width = img.width;
-              canvas.height = img.height;
-              const ctx = canvas.getContext("2d");
-              if (!ctx) {
-                resolve(pngDataUrl);
-                return;
-              }
-              ctx.drawImage(img, 0, 0);
-              void padComposite(canvas).then(resolve);
-            };
-            img.onerror = () => resolve(pngDataUrl);
-            img.src = pngDataUrl;
-          });
+          return padded.toDataURL("image/png");
         } catch {
           return null;
         }
       })();
     });
-  }, [cy, onExportImageReady]);
+  }, [cy, onExportImageReady, analysis]);
 
   useEffect(() => {
     if (!onExportGraphJsonReady) return;
@@ -1080,24 +1253,21 @@ export default function GraphCanvas({
         {!readOnly &&
           effectiveEditMode &&
             (leftPanelCollapsed ? (
-            <div
-              className={`w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2 relative z-10 ${layoutMode === "fullscreen" ? "min-h-0 h-full self-stretch" : ""}`}
+            <button
+              type="button"
+              onClick={() => setLeftPanelCollapsed(false)}
+              title="Show toolbox"
+              aria-label="Show toolbox"
+              className={`w-10 shrink-0 flex flex-col items-center justify-start gap-2 pt-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors relative z-10 ${workAreaHeightClass}`}
             >
-              <button
-                type="button"
-                onClick={() => setLeftPanelCollapsed(false)}
-                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-                aria-label="Show toolbox"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              <ChevronRight className="h-4 w-4 shrink-0" />
               <span
-                className="mt-2 text-[9px] text-slate-500"
+                className="text-[9px] opacity-80"
                 style={{ writingMode: "vertical-rl" }}
               >
                 Toolbox
               </span>
-            </div>
+            </button>
           ) : (
             <aside
               className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${workAreaHeightClass}`}
@@ -1335,7 +1505,7 @@ export default function GraphCanvas({
               type="button"
               onClick={() => setRightPanelCollapsed(false)}
               title="Show details"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
+              className={`w-10 shrink-0 flex flex-col items-center justify-start gap-2 pt-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors ${workAreaHeightClass}`}
             >
               <Info className="h-4 w-4 shrink-0" />
               <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
