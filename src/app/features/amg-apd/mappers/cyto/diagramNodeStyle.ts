@@ -61,7 +61,7 @@ export function diagramKindCaption(kind: string | undefined): string {
     case "CLIENT":
       return "Client";
     case "USER_ACTOR":
-      return "User";
+      return "user_actor";
     default:
       return "Service";
   }

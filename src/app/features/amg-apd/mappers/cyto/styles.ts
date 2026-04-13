@@ -154,11 +154,11 @@ export const cyStyles: StylesheetLike = [
       height: 30,
       padding: "0px",
 
-      /* Anti-pattern border (unchanged behaviour) */
+      /* Uniform 1px border; antipattern nodes use same width (color differs). Selected: 1.5 in `node:selected`. */
       "border-width": (ele: any) => {
         const sev = (ele.data("severity") as Severity | null) ?? null;
         const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? borderWidthForSeverity(sev) : 2;
+        return kinds.length ? borderWidthForSeverity(sev) : 1;
       },
       "border-color": (ele: any) => borderColorForNode(ele),
 

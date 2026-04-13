@@ -207,7 +207,7 @@ export function SelectionDetailsMain({
     EVENT_TOPIC: "Event Topic",
     EXTERNAL_SYSTEM: "External System",
     CLIENT: "Client (web/mobile)",
-    USER_ACTOR: "User / Actor",
+    USER_ACTOR: "user_actor",
   };
 
   if (!selected) {
