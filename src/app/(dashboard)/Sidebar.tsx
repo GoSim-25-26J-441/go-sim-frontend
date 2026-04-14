@@ -32,6 +32,7 @@ import { getCurrentUser, getFirebaseIdToken } from "@/lib/firebase/auth";
 import { diFetchClient } from "@/modules/di/clientFetch";
 import { getProjectIdFromPathname } from "@/lib/projectPath";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { CreateProjectModal } from "@/components/ui/CreateProjectModal";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -61,6 +62,7 @@ export default function Sidebar() {
   const [renameValue, setRenameValue] = useState("");
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [createProjectModalOpen, setCreateProjectModalOpen] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const menuPortalRef = useRef<HTMLDivElement | null>(null);
@@ -100,8 +102,14 @@ export default function Sidebar() {
 
   const selectedProject = sp.get("project") ?? sp.get("job");
 
-  async function onNew() {
+  async function createProjectWithName(projectName: string) {
     if (isCreatingNew) return;
+
+    const trimmed = projectName.trim();
+    if (!trimmed) {
+      showToast("Please enter a project name", "error");
+      return;
+    }
 
     try {
       setIsCreatingNew(true);
@@ -155,10 +163,11 @@ export default function Sidebar() {
       }
 
       const project = await createProject({
-        name: "New project",
+        name: trimmed,
         is_temporary: false,
       }).unwrap();
 
+      setCreateProjectModalOpen(false);
       router.push(`/diagram?project=${project.id}`);
       showToast("New project created successfully", "success");
     } catch (e: any) {
@@ -333,22 +342,23 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="h-[95%] flex flex-row">
+    <aside className="h-full min-h-0 flex flex-row">
       <div className="w-64 md:w-[280px] lg:w-[320px] h-full flex flex-col px-5 pt-5">
         <div className="p-4 border-b border-gray-800 flex justify-end">
           <button
-            onClick={onNew}
+            type="button"
+            onClick={() => setCreateProjectModalOpen(true)}
             disabled={isCreatingNew || isCreatingRemote}
             className="flex items-center gap-2 text-white transition-colors duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
-            <span>{isCreatingNew ? "Creating..." : "New Project"}</span>
+            <span>New Project</span>
           </button>
         </div>
 
         <div
           ref={projectsScrollRef}
-          className="flex-1 overflow-y-auto py-4 space-y-6"
+          className="flex-1 overflow-y-auto py-4 space-y-6 scrollbar-sidebar"
         >
           <div>
             <div className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider mb-2 px-2">
@@ -469,7 +479,7 @@ export default function Sidebar() {
             return createPortal(
               <div
                 ref={menuPortalRef}
-                className="fixed w-56 py-2 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                className="fixed w-56 py-2 bg-[#1F1F1F] rounded-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
                 style={{
                   top: menuPosition.top,
                   left: menuPosition.left,
@@ -586,6 +596,16 @@ export default function Sidebar() {
             );
           }
         }}
+      />
+
+      <CreateProjectModal
+        open={createProjectModalOpen}
+        onClose={() => {
+          if (isCreatingNew) return;
+          setCreateProjectModalOpen(false);
+        }}
+        onCreate={(name) => createProjectWithName(name)}
+        busy={isCreatingNew}
       />
 
       <ConfirmModal

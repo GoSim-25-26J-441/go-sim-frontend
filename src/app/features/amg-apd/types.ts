@@ -12,6 +12,9 @@ export interface Node {
   id: string;
   name: string;
   kind: NodeKind;
+  /** Layout coordinates when saved (same idea as `/diagram` node JSON). */
+  x?: number;
+  y?: number;
   attrs?: Record<string, any>;
 }
 
@@ -91,7 +94,8 @@ export type EditTool =
   | "add-external-system"
   | "add-client"
   | "add-user-actor"
-  | "connect-calls";
+  | "connect-calls"
+  | "delete-element";
 
 export type SelectedItem =
   | { type: "node"; data: any }

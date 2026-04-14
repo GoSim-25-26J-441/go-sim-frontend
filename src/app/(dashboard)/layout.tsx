@@ -18,11 +18,11 @@ export default function DashboardLayout({
       <SessionProvider>
         <ReduxProvider>
           <ConnectionMonitor />
-          <div className="min-h-screen grid grid-rows-[56px_auto] bg-linear-to-b from-[#1F1F1F] to-black">
+          <div className="h-screen overflow-hidden grid grid-rows-[80px_minmax(0,1fr)] bg-linear-to-b from-[#1F1F1F] to-black">
             <Topbar />
-            <div className="min-h-0 grid md:grid-cols-[280px_1fr]">
+            <div className="min-h-0 overflow-hidden grid md:grid-cols-[280px_1fr]">
               <Sidebar />
-              <main className="relative overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
+              <main className="relative min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
                 <img
                   src="/logo/logo.png"
                   alt="logo"

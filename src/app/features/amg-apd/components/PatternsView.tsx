@@ -21,7 +21,12 @@ import { fetchLatestProjectDiagramVersionId } from "@/modules/di/fetchLatestProj
 import type {
   AnalysisResult,
   AmgApdVersionSummary,
+  Graph,
 } from "@/app/features/amg-apd/types";
+import {
+  nodeLayoutPayloadFromGraph,
+  type NodeLayoutPayload,
+} from "@/app/features/amg-apd/utils/graphEditUtils";
 
 type PatternsViewProps = {
   projectId?: string;
@@ -67,6 +72,7 @@ export default function PatternsView({
   >(null);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
+  const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
   const restoreStartedRef = useRef(false);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
@@ -75,6 +81,7 @@ export default function PatternsView({
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
     title?: string,
+    nodeLayout?: NodeLayoutPayload,
   ): Promise<AnalysisResult> {
     let versionTitle = title;
     if (versionTitle == null || versionTitle.trim() === "") {
@@ -99,6 +106,9 @@ export default function PatternsView({
     const fd = new FormData();
     fd.append("file", blob, "architecture.yaml");
     fd.append("title", versionTitle.trim());
+    if (nodeLayout && Object.keys(nodeLayout).length > 0) {
+      fd.append("node_layout", JSON.stringify(nodeLayout));
+    }
 
     const res = await fetch("/api/amg-apd/analyze-upload", {
       method: "POST",
@@ -265,8 +275,10 @@ export default function PatternsView({
       showToast("No graph data to download.", "warning");
       return;
     }
+    const graphFromCanvas = exportGraphJsonRef.current?.() ?? null;
+    const graph = graphFromCanvas ?? last.graph;
     const payload = {
-      graph: last.graph,
+      graph,
       detections: last.detections ?? [],
       dot_content: last.dot_content ?? undefined,
       version_id: last.version_id,
@@ -384,6 +396,10 @@ export default function PatternsView({
         );
       }
 
+      const nodeLayout = nodeLayoutPayloadFromGraph(
+        exportGraphJsonRef.current?.() ?? undefined,
+      );
+
       setEditedYaml(fixedYaml);
       setLast(fixedAnalysis);
       setSugs((data?.applied_fixes ?? []) as Suggestion[]);
@@ -391,7 +407,11 @@ export default function PatternsView({
 
       setRegenerating(true);
       try {
-        const saved = await analyzeAndSaveAsNewVersion(fixedYaml);
+        const saved = await analyzeAndSaveAsNewVersion(
+          fixedYaml,
+          undefined,
+          nodeLayout,
+        );
         setLast(saved);
         setGraphRegenerating(true);
         setGraphVersion((v) => v + 1);
@@ -638,11 +658,18 @@ export default function PatternsView({
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
+              onExportGraphJsonReady={(getGraph) => {
+                exportGraphJsonRef.current = getGraph;
+              }}
               onDuplicateName={(name) => setDuplicateNameForModal(name)}
-              onGenerateGraph={async (yaml) => {
+              onGenerateGraph={async (yaml, nodeLayout) => {
                 setRegenerating(true);
                 try {
-                  const data = await analyzeAndSaveAsNewVersion(yaml);
+                  const data = await analyzeAndSaveAsNewVersion(
+                    yaml,
+                    undefined,
+                    nodeLayout,
+                  );
                   setLast(data);
                   setEditedYaml(yaml);
                   setGraphVersion((v) => v + 1);

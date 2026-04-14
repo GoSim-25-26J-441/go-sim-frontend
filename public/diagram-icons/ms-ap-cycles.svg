@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512" role="img" aria-label="Dependency cycles">
+  <rect width="64" height="64" fill="none"/>
+  <rect x="26" y="10" width="14" height="11" rx="2" fill="none" stroke="#334155" stroke-width="2"/>
+  <rect x="44" y="30" width="12" height="11" rx="2" fill="none" stroke="#334155" stroke-width="2"/>
+  <rect x="8" y="30" width="12" height="11" rx="2" fill="none" stroke="#334155" stroke-width="2"/>
+  <path
+    d="M 33 21 L 44 30 M 50 38 L 38 48 M 20 48 L 14 38 M 14 33 L 26 21"
+    fill="none"
+    stroke="#b45309"
+    stroke-width="2"
+    stroke-linecap="round"
+  />
+  <path d="M 40 26 L 44 30 L 39 32" fill="none" stroke="#b45309" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 22 44 L 14 38 L 22 35" fill="none" stroke="#b45309" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

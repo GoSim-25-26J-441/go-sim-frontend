@@ -149,6 +149,84 @@ html.dark select {
   background: transparent;
 }
 
+/* Extra-thin scrollbar for dashboard sidebar lists */
+.scrollbar-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Edit toolbox + Details panel: gutter + deeper sky accent (slightly darker mid-blue, not navy) */
+.scrollbar-toolbox {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(2, 132, 199, 0.72) rgba(15, 23, 42, 0.88);
+  scrollbar-gutter: stable;
+}
+
+.scrollbar-toolbox::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-track {
+  background: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.95),
+    rgba(30, 41, 59, 0.9)
+  );
+  border-radius: 8px;
+  margin: 6px 2px;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(2, 132, 199, 0.58),
+    rgba(3, 105, 161, 0.5)
+  );
+  border-radius: 8px;
+  border: 2px solid rgba(15, 23, 42, 0.65);
+  background-clip: padding-box;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(2, 132, 199, 0.78),
+    rgba(3, 105, 161, 0.66)
+  );
+  border-color: rgba(15, 23, 42, 0.5);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-thumb:active {
+  background: rgba(3, 105, 161, 0.78);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-corner {
+  background: rgba(15, 23, 42, 0.95);
+}
+
 /* Apply the same subtle scrollbar to the whole page (viewport scroll) */
 html,
 body {

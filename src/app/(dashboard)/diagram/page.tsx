@@ -424,6 +424,13 @@ export default function DrawDiagram() {
     return typeof id === "string" && id.length > 0 ? id : undefined;
   }, [diagramVersionFromQuery, summary?.latest_diagram_version?.id]);
 
+  const summaryProjectId = useMemo(() => {
+    const p = summary?.project as Record<string, unknown> | undefined;
+    const fromPublicId = typeof p?.public_id === "string" ? p.public_id : undefined;
+    const fromId = typeof p?.id === "string" ? p.id : undefined;
+    return fromPublicId ?? fromId ?? null;
+  }, [summary]);
+
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
   const [diagramLoaded, setDiagramLoaded] = useState(false);
@@ -1194,6 +1201,7 @@ export default function DrawDiagram() {
       loadingSummary ||
       diagramLoaded ||
       projectId !== lastLoadedProjectId ||
+      (summaryProjectId !== null && summaryProjectId !== projectId) ||
       !summary?.latest_diagram_version?.diagram_json
     ) {
       return;
@@ -1211,7 +1219,15 @@ export default function DrawDiagram() {
     } else {
       console.log("No diagram_json found in summary:", summary);
     }
-  }, [projectId, summary, loadingSummary, diagramLoaded, loadDiagramFromJson, lastLoadedProjectId]);
+  }, [
+    projectId,
+    summary,
+    summaryProjectId,
+    loadingSummary,
+    diagramLoaded,
+    loadDiagramFromJson,
+    lastLoadedProjectId,
+  ]);
 
   useEffect(() => {
     if (reloadFlag !== "1" || !diagramLoaded || !projectId) return;
