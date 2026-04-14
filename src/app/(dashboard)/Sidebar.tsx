@@ -469,7 +469,7 @@ export default function Sidebar() {
             return createPortal(
               <div
                 ref={menuPortalRef}
-                className="fixed w-56 py-2 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                className="fixed w-56 py-2 bg-[#1F1F1F] rounded-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
                 style={{
                   top: menuPosition.top,
                   left: menuPosition.left,
