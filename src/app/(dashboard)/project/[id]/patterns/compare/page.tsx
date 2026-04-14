@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, GitCompare } from "lucide-react";
@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/useToast";
 import type {
   AmgApdVersionSummary,
   AnalysisResult,
+  Graph,
 } from "@/app/features/amg-apd/types";
 
 type CompareResult = {
@@ -55,6 +56,14 @@ export default function ProjectPatternsComparePage({
   const [error, setError] = useState<string | null>(null);
   const [simulationModalOpen, setSimulationModalOpen] = useState(false);
   const [simulationSelectedVersion, setSimulationSelectedVersion] = useState("");
+  const exportLeftGraphRef = useRef<(() => Graph | null) | null>(null);
+  const exportRightGraphRef = useRef<(() => Graph | null) | null>(null);
+  const exportLeftImageRef = useRef<
+    (() => string | null | Promise<string | null>) | null
+  >(null);
+  const exportRightImageRef = useRef<
+    (() => string | null | Promise<string | null>) | null
+  >(null);
 
   useEffect(() => {
     (async () => {
@@ -123,6 +132,87 @@ export default function ProjectPatternsComparePage({
     : null;
 
   const patternsHref = projectId ? `/project/${projectId}/patterns` : "/dashboard/patterns";
+
+  function downloadCompareJson(side: "left" | "right") {
+    if (!compareResult) return;
+    const base = side === "left" ? compareResult.left : compareResult.right;
+    const getGraph =
+      side === "left"
+        ? exportLeftGraphRef.current
+        : exportRightGraphRef.current;
+    const graph = getGraph?.() ?? base.graph;
+    const payload = {
+      graph,
+      detections: base.detections ?? [],
+      dot_content: base.dot_content ?? undefined,
+      version_id: base.id,
+      version_number: base.version_number,
+      title: base.title,
+      created_at: base.created_at,
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `architecture-compare-${side}-v${base.version_number}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast(`JSON downloaded (${side} version)`, "success");
+  }
+
+  function downloadCompareYaml(side: "left" | "right") {
+    if (!compareResult) return;
+    const base = side === "left" ? compareResult.left : compareResult.right;
+    const yaml = base.yaml_content?.trim();
+    if (!yaml) {
+      showToast(
+        `No YAML is available for the ${side} version in this comparison.`,
+        "warning",
+      );
+      return;
+    }
+    const blob = new Blob([yaml], { type: "text/yaml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `architecture-compare-${side}-v${base.version_number}.yaml`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast(`YAML downloaded (${side} version)`, "success");
+  }
+
+  async function downloadCompareImage(side: "left" | "right") {
+    const fn =
+      side === "left"
+        ? exportLeftImageRef.current
+        : exportRightImageRef.current;
+    if (!fn) {
+      showToast("Graph is not ready to export yet.", "warning");
+      return;
+    }
+    const dataUrl = await Promise.resolve(fn());
+    if (!dataUrl) {
+      showToast("Could not capture graph image.", "warning");
+      return;
+    }
+    if (!compareResult) return;
+    const vn =
+      side === "left"
+        ? compareResult.left.version_number
+        : compareResult.right.version_number;
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `architecture-compare-${side}-v${vn}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast(`Image downloaded (${side} version)`, "success");
+  }
 
   function handleSimulationConfirm() {
     if (projectId && simulationSelectedVersion) {
@@ -221,13 +311,40 @@ export default function ProjectPatternsComparePage({
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 pb-1 border-b border-white/10">
           <Legend versionCount={versions.length} />
-          <button
-            type="button"
-            onClick={() => setSimulationModalOpen(true)}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
-          >
-            Proceed to Performance Simulator
-          </button>
+          <div className="flex flex-wrap items-center gap-2 justify-end max-w-full">
+            {(
+              [
+                ["json", "left", () => downloadCompareJson("left")],
+                ["yaml", "left", () => downloadCompareYaml("left")],
+                ["image", "left", () => void downloadCompareImage("left")],
+                ["json", "right", () => downloadCompareJson("right")],
+                ["yaml", "right", () => downloadCompareYaml("right")],
+                ["image", "right", () => void downloadCompareImage("right")],
+              ] as const
+            ).map(([kind, side, onClick]) => {
+              const sideLabel = side === "left" ? "Left" : "Right";
+              return (
+              <button
+                key={`${kind}-${side}`}
+                type="button"
+                disabled={!compareResult}
+                onClick={onClick}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+              >
+                {kind === "json" && `Download JSON ${sideLabel}`}
+                {kind === "yaml" && `Download YAML ${sideLabel}`}
+                {kind === "image" && `Download Image ${sideLabel}`}
+              </button>
+            );
+            })}
+            <button
+              type="button"
+              onClick={() => setSimulationModalOpen(true)}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+            >
+              Proceed to Performance Simulator
+            </button>
+          </div>
         </div>
 
       {simulationModalOpen && (
@@ -306,7 +423,16 @@ export default function ProjectPatternsComparePage({
               </span>
             </div>
             <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
-              <GraphCanvas data={leftData} readOnly />
+              <GraphCanvas
+                data={leftData}
+                readOnly
+                onExportImageReady={(exportPng) => {
+                  exportLeftImageRef.current = exportPng;
+                }}
+                onExportGraphJsonReady={(getGraph) => {
+                  exportLeftGraphRef.current = getGraph;
+                }}
+              />
             </div>
           </div>
           <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
@@ -320,7 +446,16 @@ export default function ProjectPatternsComparePage({
               </span>
             </div>
             <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
-              <GraphCanvas data={rightData} readOnly />
+              <GraphCanvas
+                data={rightData}
+                readOnly
+                onExportImageReady={(exportPng) => {
+                  exportRightImageRef.current = exportPng;
+                }}
+                onExportGraphJsonReady={(getGraph) => {
+                  exportRightGraphRef.current = getGraph;
+                }}
+              />
             </div>
           </div>
         </div>

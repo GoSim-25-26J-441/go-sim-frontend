@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import type {
   AnalysisResult,
   Detection,
@@ -14,13 +14,30 @@ import { toDisplayName, antipatternKindLabel } from "@/app/features/amg-apd/util
 import { colorForDetectionKind, NODE_KIND_COLOR } from "@/app/features/amg-apd/utils/colors";
 import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
 
-type Props = {
-  data: AnalysisResult;
-  selected: SelectedItem;
+export function detectionsForSelection(
+  data: AnalysisResult,
+  selected: SelectedItem,
+): Detection[] {
+  const all: Detection[] = Array.isArray(data?.detections)
+    ? (data.detections as Detection[])
+    : [];
+
+  if (!selected) return all;
+
+  if (selected.type === "node") {
+    const id = selected.data.id as string;
+    return all.filter((d) => d.nodes?.includes(id));
+  }
+
+  const idx = Number(selected.data.edgeIndex);
+  if (Number.isNaN(idx)) return [];
+  return all.filter((d) =>
+    (d.edges ?? []).some((eIdx) => Number(eIdx) === idx),
+  );
+}
+
+type ToolsProps = {
   editMode: boolean;
-  onRenameNode: (id: string, newLabel: string) => void;
-  onUpdateEdge?: (edgeId: string, attrs: { kind: CallProtocol; sync: boolean }) => void;
-  // Optional edit-tools wiring so we can surface "Calls" + options in the right panel
   currentTool?: EditTool;
   onToolChange?: (tool: EditTool) => void;
   defaultCallProtocol?: CallProtocol;
@@ -28,84 +45,24 @@ type Props = {
   onDefaultCallChange?: (kind: CallProtocol, sync: boolean) => void;
 };
 
-export default function SelectedDetails({
-  data,
-  selected,
+/** Edit-mode Calls tool and defaults (Inspector “connections” tools). */
+export function ConnectionsToolsPanel({
   editMode,
-  onRenameNode,
-  onUpdateEdge,
   currentTool,
   onToolChange,
   defaultCallProtocol = "rest",
   defaultCallSync = true,
   onDefaultCallChange,
-}: Props) {
-  const detections = useMemo(() => {
-    const all: Detection[] = Array.isArray(data?.detections)
-      ? (data.detections as Detection[])
-      : [];
+}: ToolsProps) {
+  if (!editMode || !onToolChange || !onDefaultCallChange) return null;
 
-    if (!selected) return [] as Detection[];
-
-    if (selected.type === "node") {
-      const id = selected.data.id as string;
-      return all.filter((d) => d.nodes?.includes(id));
-    }
-
-    const idx = Number(selected.data.edgeIndex);
-    if (Number.isNaN(idx)) return [];
-    return all.filter((d) =>
-      (d.edges ?? []).some((eIdx) => Number(eIdx) === idx)
-    );
-  }, [selected, data]);
-
-  const isNode = selected?.type === "node";
-  const nodeId = isNode ? (selected!.data.id as string) : null;
-  const nodeFromGraph = nodeId ? data.graph.nodes[nodeId] : undefined;
-
-  let computedInitialName = "";
-  let nodeKind: NodeKind | null = null;
-  let nodeAttrs: Record<string, any> = {};
-
-  if (isNode && nodeId) {
-    nodeKind =
-      nodeFromGraph?.kind ??
-      (selected!.data.kind as NodeKind | undefined) ??
-      "SERVICE";
-    computedInitialName =
-      nodeFromGraph?.name ??
-      (selected!.data.label as string | undefined) ??
-      nodeId;
-    nodeAttrs = nodeFromGraph?.attrs ?? {};
-  }
-
-  const [name, setName] = useState(computedInitialName);
-
-  useEffect(() => {
-    if (isNode) {
-      setName(computedInitialName);
-    }
-  }, [isNode, computedInitialName]);
-
-  const NODE_KIND_LABEL: Record<NodeKind, string> = {
-    SERVICE: "Service",
-    API_GATEWAY: "API Gateway",
-    DATABASE: "Database",
-    EVENT_TOPIC: "Event Topic",
-    EXTERNAL_SYSTEM: "External System",
-    CLIENT: "Client (web/mobile)",
-    USER_ACTOR: "User / Actor",
-  };
-
-  const connectionsBlock = editMode && onToolChange && onDefaultCallChange && (
+  return (
     <div className="rounded-xl border border-white/10 bg-gray-800/60 px-3 py-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
           Connections
         </div>
-        <span className="text-[10px] text-white/40">
-          Edit mode tools
-        </span>
+        <span className="text-[10px] text-white/40">Edit mode tools</span>
       </div>
 
       <button
@@ -152,7 +109,7 @@ export default function SelectedDetails({
           </div>
           <div className="flex items-center gap-2">
             <input
-              id="default-call-sync-right"
+              id="default-call-sync-panel"
               type="checkbox"
               className="h-3 w-3 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
               checked={defaultCallSync}
@@ -161,7 +118,7 @@ export default function SelectedDetails({
               }
             />
             <label
-              htmlFor="default-call-sync-right"
+              htmlFor="default-call-sync-panel"
               className="text-[11px] text-white/70 cursor-pointer"
             >
               Synchronous (uncheck for async)
@@ -171,22 +128,99 @@ export default function SelectedDetails({
       )}
     </div>
   );
+}
+
+type SelectionProps = {
+  data: AnalysisResult;
+  selected: SelectedItem;
+  editMode: boolean;
+  onRenameNode: (id: string, newLabel: string) => boolean;
+  /** Updates the canvas label on every keystroke (no duplicate check). */
+  onRenameNodeLive?: (id: string, value: string) => void;
+  onUpdateEdge?: (edgeId: string, attrs: { kind: CallProtocol; sync: boolean }) => void;
+  /** Increment from parent (e.g. context menu “Rename”) to focus the node name field. */
+  renameFocusNonce?: number;
+};
+
+/** Node / edge / empty selection — without anti-pattern list or Calls toolbox. */
+export function SelectionDetailsMain({
+  data,
+  selected,
+  editMode,
+  onRenameNode,
+  onRenameNodeLive,
+  onUpdateEdge,
+  renameFocusNonce = 0,
+}: SelectionProps) {
+  const detections = useMemo(
+    () => detectionsForSelection(data, selected),
+    [selected, data],
+  );
+
+  const isNode = selected?.type === "node";
+  const nodeId = isNode ? (selected!.data.id as string) : null;
+  const nodeFromGraph = nodeId ? data.graph.nodes[nodeId] : undefined;
+
+  let computedInitialName = "";
+  let nodeKind: NodeKind | null = null;
+  let nodeAttrs: Record<string, any> = {};
+
+  if (isNode && nodeId) {
+    nodeKind =
+      nodeFromGraph?.kind ??
+      (selected!.data.kind as NodeKind | undefined) ??
+      "SERVICE";
+    /* Canvas `data(label)` is updated on rename; `graph.nodes[].name` stays stale until save. */
+    const labelFromSelection = selected!.data.label as string | undefined;
+    computedInitialName =
+      (typeof labelFromSelection === "string" && labelFromSelection.length > 0
+        ? labelFromSelection
+        : undefined) ??
+      nodeFromGraph?.name ??
+      nodeId;
+    nodeAttrs = nodeFromGraph?.attrs ?? {};
+  }
+
+  const [name, setName] = useState(computedInitialName);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const labelBackupRef = useRef("");
+
+  useEffect(() => {
+    if (isNode) {
+      setName(computedInitialName);
+    }
+  }, [isNode, computedInitialName]);
+
+  useEffect(() => {
+    if (!editMode || !isNode || !nodeId || !renameFocusNonce) return;
+    const id = requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [renameFocusNonce, editMode, isNode, nodeId]);
+
+  const NODE_KIND_LABEL: Record<NodeKind, string> = {
+    SERVICE: "Service",
+    API_GATEWAY: "API Gateway",
+    DATABASE: "Database",
+    EVENT_TOPIC: "Event Topic",
+    EXTERNAL_SYSTEM: "External System",
+    CLIENT: "Client (web/mobile)",
+    USER_ACTOR: "User / Actor",
+  };
 
   if (!selected) {
     return (
-      <div className="rounded-xl border border-white/10 bg-gray-800/60 px-4 py-4 text-sm text-white/90 space-y-4">
-        <div>
-          <p className="text-white/80 leading-relaxed">
-            Click on a <strong className="font-semibold text-white">node</strong> or{" "}
-            <strong className="font-semibold text-white">connection</strong> in the graph
-            to see more details here.
-          </p>
-          <p className="mt-2 text-[11px] text-white/50">
-            Select a service, database, or edge to view its properties and linked anti-patterns.
-          </p>
-        </div>
-
-        {connectionsBlock}
+      <div className="rounded-xl border border-white/10 bg-gray-800/60 px-4 py-4 text-sm text-white/90 space-y-3">
+        <p className="text-white/80 leading-relaxed">
+          Click on a <strong className="font-semibold text-white">node</strong> or{" "}
+          <strong className="font-semibold text-white">connection</strong> in the graph
+          to see more details here.
+        </p>
+        <p className="text-[11px] text-white/50">
+          Select a service, database, or edge to view its properties.
+        </p>
       </div>
     );
   }
@@ -197,7 +231,6 @@ export default function SelectedDetails({
 
     return (
       <div className="space-y-4">
-        {/* Rename / node identity at top */}
         <div
           className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
           style={{
@@ -211,28 +244,33 @@ export default function SelectedDetails({
                 {NODE_KIND_LABEL[nodeKind] ?? nodeKind}
               </div>
               {showRename ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const trimmed = name.trim() || nodeId;
-                    onRenameNode(nodeId, trimmed);
-                    setName(trimmed);
-                  }}
-                  className="flex items-center gap-2"
-                >
+                <div className="flex min-w-0 flex-1">
                   <input
-                    className="w-40 rounded-lg border border-white/15 bg-gray-900 px-2.5 py-1.5 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                    ref={renameInputRef}
+                    className="min-w-0 max-w-full flex-1 rounded-lg border border-white/15 bg-gray-900 px-2.5 py-1.5 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setName(v);
+                      onRenameNodeLive?.(nodeId, v);
+                    }}
+                    onFocus={() => {
+                      labelBackupRef.current = name;
+                    }}
+                    onBlur={() => {
+                      const trimmed = name.trim() || nodeId;
+                      const ok = onRenameNode(nodeId, trimmed);
+                      if (!ok) {
+                        const revert = labelBackupRef.current;
+                        setName(revert);
+                        onRenameNodeLive?.(nodeId, revert);
+                      } else {
+                        setName(trimmed);
+                      }
+                    }}
                     placeholder="Node name"
                   />
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-[#9AA4B2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#9AA4B2]/90 transition-colors"
-                  >
-                    Rename
-                  </button>
-                </form>
+                </div>
               ) : (
                 <div className="text-sm font-semibold text-white">{toDisplayName(name)}</div>
               )}
@@ -241,10 +279,6 @@ export default function SelectedDetails({
           </div>
         </div>
 
-        {/* Connections box – always visible in edit mode */}
-        {connectionsBlock}
-
-        {/* Node extra info + detections */}
         <div
           className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
           style={{
@@ -269,8 +303,9 @@ export default function SelectedDetails({
               </ul>
             </div>
           )}
-
-          <DetectionsList detections={detections} />
+          {Object.keys(nodeAttrs).length === 0 && (
+            <div className="text-[11px] text-white/45 italic">No extra attributes on this node.</div>
+          )}
         </div>
       </div>
     );
@@ -295,10 +330,11 @@ export default function SelectedDetails({
     (selected.data.kind as EdgeKind | undefined) ??
     "CALLS";
 
-  const rawAttrs =
-    edgeFromGraph?.attrs ??
-    (selected.data.attrs as Record<string, any> | undefined) ??
-    {};
+  /* Live canvas attrs (when edited) must win over static analysis `edgeFromGraph`. */
+  const rawAttrs = {
+    ...(edgeFromGraph?.attrs ?? {}),
+    ...((selected.data.attrs as Record<string, any> | undefined) ?? {}),
+  };
   const attrs = rawAttrs || {};
 
   const endpoints = Array.isArray(attrs.endpoints)
@@ -319,141 +355,175 @@ export default function SelectedDetails({
       : (typeof attrs.dep_kind === "string" && (attrs.dep_kind === "rest" || attrs.dep_kind === "grpc" || attrs.dep_kind === "event"))
       ? attrs.dep_kind
       : "rest";
-  const callSync = typeof attrs.sync === "boolean" ? attrs.sync : true;
+  const callSync =
+    typeof (selected.data as { callSync?: boolean }).callSync === "boolean"
+      ? (selected.data as { callSync: boolean }).callSync
+      : typeof attrs.sync === "boolean"
+        ? attrs.sync
+        : true;
   const protocolLabel = callProtocol === "grpc" ? "gRPC" : callProtocol === "event" ? "Event" : "REST";
   const firstDetectionColor = detections.length > 0
     ? colorForDetectionKind(normalizeDetectionKind((detections[0] as any).kind) ?? "")
     : null;
 
   return (
-    <div className="space-y-4">
-      <div
-        className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
-        style={
-          firstDetectionColor
-            ? { borderLeftWidth: "4px", borderLeftColor: firstDetectionColor }
-            : undefined
-        }
-      >
-        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">Edge</div>
-        <div className="mb-2 text-sm font-semibold text-white">
-          {toDisplayName(fromName)} → {toDisplayName(toName)}
-        </div>
-        <div className="mb-3 text-[11px] text-white/70">
-          Kind: <span className="font-semibold text-[#9AA4B2]">{kind}</span>
-        </div>
-
-        {kind === "CALLS" && (
-          <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-              Call type
-            </div>
-            {editMode && onUpdateEdge ? (
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-[10px] text-white/60 mb-0.5">Protocol</label>
-                  <select
-                    className="w-full rounded-lg border border-white/15 bg-gray-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
-                    value={callProtocol}
-                    onChange={(e) => {
-                      const k = e.target.value as CallProtocol;
-                      onUpdateEdge(selected.data.id as string, { kind: k, sync: callSync });
-                    }}
-                  >
-                    <option value="rest">REST</option>
-                    <option value="grpc">gRPC</option>
-                    <option value="event">Event</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="edge-sync-edit"
-                    type="checkbox"
-                    className="h-3.5 w-3.5 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
-                    checked={callSync}
-                    onChange={(e) =>
-                      onUpdateEdge(selected.data.id as string, { kind: callProtocol, sync: e.target.checked })
-                    }
-                  />
-                  <label htmlFor="edge-sync-edit" className="text-[11px] text-white/80 cursor-pointer">
-                    Synchronous (uncheck for async)
-                  </label>
-                </div>
-              </div>
-            ) : (
-              <div className="text-[11px] text-white/70 space-y-0.5">
-                <div><span className="font-medium text-white/80">Protocol:</span> {protocolLabel}</div>
-                <div><span className="font-medium text-white/80">Timing:</span> {callSync ? "Synchronous" : "Asynchronous"}</div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {hasCallMeta && (
-          <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-              Call details
-            </div>
-            {endpoints.length > 0 && (
-              <div className="mb-1 text-[11px] text-white/70">
-                <span className="font-medium text-white/80">Endpoints:</span>{" "}
-                {endpoints.join(", ")}
-              </div>
-            )}
-            <div className="text-[11px] text-white/70">
-              <span className="font-medium text-white/80">Rate per minute:</span> {rpm}
-            </div>
-          </div>
-        )}
-
-        {Object.keys(attrs).length > 0 && (
-          <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-              Extra information
-            </div>
-            <ul className="space-y-1">
-              {Object.entries(attrs).map(([k, v]) => {
-                if (
-                  kind === "CALLS" &&
-                  (k === "endpoints" || k === "rate_per_min" || k === "kind" || k === "dep_kind" || k === "sync")
-                )
-                  return null;
-                return (
-                  <li key={k} className="text-xs">
-                    <span className="font-medium text-white/80">{k}:</span>{" "}
-                    <span className="text-white/60">
-                      {typeof v === "string" ? v : JSON.stringify(v)}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        <DetectionsList detections={detections} />
+    <div className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
+      style={
+        firstDetectionColor
+          ? { borderLeftWidth: "4px", borderLeftColor: firstDetectionColor }
+          : undefined
+      }
+    >
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">Edge</div>
+      <div className="mb-2 text-sm font-semibold text-white">
+        {toDisplayName(fromName)} → {toDisplayName(toName)}
+      </div>
+      <div className="mb-3 text-[11px] text-white/70">
+        Kind: <span className="font-semibold text-[#9AA4B2]">{kind}</span>
       </div>
 
-      {/* Connections box – always visible in edit mode when viewing edge too */}
-      {connectionsBlock}
+      {kind === "CALLS" && (
+        <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+            Call type
+          </div>
+          {editMode && onUpdateEdge ? (
+            <div className="space-y-2">
+              <div>
+                <label className="block text-[10px] text-white/60 mb-0.5">Protocol</label>
+                <select
+                  className="w-full rounded-lg border border-white/15 bg-gray-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                  value={callProtocol}
+                  onChange={(e) => {
+                    const k = e.target.value as CallProtocol;
+                    onUpdateEdge(selected.data.id as string, { kind: k, sync: callSync });
+                  }}
+                >
+                  <option value="rest">REST</option>
+                  <option value="grpc">gRPC</option>
+                  <option value="event">Event</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="edge-sync-edit-main"
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
+                  checked={callSync}
+                  onChange={(e) =>
+                    onUpdateEdge(selected.data.id as string, { kind: callProtocol, sync: e.target.checked })
+                  }
+                />
+                <label htmlFor="edge-sync-edit-main" className="text-[11px] text-white/80 cursor-pointer">
+                  Synchronous (uncheck for async)
+                </label>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[11px] text-white/70 space-y-0.5">
+              <div><span className="font-medium text-white/80">Protocol:</span> {protocolLabel}</div>
+              <div><span className="font-medium text-white/80">Timing:</span> {callSync ? "Synchronous" : "Asynchronous"}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {hasCallMeta && (
+        <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+            Call details
+          </div>
+          {endpoints.length > 0 && (
+            <div className="mb-1 text-[11px] text-white/70">
+              <span className="font-medium text-white/80">Endpoints:</span>{" "}
+              {endpoints.join(", ")}
+            </div>
+          )}
+          <div className="text-[11px] text-white/70">
+            <span className="font-medium text-white/80">Rate per minute:</span> {rpm}
+          </div>
+        </div>
+      )}
+
+      {Object.keys(attrs).length > 0 && (
+        <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+            Extra information
+          </div>
+          <ul className="space-y-1">
+            {Object.entries(attrs).map(([k, v]) => {
+              if (
+                kind === "CALLS" &&
+                (k === "endpoints" || k === "rate_per_min" || k === "kind" || k === "dep_kind" || k === "sync")
+              )
+                return null;
+              return (
+                <li key={k} className="text-xs">
+                  <span className="font-medium text-white/80">{k}:</span>{" "}
+                  <span className="text-white/60">
+                    {typeof v === "string" ? v : JSON.stringify(v)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
 
-function DetectionsList({ detections }: { detections: Detection[] }) {
+type AntiProps = {
+  data: AnalysisResult;
+  selected: SelectedItem;
+};
+
+export function AntiPatternDetailsPanel({ data, selected }: AntiProps) {
+  const detections = useMemo(
+    () => detectionsForSelection(data, selected),
+    [data, selected],
+  );
+  const scope = selected ? ("selection" as const) : ("all" as const);
+
+  return (
+    <div className="space-y-2">
+      {!selected && (
+        <p className="text-[11px] text-white/55 leading-relaxed">
+          Anti-patterns detected across the whole graph. Select a node or connection to filter to that item.
+        </p>
+      )}
+      <DetectionsList detections={detections} scope={scope} />
+    </div>
+  );
+}
+
+function DetectionsList({
+  detections,
+  scope,
+}: {
+  detections: Detection[];
+  scope: "selection" | "all";
+}) {
   if (!detections.length) {
     return (
       <div className="text-[11px] text-white/50 italic">
-        No anti-patterns directly linked to this item.
+        {scope === "all"
+          ? "No anti-patterns detected in this analysis."
+          : "No anti-patterns directly linked to this item."}
       </div>
     );
   }
 
+  const heading =
+    scope === "all"
+      ? "Anti-patterns in this graph"
+      : "Anti-patterns affecting this item";
+
   return (
-    <div className="mt-3 pt-3 border-t border-white/10">
+    <div>
       <div className="mb-2 flex items-center gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-          Anti-patterns affecting this item
+          {heading}
         </span>
         <span className="flex gap-1">
           {detections.map((d, idx) => {

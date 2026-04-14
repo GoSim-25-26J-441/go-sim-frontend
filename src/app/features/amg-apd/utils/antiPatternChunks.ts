@@ -186,8 +186,20 @@ export function getAntiPatternChunk(kind: DetectionKind): {
   }
 }
 
-// Use filenames that match common naming. Tries primary first; fallback used in UI on load error.
+/** Diagram-style SVGs (same visual language as `/diagram` node icons). */
 export const ANTIPATTERN_ICONS: Record<DetectionKind, string> = {
+  cycles: "/diagram-icons/ms-ap-cycles.svg",
+  god_service: "/diagram-icons/ms-ap-god-service.svg",
+  tight_coupling: "/diagram-icons/ms-ap-tight-coupling.svg",
+  shared_database: "/diagram-icons/ms-ap-shared-database.svg",
+  sync_call_chain: "/diagram-icons/ms-ap-sync-call-chain.svg",
+  ping_pong_dependency: "/diagram-icons/ms-ap-ping-pong.svg",
+  reverse_dependency: "/diagram-icons/ms-ap-reverse-dependency.svg",
+  ui_orchestrator: "/diagram-icons/ms-ap-ui-orchestrator.svg",
+};
+
+/** Legacy PNG fallbacks if an SVG fails to load. */
+export const ANTIPATTERN_ICONS_ALT: Partial<Record<DetectionKind, string>> = {
   cycles: "/icon/circular_dependency.png",
   god_service: "/icon/god_service.png",
   tight_coupling: "/icon/tight_coupling.png",
@@ -196,13 +208,6 @@ export const ANTIPATTERN_ICONS: Record<DetectionKind, string> = {
   ping_pong_dependency: "/icon/ping_pong_dependency.png",
   reverse_dependency: "/icon/reverse_dependency.png",
   ui_orchestrator: "/icon/ui_orchestrator.png",
-};
-
-/** Alternate icon paths if the primary is missing (e.g. cycles.png vs circular_dependency.png). */
-export const ANTIPATTERN_ICONS_ALT: Partial<Record<DetectionKind, string>> = {
-  cycles: "/icon/cycles.png",
-  shared_database: "/icon/shared_db.png",
-  ui_orchestrator: "/icon/ui-orchestrator.png",
 };
 
 /** Anti-patterns we show in the Edit Tools (subset that have clear “add chunk” semantics). */

@@ -210,6 +210,16 @@ const TOOLBOX_ITEMS: { kind: NodeKind; label: string; icon: string }[] = [
   { kind: "user", label: "User / Actor", icon: NODE_KIND_ICONS.user },
 ];
 
+/** Node kinds included in spec_summary.services / service_types and legacy JSON export services[]. */
+const DIAGRAM_SPEC_NODE_KINDS: NodeKind[] = [
+  "service",
+  "gateway",
+  "external",
+  "client",
+  "user",
+  "topic",
+];
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -413,6 +423,13 @@ export default function DrawDiagram() {
     const id = summary?.latest_diagram_version?.id;
     return typeof id === "string" && id.length > 0 ? id : undefined;
   }, [diagramVersionFromQuery, summary?.latest_diagram_version?.id]);
+
+  const summaryProjectId = useMemo(() => {
+    const p = summary?.project as Record<string, unknown> | undefined;
+    const fromPublicId = typeof p?.public_id === "string" ? p.public_id : undefined;
+    const fromId = typeof p?.id === "string" ? p.id : undefined;
+    return fromPublicId ?? fromId ?? null;
+  }, [summary]);
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
@@ -888,14 +905,14 @@ export default function DrawDiagram() {
       ...(edge.label ? { label: edge.label } : {}),
     }));
 
-    // Build spec_summary
+    // Build spec_summary (non-database nodes: include topic so YAML/UIGP roles stay accurate)
     const services = nodes
-      .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
+      .filter((n) => DIAGRAM_SPEC_NODE_KINDS.includes(n.kind))
       .map((n) => n.name);
 
     const service_types: Record<string, string> = {};
     nodes
-      .filter((n) => ["service", "gateway", "external", "client", "user"].includes(n.kind))
+      .filter((n) => DIAGRAM_SPEC_NODE_KINDS.includes(n.kind))
       .forEach((n) => {
         service_types[n.name] = kindToType(n.kind);
       });
@@ -1184,6 +1201,7 @@ export default function DrawDiagram() {
       loadingSummary ||
       diagramLoaded ||
       projectId !== lastLoadedProjectId ||
+      (summaryProjectId !== null && summaryProjectId !== projectId) ||
       !summary?.latest_diagram_version?.diagram_json
     ) {
       return;
@@ -1201,7 +1219,15 @@ export default function DrawDiagram() {
     } else {
       console.log("No diagram_json found in summary:", summary);
     }
-  }, [projectId, summary, loadingSummary, diagramLoaded, loadDiagramFromJson, lastLoadedProjectId]);
+  }, [
+    projectId,
+    summary,
+    summaryProjectId,
+    loadingSummary,
+    diagramLoaded,
+    loadDiagramFromJson,
+    lastLoadedProjectId,
+  ]);
 
   useEffect(() => {
     if (reloadFlag !== "1" || !diagramLoaded || !projectId) return;
@@ -1213,9 +1239,7 @@ export default function DrawDiagram() {
 
   const buildExportModel = () => {
     const services = nodes
-      .filter((n) =>
-        ["service", "gateway", "external", "client", "user"].includes(n.kind)
-      )
+      .filter((n) => DIAGRAM_SPEC_NODE_KINDS.includes(n.kind))
       .map((n) => ({
         name: n.name,
         kind: n.kind,
