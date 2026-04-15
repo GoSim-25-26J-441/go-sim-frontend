@@ -47,6 +47,22 @@ function getFetchErrorStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
+function getReadableChatError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  const status = getFetchErrorStatus(error);
+  if (status === 504) {
+    return "The AI model timed out while generating a response. Please try again or shorten your request.";
+  }
+  if (status && status >= 500) {
+    return "Chat service is temporarily unavailable. Please try again shortly.";
+  }
+
+  return "Failed to send message";
+}
+
 function designRequirementsSkippedStorageKey(projectId: string) {
   return `go-sim-design-requirements-skipped-${projectId}`;
 }
@@ -336,7 +352,7 @@ export default function ClientChat({ id }: Props) {
         } catch (e) {
           lastError = e;
           const status = getFetchErrorStatus(e);
-          if (status === 503 && attempt < MAX_MESSAGE_503_RETRIES - 1) {
+          if ((status === 503 || status === 504) && attempt < MAX_MESSAGE_503_RETRIES - 1) {
             if (attempt === 0) {
               showToast("Diagram is still saving; retrying…", "info");
             }
@@ -387,7 +403,7 @@ export default function ClientChat({ id }: Props) {
       }
     } catch (e) {
       if (aliveRef.current) {
-        setErr(e instanceof Error ? e.message : "Failed to send");
+        setErr(getReadableChatError(e));
         setMessages((prev) => prev.slice(0, -1));
       }
     } finally {
@@ -681,7 +697,7 @@ export default function ClientChat({ id }: Props) {
 
             {err && (
               <div
-                className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
+                className="flex w-full items-start gap-2 px-3 py-2 rounded-lg text-sm"
                 style={{
                   backgroundColor: "rgba(239,68,68,0.08)",
                   border: "1px solid rgba(239,68,68,0.2)",
@@ -689,7 +705,7 @@ export default function ClientChat({ id }: Props) {
                 }}
               >
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                {err}
+                <span className="min-w-0 break-words whitespace-pre-wrap">{err}</span>
               </div>
             )}
 
