@@ -47,6 +47,44 @@ function getFetchErrorStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
+function designRequirementsSkippedStorageKey(projectId: string) {
+  return `go-sim-design-requirements-skipped-${projectId}`;
+}
+
+function hasSkippedDesignRequirements(projectId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      window.sessionStorage.getItem(
+        designRequirementsSkippedStorageKey(projectId),
+      ) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function setSkippedDesignRequirements(projectId: string) {
+  try {
+    window.sessionStorage.setItem(
+      designRequirementsSkippedStorageKey(projectId),
+      "1",
+    );
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function clearSkippedDesignRequirements(projectId: string) {
+  try {
+    window.sessionStorage.removeItem(
+      designRequirementsSkippedStorageKey(projectId),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
   const searchParams = useSearchParams();
@@ -71,6 +109,8 @@ export default function ClientChat({ id }: Props) {
     useState(false);
   const [designSuggestionDismissed, setDesignSuggestionDismissed] =
     useState(false);
+  /** True when the design modal was opened from "Check Anti-Patterns" (not Requirements Settings). */
+  const designModalOpenedForAntiPatternsRef = useRef(false);
   const [showImagesModal, setShowImagesModal] = useState(false);
   
   const projectLabel = id ? `${id.slice(0, 18)}…` : "Unknown project";
@@ -372,10 +412,13 @@ export default function ClientChat({ id }: Props) {
       <DesignQuestionsModal
         isOpen={showDesignModal}
         onClose={() => {
+          designModalOpenedForAntiPatternsRef.current = false;
           setShowDesignModal(false);
           setOpenCheckPatternsAfterDesign(false);
         }}
         onSubmit={(d) => {
+          designModalOpenedForAntiPatternsRef.current = false;
+          clearSkippedDesignRequirements(id);
           setDesignAnswers(d);
           setShowDesignModal(false);
           if (openCheckPatternsAfterDesign) {
@@ -385,8 +428,13 @@ export default function ClientChat({ id }: Props) {
         }}
         onDesignLoaded={(d) => setDesignAnswers(d)}
         onSkip={() => {
+          setSkippedDesignRequirements(id);
           setShowDesignModal(false);
           setOpenCheckPatternsAfterDesign(false);
+          if (designModalOpenedForAntiPatternsRef.current) {
+            designModalOpenedForAntiPatternsRef.current = false;
+            setShowCheckPatternsOverlay(true);
+          }
         }}
         initialDesign={designAnswers}
         projectId={id}
@@ -480,7 +528,11 @@ export default function ClientChat({ id }: Props) {
 
             <div className="relative shrink-0">
               <button
-                onClick={() => setShowDesignModal(true)}
+                type="button"
+                onClick={() => {
+                  designModalOpenedForAntiPatternsRef.current = false;
+                  setShowDesignModal(true);
+                }}
                 className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
               >
                 <Settings2 className="w-3.5 h-3.5" />
@@ -537,10 +589,16 @@ export default function ClientChat({ id }: Props) {
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 if (Object.keys(designAnswers).length === 0) {
-                  setOpenCheckPatternsAfterDesign(true);
-                  setShowDesignModal(true);
+                  if (hasSkippedDesignRequirements(id)) {
+                    setShowCheckPatternsOverlay(true);
+                  } else {
+                    designModalOpenedForAntiPatternsRef.current = true;
+                    setOpenCheckPatternsAfterDesign(true);
+                    setShowDesignModal(true);
+                  }
                 } else {
                   setShowCheckPatternsOverlay(true);
                 }

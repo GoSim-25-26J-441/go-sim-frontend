@@ -20,7 +20,7 @@ export default function DashboardLayout({
           <ConnectionMonitor />
           <div className="h-screen overflow-hidden grid grid-rows-[80px_minmax(0,1fr)] bg-linear-to-b from-[#1F1F1F] to-black">
             <Topbar />
-            <div className="min-h-0 overflow-hidden grid md:grid-cols-[280px_1fr]">
+            <div className="min-h-0 overflow-hidden grid md:max-[1919px]:grid-cols-[236px_minmax(0,1fr)] min-[1920px]:grid-cols-[320px_minmax(0,1fr)]">
               <Sidebar />
               <main className="relative min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
                 <img

@@ -66,11 +66,11 @@ function ProjectNavSidebar({
   ];
 
   return (
-    <aside className="w-56 shrink-0 border-r border-white/60 flex flex-col gap-6 px-3 py-5">
+    <aside className="min-w-0 shrink-0 w-[236px] min-[1920px]:w-[320px] border-r border-white/60 flex flex-col gap-6 px-2 py-5 min-[1920px]:px-3">
       {navItems.map((item, i) => {
         const isActive = activeKey === item.key;
         const sharedClass = [
-          "flex w-full justify-start items-center gap-2 px-4 py-2 text-left transition-transform duration-200",
+          "flex w-full justify-start items-center gap-1.5 min-[1920px]:gap-2 px-2 min-[1920px]:px-4 py-2 text-left transition-transform duration-200",
           "translate-x-0 opacity-100",
           navDelays[i] ?? "delay-150",
           isActive
