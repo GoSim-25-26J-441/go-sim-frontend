@@ -8,8 +8,12 @@ import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
 import {
   createProjectSimulationRun,
   CreateProjectRunRequest,
+  getDiagramScenarioDraft,
   isSimulationApiError,
+  putDiagramScenarioDraft,
+  regenerateDiagramScenario,
 } from "@/lib/api-client/simulation";
+import { parseSimulationScenarioYaml } from "@/lib/simulation/scenario-yaml-parse";
 import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import {
@@ -23,6 +27,21 @@ import {
 } from "./BatchRecommendationFields";
 import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
 import { env } from "@/lib/env";
+
+function draftStatusFromResponse(data: Record<string, unknown>): string | null {
+  const s = data.status ?? data.draft_status ?? data.source;
+  if (typeof s === "string" && s.trim()) return s.trim();
+  return null;
+}
+
+function scenarioDraftHttpMessage(e: unknown, fallback: string): string {
+  if (isSimulationApiError(e)) {
+    const base = e.message || fallback;
+    const d = e.detailsSummary;
+    return d ? `${base}\n${d}` : base;
+  }
+  return e instanceof Error ? e.message : fallback;
+}
 
 /** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
 interface DiagramVersion {
@@ -309,14 +328,7 @@ function buildBatchRecommendationOptimizationPayload(br: BatchRecommendationForm
   };
 }
 
-export default function ProjectNewSimulationPage() {
-  const router = useRouter();
-  const params = useParams();
-  const projectId = params.id as string;
-  const searchParams = useSearchParams();
-  const version = searchParams.get("version");
-
-  const SAMPLE_SCENARIO_YAML = `hosts:
+const SAMPLE_SCENARIO_YAML = `hosts:
   - id: host-1
     cores: 4
     memory_gb: 16
@@ -349,21 +361,39 @@ workload:
       quiet_duration_seconds: 0
 `;
 
+const SAMPLE_DIAGRAM_OPTION: DiagramVersion = {
+  id: "sample",
+  label: "Sample scenario",
+  description: "A pre-built sample scenario to get started quickly.",
+};
+
+export default function ProjectNewSimulationPage() {
+  const router = useRouter();
+  const params = useParams();
+  const projectId = params.id as string;
+  const searchParams = useSearchParams();
+  const version = searchParams.get("version");
+
   // Version/diagram selector phase (shown before the multi-step form)
   const { userId } = useAuth();
   const [versionPhase, setVersionPhase] = useState(true);
-  const sampleOption: DiagramVersion = {
-    id: "sample",
-    label: "Sample scenario",
-    description: "A pre-built sample scenario to get started quickly.",
-  };
-  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([sampleOption]);
+  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([SAMPLE_DIAGRAM_OPTION]);
   const [versionsLoading, setVersionsLoading] = useState(true);
   const [selectedVersionId, setSelectedVersionId] = useState("sample");
   const [versionDetailResponse, setVersionDetailResponse] = useState<unknown>(null);
   const [versionDetailLoading, setVersionDetailLoading] = useState(false);
   const [debugView, setDebugView] = useState<"hide" | "show" | "yaml">("hide");
   const isSampleScenario = selectedVersionId === "sample" || version === "sample";
+
+  /** Backend diagram scenario draft (GET/PUT); not used for sample mode */
+  const [scenarioDraftLoading, setScenarioDraftLoading] = useState(false);
+  const [scenarioDraftError, setScenarioDraftError] = useState<string | null>(null);
+  const [scenarioDraftStatusLabel, setScenarioDraftStatusLabel] = useState<string | null>(null);
+  /** Last YAML persisted on the server for this diagram version (dirty detection). Null = sample or fallback/local-only. */
+  const [savedScenarioYaml, setSavedScenarioYaml] = useState<string | null>(null);
+  const [usedLocalScenarioFallback, setUsedLocalScenarioFallback] = useState(false);
+  const [saveScenarioBusy, setSaveScenarioBusy] = useState(false);
+  const [regenerateBusy, setRegenerateBusy] = useState(false);
 
   /** YAML template from version API response (yaml_content field), when a saved version is loaded */
   const versionYamlTemplate =
@@ -403,7 +433,7 @@ workload:
               ? `Created ${new Date(v.created_at).toLocaleDateString()}`
               : undefined,
           }));
-          setAvailableVersions([sampleOption, ...mapped]);
+          setAvailableVersions([SAMPLE_DIAGRAM_OPTION, ...mapped]);
         }
       })
       .catch(() => {
@@ -450,21 +480,103 @@ workload:
     return () => controller.abort();
   }, [selectedVersionId, projectId, userId]);
 
-  // When a saved version's YAML template is available, parse and apply as baseline scenario
+  // Sample mode: editor baseline comes from the predefined sample YAML file (not backend drafts).
   useEffect(() => {
-    if (!versionYamlTemplate || selectedVersionId === "sample") return;
-    const parsed = parseAmgApdTemplate(versionYamlTemplate);
-    if (parsed) {
-      try {
-        setScenario(amgApdTemplateToScenarioState(parsed));
-        setScenarioError(null);
-      } catch {
-        setScenarioError("Could not load diagram as baseline; using default scenario.");
-      }
-    } else {
-      setScenarioError("Could not load diagram as baseline; using default scenario.");
+    if (selectedVersionId !== "sample") return;
+    setScenarioDraftLoading(false);
+    setScenarioDraftError(null);
+    setScenarioDraftStatusLabel(null);
+    setSavedScenarioYaml(null);
+    setUsedLocalScenarioFallback(false);
+    const parsed = parseSimulationScenarioYaml(SAMPLE_SCENARIO_YAML);
+    if (parsed.ok) {
+      setScenario(parsed.state as ScenarioState);
+      setScenarioError(null);
     }
-  }, [versionYamlTemplate, selectedVersionId]);
+  }, [selectedVersionId]);
+
+  // Diagram version: load simulation scenario from backend; optional local AMG/APD transform only if backend is unavailable.
+  useEffect(() => {
+    if (selectedVersionId === "sample") return;
+
+    let cancelled = false;
+
+    const tryLocalAmgFallback = async (): Promise<boolean> => {
+      const headers = getAmgApdHeaders({
+        userId: userId ?? undefined,
+        chatId: projectId,
+      });
+      try {
+        const res = await fetch(`/api/amg-apd/versions/${encodeURIComponent(selectedVersionId)}`, {
+          headers,
+        });
+        const data = (await res.json().catch(() => ({}))) as { yaml_content?: string };
+        const yamlContent = typeof data.yaml_content === "string" ? data.yaml_content : null;
+        if (!yamlContent || cancelled) return false;
+        const amg = parseAmgApdTemplate(yamlContent);
+        if (!amg) return false;
+        setScenario(amgApdTemplateToScenarioState(amg));
+        setScenarioError(null);
+        setSavedScenarioYaml(null);
+        setScenarioDraftStatusLabel(null);
+        setUsedLocalScenarioFallback(true);
+        setScenarioDraftError(
+          "Could not load the scenario from the simulation service. Showing a temporary preview derived from the diagram YAML until the service is available."
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    (async () => {
+      setScenarioDraftLoading(true);
+      setScenarioDraftError(null);
+      setUsedLocalScenarioFallback(false);
+      try {
+        const data = await getDiagramScenarioDraft(projectId, selectedVersionId);
+        if (cancelled) return;
+        const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
+        if (!yaml.trim()) {
+          setScenarioDraftError("The simulation service returned an empty scenario for this diagram version.");
+          return;
+        }
+        const parsed = parseSimulationScenarioYaml(yaml);
+        if (!parsed.ok) {
+          setScenarioDraftError(`Could not parse scenario YAML: ${parsed.error}`);
+          return;
+        }
+        setScenario(parsed.state as ScenarioState);
+        setScenarioError(null);
+        setSavedScenarioYaml(yaml.trim());
+        setScenarioDraftStatusLabel(draftStatusFromResponse(data as Record<string, unknown>));
+      } catch (e) {
+        if (cancelled) return;
+        const canTryFallback =
+          !isSimulationApiError(e) ||
+          (isSimulationApiError(e) && (e.status >= 500 || e.status === 502 || e.status === 503));
+        const isClientError =
+          isSimulationApiError(e) && (e.status === 400 || e.status === 404 || e.status === 409);
+        if (isClientError) {
+          setScenarioDraftError(scenarioDraftHttpMessage(e, "Failed to load scenario draft"));
+          setSavedScenarioYaml(null);
+          return;
+        }
+        if (canTryFallback && (await tryLocalAmgFallback())) return;
+        setScenarioDraftError(
+          scenarioDraftHttpMessage(e, "Failed to load scenario draft") +
+            (canTryFallback ? " No local diagram fallback was available." : "")
+        );
+        setSavedScenarioYaml(null);
+      } finally {
+        if (!cancelled) setScenarioDraftLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVersionId, projectId, userId]);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<SimulationFormData>({
@@ -586,6 +698,116 @@ workload:
       };
     }
   }, [scenario]);
+
+  const scenarioDirty =
+    !isSampleScenario &&
+    savedScenarioYaml != null &&
+    scenarioYaml.trim() !== savedScenarioYaml.trim();
+
+  const applyDraftResponseToEditor = (data: { scenario_yaml?: string } & Record<string, unknown>) => {
+    const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
+    if (!yaml.trim()) return;
+    const parsed = parseSimulationScenarioYaml(yaml);
+    if (!parsed.ok) {
+      setScenarioDraftError(`Could not parse scenario YAML: ${parsed.error}`);
+      return;
+    }
+    setScenario(parsed.state as ScenarioState);
+    setScenarioError(null);
+    setSavedScenarioYaml(yaml.trim());
+    const label = draftStatusFromResponse(data);
+    if (label) setScenarioDraftStatusLabel(label);
+  };
+
+  const handleSaveDiagramScenario = async () => {
+    if (selectedVersionId === "sample" || scenarioDraftLoading) return;
+    setSaveScenarioBusy(true);
+    setScenarioDraftError(null);
+    try {
+      const res = await putDiagramScenarioDraft(projectId, selectedVersionId, {
+        scenario_yaml: scenarioYaml,
+        overwrite: false,
+      });
+      const y = scenarioYaml.trim();
+      setSavedScenarioYaml(y);
+      if (res && typeof res === "object" && "scenario_yaml" in res && res.scenario_yaml) {
+        applyDraftResponseToEditor(res as Record<string, unknown>);
+      } else {
+        setScenarioDraftStatusLabel("edited");
+      }
+    } catch (e) {
+      if (isSimulationApiError(e) && e.status === 409) {
+        const ok =
+          typeof window !== "undefined" &&
+          window.confirm(
+            "Conflict: the server already has a newer scenario draft. Overwrite it with your current editor content?"
+          );
+        if (ok) {
+          try {
+            const res = await putDiagramScenarioDraft(projectId, selectedVersionId, {
+              scenario_yaml: scenarioYaml,
+              overwrite: true,
+            });
+            const y = scenarioYaml.trim();
+            setSavedScenarioYaml(y);
+            if (res && typeof res === "object" && "scenario_yaml" in res && res.scenario_yaml) {
+              applyDraftResponseToEditor(res as Record<string, unknown>);
+            } else {
+              setScenarioDraftStatusLabel("edited");
+            }
+          } catch (e2) {
+            setScenarioDraftError(scenarioDraftHttpMessage(e2, "Save scenario failed"));
+          }
+        }
+      } else {
+        setScenarioDraftError(scenarioDraftHttpMessage(e, "Save scenario failed"));
+      }
+    } finally {
+      setSaveScenarioBusy(false);
+    }
+  };
+
+  const handleRegenerateDiagramScenario = async () => {
+    if (selectedVersionId === "sample" || scenarioDraftLoading) return;
+    setRegenerateBusy(true);
+    setScenarioDraftError(null);
+    try {
+      const res = await regenerateDiagramScenario(projectId, selectedVersionId, { overwrite: false });
+      if (res && typeof res === "object" && "scenario_yaml" in res && (res as { scenario_yaml?: string }).scenario_yaml) {
+        applyDraftResponseToEditor(res as Record<string, unknown>);
+      } else {
+        const data = await getDiagramScenarioDraft(projectId, selectedVersionId);
+        applyDraftResponseToEditor(data as Record<string, unknown>);
+      }
+      setUsedLocalScenarioFallback(false);
+    } catch (e) {
+      if (isSimulationApiError(e) && e.status === 409) {
+        const ok =
+          typeof window !== "undefined" &&
+          window.confirm(
+            "An edited scenario already exists for this diagram. Regenerate from the diagram and overwrite it?"
+          );
+        if (ok) {
+          try {
+            const res = await regenerateDiagramScenario(projectId, selectedVersionId, { overwrite: true });
+            if (res && typeof res === "object" && "scenario_yaml" in res && (res as { scenario_yaml?: string }).scenario_yaml) {
+              applyDraftResponseToEditor(res as Record<string, unknown>);
+            } else {
+              const data = await getDiagramScenarioDraft(projectId, selectedVersionId);
+              applyDraftResponseToEditor(data as Record<string, unknown>);
+            }
+            setUsedLocalScenarioFallback(false);
+          } catch (e2) {
+            setScenarioDraftError(scenarioDraftHttpMessage(e2, "Regenerate scenario failed"));
+          }
+        }
+      } else {
+        setScenarioDraftError(scenarioDraftHttpMessage(e, "Regenerate scenario failed"));
+      }
+    } finally {
+      setRegenerateBusy(false);
+    }
+  };
 
   const endpointPathErrors = useMemo(() => {
     const out: Record<string, string> = {};
@@ -897,7 +1119,6 @@ workload:
       }
 
       const body: CreateProjectRunRequest = {
-        scenario_yaml: finalScenarioYaml,
         duration_ms: durationMs,
         real_time_mode: formData.real_time_mode,
         metadata: {
@@ -918,6 +1139,30 @@ workload:
         ...(optimizationPayload ? { optimization: optimizationPayload } : {}),
       };
 
+      if (isSampleScenario) {
+        body.scenario_yaml = finalScenarioYaml;
+      } else {
+        body.diagram_version_id = selectedVersionId;
+        const hasServerBaseline = savedScenarioYaml != null;
+        const unsavedEdits =
+          !hasServerBaseline || finalScenarioYaml.trim() !== (savedScenarioYaml ?? "").trim();
+        if (unsavedEdits) {
+          if (hasServerBaseline) {
+            const go =
+              typeof window !== "undefined" &&
+              window.confirm(
+                "You have unsaved scenario edits. Run using the current editor content? This overwrites the cached scenario on the server for this diagram version."
+              );
+            if (!go) {
+              setIsSubmitting(false);
+              return;
+            }
+          }
+          body.scenario_yaml = finalScenarioYaml;
+          body.overwrite_scenario_cache = true;
+        }
+      }
+
       const { run } = await createProjectSimulationRun(projectId, body);
 
       router.push(`/project/${projectId}/simulation/${run.run_id}`);
@@ -925,12 +1170,21 @@ workload:
       console.error("Error creating simulation:", error);
       let message = "Failed to create simulation. Please try again.";
       if (isSimulationApiError(error)) {
-        let base =
-          error.status === 502
-            ? `${error.message} (bad gateway — engine or proxy unavailable)`
-            : error.message;
         const d = error.detailsSummary;
-        message = d ? `${base}\n${d}` : base;
+        const suffix = d ? `\n${d}` : "";
+        if (error.status === 400) {
+          message = `Invalid scenario or request: ${error.message}${suffix}`;
+        } else if (error.status === 404) {
+          message = `Not found: ${error.message}${suffix}`;
+        } else if (error.status === 409) {
+          message = `Conflict: ${error.message}${suffix}`;
+        } else if (error.status === 500) {
+          message = `Simulation service error: ${error.message}${suffix}`;
+        } else if (error.status === 502) {
+          message = `${error.message} (bad gateway — engine or proxy unavailable)${suffix}`;
+        } else {
+          message = `${error.message}${suffix}`;
+        }
       } else if (error instanceof Error) {
         message = error.message;
       }
@@ -1798,6 +2052,62 @@ workload:
               {scenarioError && (
                 <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-300">
                   {scenarioError}
+                </div>
+              )}
+
+              {scenarioDraftError && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-xs text-amber-200">
+                  {scenarioDraftError}
+                </div>
+              )}
+
+              {usedLocalScenarioFallback && (
+                <div className="bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 text-xs text-amber-100/90">
+                  Preview uses a temporary client-side mapping from the diagram YAML. Save or regenerate once the
+                  simulation service is available so the server owns the scenario draft.
+                </div>
+              )}
+
+              {!isSampleScenario && (
+                <div className="flex flex-wrap items-center gap-2 justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
+                    {scenarioDraftLoading ? (
+                      <span className="flex items-center gap-2 text-white/60">
+                        <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                        Loading scenario from simulation service…
+                      </span>
+                    ) : (
+                      <>
+                        {scenarioDraftStatusLabel && (
+                          <span className="rounded bg-white/10 px-2 py-0.5 font-medium text-white/90 capitalize">
+                            {scenarioDraftStatusLabel}
+                          </span>
+                        )}
+                        {!scenarioDraftLoading &&
+                          (savedScenarioYaml == null || scenarioDirty) && (
+                            <span className="text-amber-200/90">Unsaved changes</span>
+                          )}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={scenarioDraftLoading || saveScenarioBusy || isSampleScenario}
+                      onClick={() => void handleSaveDiagramScenario()}
+                      className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/10 text-white hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {saveScenarioBusy ? "Saving…" : "Save scenario"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={scenarioDraftLoading || regenerateBusy || isSampleScenario}
+                      onClick={() => void handleRegenerateDiagramScenario()}
+                      className="px-3 py-1.5 text-xs rounded-lg border border-sky-500/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {regenerateBusy ? "Regenerating…" : "Regenerate from diagram"}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -3023,8 +3333,9 @@ workload:
               <div>
                 <h2 className="text-lg font-semibold text-white mb-4">Scenario YAML (preview)</h2>
                 <p className="text-xs text-white/60 mb-2">
-                  This is the YAML that will be generated from the editor and sent to the simulation
-                  engine in the new flow. In sample mode it should mirror the predefined scenario file.
+                  {isSampleScenario
+                    ? "YAML generated from the editor for the sample flow (matches the predefined sample scenario file)."
+                    : "YAML generated from the editor. For diagram versions, it reflects the server-owned draft when loaded; save to persist edits, or submit a run to use the cached draft when unchanged."}
                 </p>
                 {scenarioYamlError && (
                   <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">

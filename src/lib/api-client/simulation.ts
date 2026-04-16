@@ -65,14 +65,91 @@ export interface CreateProjectRunOptimization {
   [key: string]: unknown;
 }
 
+/**
+ * Create run: send either `scenario_yaml` (e.g. sample flow) or `diagram_version_id`
+ * so the backend can resolve the cached/generated scenario. When sending unsaved
+ * editor YAML for a diagram version, include `scenario_yaml` and `overwrite_scenario_cache`.
+ */
 export interface CreateProjectRunRequest {
-  scenario_yaml: string;
+  scenario_yaml?: string;
+  diagram_version_id?: string;
+  overwrite_scenario_cache?: boolean;
   duration_ms: number;
   real_time_mode?: boolean;
   config_yaml?: string;
   seed?: number;
   optimization?: CreateProjectRunOptimization;
   metadata?: Record<string, unknown>;
+}
+
+// --- Diagram version scenario draft (backend-owned AMG/APD → simulation YAML) ---
+
+/** GET/PUT diagram scenario — backend may add status fields; we pass through common names. */
+export interface DiagramScenarioDraftResponse {
+  scenario_yaml: string;
+  /** e.g. generated | edited | cached */
+  status?: string;
+  draft_status?: string;
+  source?: string;
+  [key: string]: unknown;
+}
+
+export async function getDiagramScenarioDraft(
+  projectId: string,
+  diagramVersionId: string
+): Promise<DiagramScenarioDraftResponse> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/diagram-versions/${encodeURIComponent(diagramVersionId)}/scenario`;
+  const response = await authenticatedFetch(url, { method: "GET" });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Load scenario draft failed");
+  }
+  return response.json() as Promise<DiagramScenarioDraftResponse>;
+}
+
+export async function putDiagramScenarioDraft(
+  projectId: string,
+  diagramVersionId: string,
+  body: { scenario_yaml: string; overwrite: boolean }
+): Promise<DiagramScenarioDraftResponse | void> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/diagram-versions/${encodeURIComponent(diagramVersionId)}/scenario`;
+  const response = await authenticatedFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Save scenario failed");
+  }
+  const text = await response.text();
+  if (!text.trim()) return;
+  try {
+    return JSON.parse(text) as DiagramScenarioDraftResponse;
+  } catch {
+    return;
+  }
+}
+
+export async function regenerateDiagramScenario(
+  projectId: string,
+  diagramVersionId: string,
+  body: { overwrite: boolean }
+): Promise<DiagramScenarioDraftResponse | void> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/diagram-versions/${encodeURIComponent(diagramVersionId)}/scenario/regenerate`;
+  const response = await authenticatedFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Regenerate scenario failed");
+  }
+  const text = await response.text();
+  if (!text.trim()) return;
+  try {
+    return JSON.parse(text) as DiagramScenarioDraftResponse;
+  } catch {
+    return;
+  }
 }
 
 export interface CreateProjectRunResponseRun {
