@@ -3,6 +3,11 @@
  * Used by the simulation run page when GET /metrics or GET /metrics/timeseries return large payloads.
  */
 
+import {
+  extractSeriesScope,
+  flatTimeseriesSeriesKey,
+} from "../lib/simulation/metrics-series-scope";
+
 const MAX_POINTS = 1000;
 
 type ChartRow = Record<string, number>;
@@ -10,7 +15,12 @@ type ChartRow = Record<string, number>;
 interface MetricPoint {
   time: string;
   value: number;
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
   service_id?: string;
+  instance_id?: string;
+  host_id?: string;
+  node_id?: string;
 }
 
 interface MetricTimeseries {
@@ -27,7 +37,13 @@ interface MetricsResponse {
 interface TimeseriesPoint {
   timestamp: string;
   value: number;
-  labels?: { service?: string };
+  metric?: string;
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  instance_id?: string;
+  host_id?: string;
+  node_id?: string;
 }
 
 function downsampleRows(rows: ChartRow[]): ChartRow[] {
@@ -45,7 +61,7 @@ function processOneTimeseries(ts: MetricTimeseries): { metric: string; rows: Cha
   for (const p of ts.points) {
     const key = p.time;
     if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-    rowMap[key][p.service_id ?? "global"] = p.value;
+    rowMap[key][extractSeriesScope(p)] = p.value;
   }
   const rows = Object.values(rowMap).sort((a, b) => a._t - b._t);
   return { metric: ts.metric, rows: downsampleRows(rows) };
@@ -62,8 +78,7 @@ function processTimeseriesPoints(points: TimeseriesPoint[]): { type: "timeseries
   for (const p of points) {
     const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
     if (!rowMap[t]) rowMap[t] = { _t: t };
-    const service = p.labels?.service ?? "global";
-    rowMap[t][service] = p.value;
+    rowMap[t][flatTimeseriesSeriesKey(p)] = p.value;
   }
   const rows = Object.values(rowMap).sort((a, b) => a._t - b._t);
   return { type: "timeseriesResult", rows: downsampleRows(rows) };

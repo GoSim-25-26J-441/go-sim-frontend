@@ -1,17 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileCode2, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
-import { createProjectSimulationRun, CreateProjectRunRequest } from "@/lib/api-client/simulation";
+import {
+  createProjectSimulationRun,
+  CreateProjectRunRequest,
+  isSimulationApiError,
+} from "@/lib/api-client/simulation";
 import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import {
   amgApdTemplateToScenarioState,
   parseAmgApdTemplate,
 } from "./amgApdTemplateToScenario";
+import {
+  BatchRecommendationFields,
+  defaultBatchRecommendation,
+  type BatchRecommendationFormState,
+} from "./BatchRecommendationFields";
+import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
+import { env } from "@/lib/env";
 
 /** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
 interface DiagramVersion {
@@ -122,7 +133,7 @@ interface ScenarioState {
   policies?: ScenarioPolicies;
 }
 
-type RunMode = "standard" | "batch_optimization" | "online_optimization";
+type RunMode = "standard" | "batch_recommendation" | "batch_legacy" | "online_optimization";
 
 function scenarioToYaml(scenario: ScenarioState): string {
   const lines: string[] = [];
@@ -251,6 +262,51 @@ function scenarioToYaml(scenario: ScenarioState): string {
   }
 
   return lines.join("\n");
+}
+
+function buildBatchRecommendationOptimizationPayload(br: BatchRecommendationFormState): Record<string, unknown> {
+  const objective =
+    env.NEXT_PUBLIC_BATCH_OPTIMIZATION_OBJECTIVE === "recommended_config"
+      ? "recommended_config"
+      : "cpu_utilization";
+  const maxP99Ms =
+    br.ui_mode === "quick" ? Math.max(1000, Math.round(br.max_p95_latency_ms * 2)) : br.max_p99_latency_ms;
+  return {
+    objective,
+    online: false,
+    evaluation_duration_ms: br.evaluation_duration_ms,
+    max_evaluations: br.max_evaluations,
+    batch: {
+      max_p95_latency_ms: br.max_p95_latency_ms,
+      max_p99_latency_ms: maxP99Ms,
+      max_error_rate: br.max_error_rate,
+      min_throughput_rps: br.min_throughput_rps,
+      service_cpu_utilization_band: { low: br.service_cpu_low, high: br.service_cpu_high },
+      service_memory_utilization_band: { low: br.service_mem_low, high: br.service_mem_high },
+      host_cpu_utilization_band: { low: br.host_cpu_low, high: br.host_cpu_high },
+      host_memory_utilization_band: { low: br.host_mem_low, high: br.host_mem_high },
+      min_hosts: br.min_hosts,
+      max_hosts: br.max_hosts,
+      min_replicas_per_service: br.min_replicas_per_service,
+      max_replicas_per_service: br.max_replicas_per_service,
+      min_cpu_cores_per_instance: br.min_cpu_cores_per_instance,
+      max_cpu_cores_per_instance: br.max_cpu_cores_per_instance,
+      min_memory_mb_per_instance: br.min_memory_mb_per_instance,
+      max_memory_mb_per_instance: br.max_memory_mb_per_instance,
+      min_host_cpu_cores: br.min_host_cpu_cores,
+      max_host_cpu_cores: br.max_host_cpu_cores,
+      min_host_memory_gb: br.min_host_memory_gb,
+      max_host_memory_gb: br.max_host_memory_gb,
+      beam_width: br.beam_width,
+      max_search_depth: br.max_search_depth,
+      max_neighbors_per_state: br.max_neighbors_per_state,
+      reevaluations_per_candidate: br.reevaluations_per_candidate,
+      infeasible_beam_width: br.infeasible_beam_width,
+      freeze_workload: br.freeze_workload,
+      freeze_policies: br.freeze_policies,
+      allowed_actions: allowedActionsFromFlags(br),
+    },
+  };
 }
 
 export default function ProjectNewSimulationPage() {
@@ -425,6 +481,11 @@ workload:
     real_time_mode: false,
   });
   const [runMode, setRunMode] = useState<RunMode>("standard");
+  const [batchRecommendation, setBatchRecommendation] = useState<BatchRecommendationFormState>(() =>
+    defaultBatchRecommendation(10)
+  );
+  const minThroughputTouchedRef = useRef(false);
+  const prevRunModeRef = useRef<RunMode | null>(null);
   const [configYaml, setConfigYaml] = useState("");
   const [seed, setSeed] = useState(0);
   const [optimization, setOptimization] = useState<{
@@ -464,6 +525,17 @@ workload:
     scale_down_cpu_util_max: 0,
     scale_down_mem_util_max: 0,
     scale_down_host_cpu_util_max: 0,
+  });
+  /** Optional online-controller knobs — empty string means omit (server defaults). */
+  const [onlineTuning, setOnlineTuning] = useState({
+    lease_ttl_ms: "",
+    max_controller_steps: "",
+    max_online_duration_ms: "",
+    max_noop_intervals: "",
+    scale_down_cooldown_ms: "",
+    host_drain_timeout_ms: "",
+    memory_headroom_mb: "",
+    allow_unbounded_online: false,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -532,6 +604,30 @@ workload:
     });
     return out;
   }, [scenario]);
+
+  const expectedWorkloadRps = useMemo(() => {
+    return scenario.workload.reduce((sum, w) => {
+      const r = w.arrival?.rate_rps;
+      return sum + (typeof r === "number" && Number.isFinite(r) && r >= 0 ? r : 0);
+    }, 0);
+  }, [scenario.workload]);
+
+  useEffect(() => {
+    if (minThroughputTouchedRef.current) return;
+    const minTp = Math.round(expectedWorkloadRps * 0.95 * 1000) / 1000;
+    setBatchRecommendation((prev) => ({
+      ...prev,
+      min_throughput_rps: minTp > 0 ? minTp : prev.min_throughput_rps,
+    }));
+  }, [expectedWorkloadRps]);
+
+  useEffect(() => {
+    if (runMode === "batch_recommendation" && prevRunModeRef.current !== "batch_recommendation") {
+      setBatchRecommendation(defaultBatchRecommendation(expectedWorkloadRps));
+      minThroughputTouchedRef.current = false;
+    }
+    prevRunModeRef.current = runMode;
+  }, [runMode, expectedWorkloadRps]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -622,13 +718,62 @@ workload:
       newErrors.name = "Simulation name is required";
     }
 
-    if (runMode !== "online_optimization") {
-      if (!formData.duration_seconds || formData.duration_seconds <= 0) {
-        newErrors.duration_seconds = "Duration must be greater than 0";
+    const durationOkForMode =
+      runMode === "online_optimization" ||
+      (runMode === "batch_recommendation" && formData.duration_seconds >= 0) ||
+      formData.duration_seconds > 0;
+
+    if (!durationOkForMode) {
+      newErrors.duration_seconds =
+        "Duration must be greater than 0 (or 0 for batch recommendation when the parent run duration is driven by the optimizer)";
+    }
+
+    if (runMode === "batch_recommendation") {
+      const br = batchRecommendation;
+      if (br.max_evaluations < 1) {
+        newErrors.config = "Max evaluations must be greater than 0";
+      } else if (br.evaluation_duration_ms < 10_000 || br.evaluation_duration_ms > 120_000) {
+        newErrors.config = "Evaluation duration must be between 10,000 ms and 120,000 ms";
+      } else if (br.max_error_rate < 0 || br.max_error_rate > 1) {
+        newErrors.config = "Max error rate must be between 0 and 1";
+      } else if (!(br.min_throughput_rps > 0)) {
+        newErrors.config = "Minimum throughput (RPS) must be greater than 0";
+      } else {
+        const bands: [number, number, string][] = [
+          [br.service_cpu_low, br.service_cpu_high, "Service CPU utilization"],
+          [br.service_mem_low, br.service_mem_high, "Service memory utilization"],
+          [br.host_cpu_low, br.host_cpu_high, "Host CPU utilization"],
+          [br.host_mem_low, br.host_mem_high, "Host memory utilization"],
+        ];
+        for (const [lo, hi, label] of bands) {
+          if (lo < 0 || hi > 1 || !(lo < hi)) {
+            newErrors.config = `${label}: band must be within 0–1 with low strictly less than high`;
+            break;
+          }
+        }
+        if (!newErrors.config && allowedActionsFromFlags(br).length === 0) {
+          newErrors.config =
+            "Select at least one scaling option (Batch recommendation → Advanced search settings → Allowed scaling dimensions).";
+        }
+        if (!newErrors.config) {
+          if (br.min_hosts > br.max_hosts) {
+            newErrors.config = "Scale bounds: min hosts must be ≤ max hosts";
+          } else if (br.min_replicas_per_service > br.max_replicas_per_service) {
+            newErrors.config = "Scale bounds: min replicas must be ≤ max replicas";
+          } else if (br.min_cpu_cores_per_instance >= br.max_cpu_cores_per_instance) {
+            newErrors.config = "Scale bounds: min CPU per instance must be less than max";
+          } else if (br.min_memory_mb_per_instance >= br.max_memory_mb_per_instance) {
+            newErrors.config = "Scale bounds: min memory per instance must be less than max";
+          } else if (br.min_host_cpu_cores > br.max_host_cpu_cores) {
+            newErrors.config = "Scale bounds: min host CPU cores must be ≤ max";
+          } else if (br.min_host_memory_gb > br.max_host_memory_gb) {
+            newErrors.config = "Scale bounds: min host memory must be ≤ max";
+          }
+        }
       }
     }
 
-    if (runMode === "batch_optimization") {
+    if (runMode === "batch_legacy") {
       if (optimization.max_iterations < 1) {
         newErrors.config = "Max iterations must be at least 1";
       } else if (optimization.evaluation_duration_ms <= 0) {
@@ -650,7 +795,9 @@ workload:
     }
 
     if (runMode === "online_optimization") {
-      if (optimization.control_interval_ms <= 0) {
+      if (optimization.target_p95_latency_ms <= 0) {
+        newErrors.config = "Online runs require target P95 latency greater than 0 ms";
+      } else if (optimization.control_interval_ms <= 0) {
         newErrors.config = "Control interval must be greater than 0";
       } else if (optimization.min_hosts < 1) {
         newErrors.config = "Min hosts must be at least 1";
@@ -677,11 +824,23 @@ workload:
     try {
       // Always use the scenario built in Step 1 (sample only seeds the form; edits are what we send)
       const finalScenarioYaml = scenarioYaml;
-      const durationMs = runMode === "online_optimization" ? 0 : Math.max(0, formData.duration_seconds * 1000);
+      const durationMs =
+        runMode === "online_optimization"
+          ? 0
+          : Math.max(0, Math.round(formData.duration_seconds * 1000));
+
+      const parseOptionalInt = (s: string): number | undefined => {
+        const t = s.trim();
+        if (t === "") return undefined;
+        const n = Number(t);
+        return Number.isFinite(n) ? Math.trunc(n) : undefined;
+      };
 
       // Build optimization payload based on run mode
       let optimizationPayload: Record<string, unknown> | undefined;
-      if (runMode === "batch_optimization") {
+      if (runMode === "batch_recommendation") {
+        optimizationPayload = buildBatchRecommendationOptimizationPayload(batchRecommendation);
+      } else if (runMode === "batch_legacy") {
         const isUtilObjective =
           optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization";
         const low = optimization.batch_target_util_low;
@@ -705,7 +864,7 @@ workload:
           online: false,
         };
       } else if (runMode === "online_optimization") {
-        optimizationPayload = {
+        const extra: Record<string, unknown> = {
           objective: optimization.objective,
           online: true,
           optimization_target_primary: optimization.optimization_target_primary || "p95_latency",
@@ -719,6 +878,22 @@ workload:
           scale_down_mem_util_max: optimization.scale_down_mem_util_max,
           scale_down_host_cpu_util_max: optimization.scale_down_host_cpu_util_max,
         };
+        const lt = parseOptionalInt(onlineTuning.lease_ttl_ms);
+        if (lt != null && lt > 0) extra.lease_ttl_ms = lt;
+        const mcs = parseOptionalInt(onlineTuning.max_controller_steps);
+        if (mcs != null && mcs >= 0) extra.max_controller_steps = mcs;
+        const mod = parseOptionalInt(onlineTuning.max_online_duration_ms);
+        if (mod != null && mod > 0) extra.max_online_duration_ms = mod;
+        const mni = parseOptionalInt(onlineTuning.max_noop_intervals);
+        if (mni != null && mni >= 0) extra.max_noop_intervals = mni;
+        const sdc = parseOptionalInt(onlineTuning.scale_down_cooldown_ms);
+        if (sdc != null && sdc >= 0) extra.scale_down_cooldown_ms = sdc;
+        const hdt = parseOptionalInt(onlineTuning.host_drain_timeout_ms);
+        if (hdt != null && hdt >= 0) extra.host_drain_timeout_ms = hdt;
+        const mh = parseOptionalInt(onlineTuning.memory_headroom_mb);
+        if (mh != null && mh >= 0) extra.memory_headroom_mb = mh;
+        if (onlineTuning.allow_unbounded_online) extra.allow_unbounded_online = true;
+        optimizationPayload = extra;
       }
 
       const body: CreateProjectRunRequest = {
@@ -730,6 +905,13 @@ workload:
           description: formData.description || undefined,
           project_id: projectId,
           source: "frontend-scenario-editor",
+          ...(runMode === "batch_recommendation"
+            ? { mode: "batch_recommendation" as const }
+            : runMode === "batch_legacy"
+              ? { mode: "batch" as const }
+              : runMode === "online_optimization"
+                ? { mode: "online_optimization" as const }
+                : {}),
         },
         ...(configYaml.trim() ? { config_yaml: configYaml.trim() } : {}),
         ...(seed > 0 ? { seed } : {}),
@@ -741,12 +923,18 @@ workload:
       router.push(`/project/${projectId}/simulation/${run.run_id}`);
     } catch (error) {
       console.error("Error creating simulation:", error);
-      setErrors({
-        general:
-          error instanceof Error
-            ? error.message
-            : "Failed to create simulation. Please try again.",
-      });
+      let message = "Failed to create simulation. Please try again.";
+      if (isSimulationApiError(error)) {
+        let base =
+          error.status === 502
+            ? `${error.message} (bad gateway — engine or proxy unavailable)`
+            : error.message;
+        const d = error.detailsSummary;
+        message = d ? `${base}\n${d}` : base;
+      } else if (error instanceof Error) {
+        message = error.message;
+      }
+      setErrors({ general: message });
     } finally {
       setIsSubmitting(false);
     }
@@ -959,17 +1147,21 @@ workload:
               {/* Run mode selector */}
               <div className="mt-4">
                 <h2 className="text-lg font-semibold text-white mb-3">Run mode</h2>
-                <p className="text-xs text-white/60 mb-3">
-                  Choose how this simulation should run. This controls which additional options are
-                  sent to the backend (standard, batch optimization, or online controller).
+                <p className="text-xs text-white/55 mb-3 leading-relaxed max-w-3xl">
+                  <strong className="text-white/70">Standard</strong> — single simulation run.{" "}
+                  <strong className="text-white/70">Batch recommendation</strong> — search for a cheaper layout that
+                  still meets your latency, errors, throughput, and utilization targets.{" "}
+                  <strong className="text-white/70">Legacy batch</strong> — hill-climb on one scalar objective.{" "}
+                  <strong className="text-white/70">Online</strong> — live controller with P95 and scaling targets.
                 </p>
-                <div className="inline-flex rounded-lg border border-white/15 bg-white/5 p-1 text-xs text-white/80">
+                <div className="inline-flex flex-wrap gap-1 rounded-lg border border-white/15 bg-white/5 p-1 text-[11px] text-white/80">
                   {(
                     [
-                      { id: "standard", label: "Standard" },
-                      { id: "batch_optimization", label: "Batch optimization" },
-                      { id: "online_optimization", label: "Online optimization" },
-                    ] as { id: RunMode; label: string }[]
+                      { id: "standard" as const, label: "Standard" },
+                      { id: "batch_recommendation" as const, label: "Batch recommendation" },
+                      { id: "batch_legacy" as const, label: "Legacy batch objective" },
+                      { id: "online_optimization" as const, label: "Online optimization" },
+                    ] as const
                   ).map((mode) => {
                     const active = runMode === mode.id;
                     return (
@@ -988,6 +1180,20 @@ workload:
                     );
                   })}
                 </div>
+                {runMode === "batch_recommendation" && (
+                  <p className="text-xs text-emerald-200/90 mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 leading-relaxed">
+                    <span className="font-semibold text-emerald-100">Batch recommendation: </span>
+                    Use Quick for essential targets, Balanced to separate service vs host utilization, or Advanced for
+                    scaling limits and search tuning.
+                  </p>
+                )}
+                {runMode === "batch_legacy" && (
+                  <p className="text-xs text-amber-200/85 mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 leading-relaxed">
+                    <span className="font-semibold text-amber-100">Legacy hill-climb only. </span>
+                    For guardrails (P95/P99, error rate, min RPS), utilization bands, and beam parameters, switch to{" "}
+                    <strong>Batch recommendation</strong>.
+                  </p>
+                )}
               </div>
 
               {/* Duration — not shown for online optimization */}
@@ -999,6 +1205,7 @@ workload:
                       <InputField
                         name="duration_seconds"
                         type="number"
+                        min={runMode === "batch_recommendation" ? 0 : 1}
                         label="Duration (seconds)"
                         value={formData.duration_seconds.toString()}
                         onChange={handleChange}
@@ -1007,7 +1214,9 @@ workload:
                       />
                     </div>
                     <p className="text-xs text-white/50 pb-2">
-                      How long the simulation will run. Converted to milliseconds when submitted.
+                      {runMode === "batch_recommendation"
+                        ? "Use 0 if the parent run duration is driven by the batch optimizer; otherwise set wall-clock duration."
+                        : "How long the simulation will run. Converted to milliseconds when submitted."}
                     </p>
                   </div>
                 </div>
@@ -1077,15 +1286,27 @@ workload:
                 />
               </div>
 
-              {/* Batch optimization settings */}
-              {runMode === "batch_optimization" && (
+              {/* Batch recommendation — bounded search */}
+              {runMode === "batch_recommendation" && (
+                <BatchRecommendationFields
+                  value={batchRecommendation}
+                  setValue={setBatchRecommendation}
+                  expectedWorkloadRps={expectedWorkloadRps}
+                  markMinThroughputTouched={() => {
+                    minThroughputTouchedRef.current = true;
+                  }}
+                />
+              )}
+
+              {/* Legacy batch (single-objective hill climb) */}
+              {runMode === "batch_legacy" && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-4">
                   <h3 className="text-sm font-semibold text-amber-300 mb-2">
-                    Batch Optimization Settings
+                    Legacy batch objective
                   </h3>
                   <p className="text-xs text-white/50">
-                    The optimizer runs multiple short experiments to find a better configuration. Each
-                    candidate is evaluated for the duration below.
+                    Hill-climbing search over a scalar objective. Sends legacy top-level fields (no structured batch
+                    recommendation constraints).
                   </p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
@@ -1227,7 +1448,6 @@ workload:
                   </div>
                 </div>
               )}
-
               {/* Online optimization settings */}
               {runMode === "online_optimization" && (
                 <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-4 space-y-4">
@@ -1491,6 +1711,54 @@ workload:
                       </div>
                     </div>
                   </div>
+
+                  <details className="border-t border-sky-500/20 pt-4">
+                    <summary className="text-xs font-medium text-sky-200/90 cursor-pointer select-none">
+                      Advanced: lease, controller limits, drain timing
+                    </summary>
+                    <p className="text-[11px] text-white/40 mt-2 mb-3">
+                      Optional fields forwarded to the engine. Leave empty for defaults. For long online runs, set{" "}
+                      <span className="text-white/50">lease_ttl_ms</span> — the run detail page renews the lease on a
+                      timer.
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      {(
+                        [
+                          ["lease_ttl_ms", "Lease TTL (ms)"],
+                          ["max_controller_steps", "Max controller steps"],
+                          ["max_online_duration_ms", "Max online duration (ms)"],
+                          ["max_noop_intervals", "Max noop intervals"],
+                          ["scale_down_cooldown_ms", "Scale-down cooldown (ms)"],
+                          ["host_drain_timeout_ms", "Host drain timeout (ms)"],
+                          ["memory_headroom_mb", "Memory headroom (MB)"],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <div key={key}>
+                          <label className="block text-[10px] font-medium text-white/60 mb-0.5">{label}</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={onlineTuning[key as keyof typeof onlineTuning] as string}
+                            onChange={(e) =>
+                              setOnlineTuning((prev) => ({ ...prev, [key]: e.target.value }))
+                            }
+                            className="w-full px-2 py-1 bg-black/40 border border-white/15 rounded text-white font-mono"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 mt-3 text-[11px] text-white/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={onlineTuning.allow_unbounded_online}
+                        onChange={(e) =>
+                          setOnlineTuning((prev) => ({ ...prev, allow_unbounded_online: e.target.checked }))
+                        }
+                        className="rounded border-white/30"
+                      />
+                      Allow unbounded online (only sent when checked)
+                    </label>
+                  </details>
                 </div>
               )}
 
@@ -2817,8 +3085,10 @@ workload:
                     <dd className="text-white capitalize">
                       {runMode === "standard"
                         ? "Standard"
-                        : runMode === "batch_optimization"
-                        ? "Batch optimization"
+                        : runMode === "batch_recommendation"
+                        ? "Batch recommendation"
+                        : runMode === "batch_legacy"
+                        ? "Legacy batch objective"
                         : "Online optimization"}
                     </dd>
                   </div>
@@ -2841,10 +3111,51 @@ workload:
                 </dl>
               </div>
 
-              {/* Batch optimization summary */}
-              {runMode === "batch_optimization" && (
+              {/* Batch summary */}
+              {runMode === "batch_recommendation" && (
                 <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
-                  <h3 className="text-sm font-semibold text-amber-300 mb-3">Batch optimization</h3>
+                  <h3 className="text-sm font-semibold text-amber-300 mb-3">Batch recommendation</h3>
+                  <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2 text-sm">
+                    <div>
+                      <dt className="text-xs text-white/50">UI mode</dt>
+                      <dd className="text-white capitalize">{batchRecommendation.ui_mode}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Evaluation duration</dt>
+                      <dd className="text-white">{batchRecommendation.evaluation_duration_ms} ms</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Max evaluations</dt>
+                      <dd className="text-white">{batchRecommendation.max_evaluations}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">Min throughput</dt>
+                      <dd className="text-white">{batchRecommendation.min_throughput_rps} RPS</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-white/50">P95 / P99 cap</dt>
+                      <dd className="text-white">
+                        {batchRecommendation.max_p95_latency_ms} /{" "}
+                        {batchRecommendation.ui_mode === "quick"
+                          ? Math.max(1000, Math.round(batchRecommendation.max_p95_latency_ms * 2))
+                          : batchRecommendation.max_p99_latency_ms}{" "}
+                        ms
+                      </dd>
+                    </div>
+                  </dl>
+                  <details className="mt-3 text-xs">
+                    <summary className="cursor-pointer text-white/50">
+                      Developer: full optimization JSON (as submitted)
+                    </summary>
+                    <pre className="mt-2 p-2 rounded border border-amber-500/20 bg-black/40 overflow-x-auto max-h-56 text-[10px] font-mono text-amber-100/80">
+                      {JSON.stringify(buildBatchRecommendationOptimizationPayload(batchRecommendation), null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              )}
+              {runMode === "batch_legacy" && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+                  <h3 className="text-sm font-semibold text-amber-300 mb-3">Legacy batch objective</h3>
                   <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2 text-sm">
                     <div>
                       <dt className="text-xs text-white/50">Objective</dt>

@@ -4,19 +4,40 @@
 import { env } from "@/lib/env";
 import { authenticatedFetch } from "./http";
 import { SimulationRun } from "@/types/simulation";
+import { SimulationApiError, type SimulationErrorBody } from "./simulation-errors";
 
 const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
 
+export { SimulationApiError, isSimulationApiError } from "./simulation-errors";
+
 // --- Backend create run (project-level) ---
 
+/**
+ * Optimization JSON forwarded to simulation-core (passthrough).
+ * Known fields are typed; extra engine/proto keys are allowed via index signature.
+ *
+ * Offline hill-climbing: use objective, max_iterations, step_size, etc. — leave `batch` empty/absent.
+ * Batch beam search: set `batch` to a non-empty object and `online: false` (do not combine with online: true).
+ */
 export interface CreateProjectRunOptimization {
-  objective?: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost" | "cpu_utilization" | "memory_utilization";
+  objective?:
+    | "recommended_config"
+    | "p95_latency_ms"
+    | "p99_latency_ms"
+    | "mean_latency_ms"
+    | "throughput_rps"
+    | "error_rate"
+    | "cost"
+    | "cpu_utilization"
+    | "memory_utilization";
   max_iterations?: number;
   /** Cap total evaluations to avoid too many runs; e.g. 25 */
   max_evaluations?: number;
   step_size?: number;
   evaluation_duration_ms?: number;
   online?: boolean;
+  /** Beam / batch search nested config (enable_local_refinement, beam width, etc.) */
+  batch?: Record<string, unknown>;
   target_p95_latency_ms?: number;
   control_interval_ms?: number;
   min_hosts?: number;
@@ -33,6 +54,15 @@ export interface CreateProjectRunOptimization {
   scale_down_mem_util_max?: number;
   /** 0–1; 0 = host scale-in disabled */
   scale_down_host_cpu_util_max?: number;
+  max_controller_steps?: number;
+  max_online_duration_ms?: number;
+  allow_unbounded_online?: boolean;
+  max_noop_intervals?: number;
+  lease_ttl_ms?: number;
+  scale_down_cooldown_ms?: number;
+  host_drain_timeout_ms?: number;
+  memory_headroom_mb?: number;
+  [key: string]: unknown;
 }
 
 export interface CreateProjectRunRequest {
@@ -84,6 +114,7 @@ export interface PatchRunConfigurationPolicies {
 
 /** At least one of services, workload, or policies must be sent. */
 export interface PatchRunConfigurationBody {
+  /** Per-service vertical scale; cpu_cores / memory_mb: 0 = leave unchanged (engine contract). */
   services?: PatchRunConfigurationService[];
   workload?: PatchRunConfigurationWorkloadItem[];
   policies?: PatchRunConfigurationPolicies;
@@ -197,6 +228,35 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
  * Backend: POST /api/v1/simulation/projects/:project_id/runs
  * Use returned run.run_id for start, SSE, stop, candidates (includes best-candidate).
  */
+async function throwSimulationHttpError(
+  response: Response,
+  fallback: string
+): Promise<never> {
+  const body = (await response.json().catch(() => ({}))) as SimulationErrorBody;
+  const msg =
+    typeof body.error === "string" && body.error.trim()
+      ? body.error.trim()
+      : `${fallback} (${response.status})`;
+  throw new SimulationApiError(msg, response.status, body);
+}
+
+/**
+ * Renew the online optimization lease before `lease_ttl_ms` expires (long online runs).
+ * Backend: POST /api/v1/simulation/runs/:id/online/renew-lease
+ */
+export async function renewOnlineLease(runId: string): Promise<{ ok?: boolean; message?: string }> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(runId)}/online/renew-lease`;
+  const response = await authenticatedFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Lease renewal failed");
+  }
+  return response.json().catch(() => ({})) as Promise<{ ok?: boolean; message?: string }>;
+}
+
 export async function createProjectSimulationRun(
   projectId: string,
   body: CreateProjectRunRequest
@@ -208,8 +268,7 @@ export async function createProjectSimulationRun(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: "Failed to create simulation run" }));
-    throw new Error((err as { error?: string }).error ?? `Create run failed (${response.status})`);
+    await throwSimulationHttpError(response, "Create run failed");
   }
   const data = (await response.json()) as CreateProjectRunResponse;
   return data;
@@ -335,6 +394,51 @@ export async function updateWorkloadRate(
     run_id: res.run_id ?? runId,
     pattern_key: patternKey,
   };
+}
+
+// --- Persisted run metrics (GET /runs/:id/metrics and /metrics/timeseries) ---
+
+/** Nested series point: use `time` for the timestamp field. */
+export interface SimulationRunMetricsNestedPoint {
+  time: string;
+  value: number;
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  host_id?: string;
+  instance_id?: string;
+  node_id?: string;
+}
+
+export interface SimulationRunMetricsNestedTimeseries {
+  metric: string;
+  points: SimulationRunMetricsNestedPoint[];
+}
+
+/** GET /api/v1/simulation/runs/:id/metrics */
+export interface SimulationRunMetricsResponse {
+  run_id: string;
+  summary?: Record<string, unknown>;
+  timeseries?: SimulationRunMetricsNestedTimeseries[];
+}
+
+/** Flat point: use `timestamp`. When `?metric=` is omitted, each point may include `metric`. */
+export interface SimulationRunMetricsFlatPoint {
+  metric?: string;
+  timestamp: string;
+  value: number;
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  host_id?: string;
+  instance_id?: string;
+  node_id?: string;
+}
+
+/** GET /api/v1/simulation/runs/:id/metrics/timeseries */
+export interface SimulationRunMetricsFlatResponse {
+  run_id: string;
+  points: SimulationRunMetricsFlatPoint[];
 }
 
 /**
