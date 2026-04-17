@@ -65,6 +65,7 @@ policies:
   autoscaling:
     enabled: true
     target_cpu_util: 0.65
+    scale_step: 1
     services:
       - service_id: s1
         min_replicas: 1
@@ -74,6 +75,9 @@ policies:
         scale_up_step: 1
         scale_down_step: 1
         row_extra: 7
+  retries:
+    enabled: true
+    max_retries: 2
 `.trim();
 
 const AUTOSCALING_EMPTY_SERVICES_WITH_EXTRAS = `
@@ -104,7 +108,10 @@ workload:
 policies:
   autoscaling:
     enabled: true
+    scale_step: 1
     services: []
+  retries:
+    enabled: true
 `.trim();
 
 const AUTOSCALING_NO_SERVICES_KEY = `
@@ -135,6 +142,9 @@ workload:
 policies:
   autoscaling:
     cooldown_ms: 5000
+  retries:
+    enabled: true
+    backoff: exponential
 `.trim();
 
 describe("scenario-yaml-parse", () => {
@@ -174,11 +184,16 @@ describe("scenario-yaml-parse", () => {
     const pol = p.state.policies?.autoscaling;
     expect(pol?.extra?.enabled).toBe(true);
     expect(pol?.extra?.target_cpu_util).toBe(0.65);
+    expect(pol?.extra?.scale_step).toBe(1);
     expect(pol?.services[0]?.extra?.row_extra).toBe(7);
+    expect((p.state.policies?.retries as { enabled?: boolean } | undefined)?.enabled).toBe(true);
     const out = scenarioStateToYaml(p.state).trim();
     expect(out).toContain("enabled: true");
     expect(out).toContain("target_cpu_util: 0.65");
+    expect(out).toContain("scale_step: 1");
     expect(out).toContain("row_extra: 7");
+    expect(out).toContain("retries:");
+    expect(out).toContain("max_retries: 2");
     const p2 = parseSimulationScenarioYaml(out);
     expect(p2.ok).toBe(true);
     if (!p2.ok) return;
@@ -190,10 +205,14 @@ describe("scenario-yaml-parse", () => {
     expect(p.ok).toBe(true);
     if (!p.ok) return;
     expect(p.state.policies?.autoscaling?.extra?.enabled).toBe(true);
+    expect(p.state.policies?.autoscaling?.extra?.scale_step).toBe(1);
     expect(p.state.policies?.autoscaling?.services).toEqual([]);
+    expect((p.state.policies?.retries as { enabled?: boolean } | undefined)?.enabled).toBe(true);
     const out = scenarioStateToYaml(p.state).trim();
     expect(out).toContain("enabled: true");
+    expect(out).toContain("scale_step: 1");
     expect(out).toMatch(/services:\s*\n\s*\[\]/);
+    expect(out).toContain("retries:");
     const p2 = parseSimulationScenarioYaml(out);
     expect(p2.ok).toBe(true);
     if (!p2.ok) return;
@@ -206,8 +225,16 @@ describe("scenario-yaml-parse", () => {
     if (!p.ok) return;
     expect(p.state.policies?.autoscaling?.extra?.cooldown_ms).toBe(5000);
     expect(p.state.policies?.autoscaling?.services).toEqual([]);
+    expect((p.state.policies?.retries as { backoff?: string } | undefined)?.backoff).toBe("exponential");
     const out = scenarioStateToYaml(p.state).trim();
     expect(out).toContain("cooldown_ms: 5000");
+    expect(out).toContain("services:");
+    expect(out).toContain("retries:");
+    expect(out).toContain("backoff: exponential");
+    const p2 = parseSimulationScenarioYaml(out);
+    expect(p2.ok).toBe(true);
+    if (!p2.ok) return;
+    expect(scenarioStateToYaml(p2.state).trim()).toBe(out);
   });
 
   it("ScenarioV2 bundled sample: parse → scenarioStateToYaml preserves representative v2 fields", () => {

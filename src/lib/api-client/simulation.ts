@@ -9,6 +9,11 @@ import { SimulationApiError, type SimulationErrorBody } from "./simulation-error
 const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
 
 export { SimulationApiError, isSimulationApiError } from "./simulation-errors";
+export type {
+  ScenarioValidationIssue,
+  ScenarioValidationResult,
+} from "./scenario-validation";
+export { validateScenarioYaml } from "./scenario-validation";
 
 // --- Backend create run (project-level) ---
 
@@ -351,6 +356,7 @@ export async function createProjectSimulationRun(
   const data = (await response.json()) as CreateProjectRunResponse;
   return data;
 }
+
 
 /**
  * Create a new simulation run (legacy shape; prefer createProjectSimulationRun for new flows)

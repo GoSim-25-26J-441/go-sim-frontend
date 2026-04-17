@@ -12,6 +12,9 @@ import {
   isSimulationApiError,
   putDiagramScenarioDraft,
   regenerateDiagramScenario,
+  type ScenarioValidationIssue,
+  type ScenarioValidationResult,
+  validateScenarioYaml,
 } from "@/lib/api-client/simulation";
 import {
   parseSimulationScenarioYaml,
@@ -55,6 +58,14 @@ function scenarioDraftHttpMessage(e: unknown, fallback: string): string {
     return d ? `${base}\n${d}` : base;
   }
   return e instanceof Error ? e.message : fallback;
+}
+
+function summarizeValidationIssue(issue: ScenarioValidationIssue): string {
+  const parts: string[] = [];
+  if (issue.code) parts.push(issue.code);
+  if (issue.service_id) parts.push(issue.service_id);
+  const prefix = parts.length > 0 ? `${parts.join(": ")}: ` : "";
+  return `${prefix}${issue.message}`;
 }
 
 /** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
@@ -487,6 +498,10 @@ export default function ProjectNewSimulationPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioState>(() => createInitialScenarioEditorState());
+  const [scenarioValidationBusy, setScenarioValidationBusy] = useState(false);
+  const [scenarioValidationResult, setScenarioValidationResult] = useState<ScenarioValidationResult | null>(null);
+  const [scenarioValidationError, setScenarioValidationError] = useState<string | null>(null);
+  const [lastValidatedScenarioYaml, setLastValidatedScenarioYaml] = useState<string | null>(null);
 
   const arrivalTypes: ArrivalType[] = ["poisson", "uniform", "normal", "bursty", "constant"];
 
@@ -500,6 +515,10 @@ export default function ProjectNewSimulationPage() {
       };
     }
   }, [scenario]);
+  const scenarioValidationStale = useMemo(() => {
+    if (!lastValidatedScenarioYaml) return false;
+    return scenarioYaml.trim() !== lastValidatedScenarioYaml;
+  }, [lastValidatedScenarioYaml, scenarioYaml]);
 
   /** Canonical form of the last loaded draft (parse → serialize) so formatting-only drift does not mark the editor dirty. */
   const canonicalSavedScenarioYaml = useMemo(() => {
@@ -580,6 +599,31 @@ export default function ProjectNewSimulationPage() {
       }
     } finally {
       setSaveScenarioBusy(false);
+    }
+  };
+
+  const handleValidateScenario = async () => {
+    if (scenarioYamlError) {
+      setScenarioValidationResult(null);
+      setScenarioValidationError(scenarioYamlError);
+      return;
+    }
+    setScenarioValidationBusy(true);
+    setScenarioValidationError(null);
+    setScenarioValidationResult(null);
+    try {
+      const result = await validateScenarioYaml(scenarioYaml);
+      setScenarioValidationResult(result);
+      setLastValidatedScenarioYaml(scenarioYaml.trim());
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not validate scenario. Check simulation-core connection.";
+      setScenarioValidationError(message);
+      setLastValidatedScenarioYaml(null);
+    } finally {
+      setScenarioValidationBusy(false);
     }
   };
 
@@ -699,7 +743,7 @@ export default function ProjectNewSimulationPage() {
         "The diagram scenario draft could not be loaded. Retry or regenerate from the diagram before continuing.";
     } else if (sampleScenarioBlocked) {
       scenarioIssue =
-        "The bundled sample scenario could not be loaded (parse error). Fix the YAML or choose another version.";
+        "The bundled sample scenario could not be loaded or parsed. Choose another version or fix the bundled sample YAML.";
     } else if (scenario.hosts.length === 0) {
       scenarioIssue = "At least one host is required.";
     } else if (
@@ -889,7 +933,7 @@ export default function ProjectNewSimulationPage() {
     if (sampleScenarioBlocked) {
       setErrors({
         general:
-          "The sample scenario is not ready (parse error). Choose another version or fix the bundled sample YAML.",
+          "The bundled sample scenario could not be loaded or parsed. Choose another version or fix the bundled sample YAML.",
       });
       return;
     }
@@ -3242,6 +3286,66 @@ export default function ProjectNewSimulationPage() {
                   value={scenarioYaml}
                   className="w-full h-56 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
                 />
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={scenarioValidationBusy || !!scenarioYamlError}
+                    onClick={() => void handleValidateScenario()}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {scenarioValidationBusy ? "Validating…" : "Validate Scenario"}
+                  </button>
+                  {scenarioValidationStale && (
+                    <span className="text-xs text-amber-200/90">Scenario changed since last validation.</span>
+                  )}
+                </div>
+                {scenarioValidationError && (
+                  <div className="mt-3 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                    {scenarioValidationError}
+                  </div>
+                )}
+                {scenarioValidationResult?.valid && (
+                  <div className="mt-3 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 space-y-1">
+                    <p className="font-medium">Scenario is valid</p>
+                    {scenarioValidationResult.summary && (
+                      <p className="text-emerald-100/80">
+                        {(scenarioValidationResult.summary.hosts ?? 0).toLocaleString()} hosts,{" "}
+                        {(scenarioValidationResult.summary.services ?? 0).toLocaleString()} services,{" "}
+                        {(scenarioValidationResult.summary.workloads ?? 0).toLocaleString()} workloads
+                      </p>
+                    )}
+                  </div>
+                )}
+                {!!scenarioValidationResult?.warnings?.length && (
+                  <div className="mt-3 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    <p className="font-medium mb-1">Warnings</p>
+                    <ul className="space-y-1">
+                      {scenarioValidationResult.warnings.map((warning, idx) => (
+                        <li key={`${warning.code ?? "warning"}-${idx}`}>
+                          {summarizeValidationIssue(warning)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {!!scenarioValidationResult?.errors?.length && (
+                  <div className="mt-3 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                    <p className="font-medium mb-1">Validation errors</p>
+                    <ul className="space-y-2">
+                      {scenarioValidationResult.errors.map((issue, idx) => (
+                        <li key={`${issue.code ?? "error"}-${idx}`} className="space-y-1">
+                          <p>{summarizeValidationIssue(issue)}</p>
+                          {issue.message.length > 120 && (
+                            <details className="text-red-100/80">
+                              <summary className="cursor-pointer">Details</summary>
+                              <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{issue.message}</pre>
+                            </details>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end pt-4 border-t border-border mt-4">
@@ -3476,6 +3580,34 @@ export default function ProjectNewSimulationPage() {
 
               {/* Step 3 navigation + submit */}
               <div className="flex flex-col gap-3 pt-4 border-t border-border">
+                {!scenarioValidationResult && !scenarioValidationBusy && !scenarioValidationError && (
+                  <p className="text-xs text-amber-200/90">
+                    Scenario has not been validated yet. You can still create a run, but validating first can catch
+                    placement and capacity issues earlier.
+                  </p>
+                )}
+                {scenarioValidationStale && (
+                  <p className="text-xs text-amber-200/90">
+                    Scenario changed since last validation. Re-run <span className="font-semibold">Validate Scenario</span>{" "}
+                    before creating a run.
+                  </p>
+                )}
+                {scenarioValidationError && (
+                  <p className="text-xs text-red-200/90">
+                    Last validation failed: {scenarioValidationError}
+                  </p>
+                )}
+                {scenarioValidationResult && !scenarioValidationStale && (
+                  <p
+                    className={`text-xs ${
+                      scenarioValidationResult.valid ? "text-emerald-200/90" : "text-red-200/90"
+                    }`}
+                  >
+                    {scenarioValidationResult.valid
+                      ? "Last validation passed for the current scenario YAML."
+                      : "Last validation reported issues for the current scenario YAML."}
+                  </p>
+                )}
                 {!isSampleScenario && (
                   <p className="text-xs text-white/50">
                     {isDiagramScenarioSynced
