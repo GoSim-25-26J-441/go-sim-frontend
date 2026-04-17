@@ -33,7 +33,7 @@ interface ClusterPlacementViewProps {
   hostMetrics?: Record<string, { cpu_utilization?: number; memory_utilization?: number }>;
   mode?: "live" | "final";
   sourceLabel?: "live metrics_snapshot" | "final_config" | "unavailable";
-  placementsStatus?: "reported" | "empty" | "unavailable";
+  placementsStatus?: "reported" | "empty" | "unavailable" | "no_placement_key";
 }
 
 function toPct(v: number | undefined): string {
@@ -59,7 +59,6 @@ export default function ClusterPlacementView({
   placementsStatus = "unavailable",
 }: ClusterPlacementViewProps) {
   const hosts = resources?.hosts ?? [];
-  const services = resources?.services ?? [];
   const placements = resources?.placements ?? [];
 
   const hostMap = new Map(hosts.map((h) => [h.host_id, h]));
@@ -112,6 +111,11 @@ export default function ClusterPlacementView({
       {placementsStatus === "empty" && (
         <p className="text-xs text-white/40 italic">
           Topology exists, but no instances are currently reported (`placements: []`).
+        </p>
+      )}
+      {placementsStatus === "no_placement_key" && (
+        <p className="text-xs text-white/40 italic">
+          No placement data saved for this run (final configuration has no placements field).
         </p>
       )}
 

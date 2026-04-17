@@ -66,13 +66,14 @@ export interface CreateProjectRunOptimization {
 }
 
 /**
- * Create run: send either `scenario_yaml` (e.g. sample flow) or `diagram_version_id`
- * so the backend can resolve the cached/generated scenario. When sending unsaved
- * editor YAML for a diagram version, include `scenario_yaml` and `overwrite_scenario_cache`.
+ * Create run: sample flow sends `scenario_yaml`. Diagram versions use `diagram_version_id`
+ * with optional `scenario_yaml` + `save_scenario` / `overwrite_scenario_cache` per backend contract.
  */
 export interface CreateProjectRunRequest {
   scenario_yaml?: string;
   diagram_version_id?: string;
+  /** Persist editor YAML as the reusable diagram scenario when starting the run. */
+  save_scenario?: boolean;
   overwrite_scenario_cache?: boolean;
   duration_ms: number;
   real_time_mode?: boolean;
@@ -475,11 +476,14 @@ export async function updateWorkloadRate(
 
 // --- Persisted run metrics (GET /runs/:id/metrics and /metrics/timeseries) ---
 
+/** Label values may be strings or coerced primitives from the backend. */
+export type PersistedMetricLabelValue = string | number | boolean;
+
 /** Nested series point: use `time` for the timestamp field. */
 export interface SimulationRunMetricsNestedPoint {
   time: string;
   value: number;
-  labels?: Record<string, string | undefined>;
+  labels?: Record<string, PersistedMetricLabelValue | undefined>;
   tags?: Record<string, unknown>;
   service_id?: string;
   host_id?: string;
@@ -495,16 +499,23 @@ export interface SimulationRunMetricsNestedTimeseries {
 /** GET /api/v1/simulation/runs/:id/metrics */
 export interface SimulationRunMetricsResponse {
   run_id: string;
-  summary?: Record<string, unknown>;
+  summary?: SimulationRunMetricsSummary;
   timeseries?: SimulationRunMetricsNestedTimeseries[];
 }
 
-/** Flat point: use `timestamp`. When `?metric=` is omitted, each point may include `metric`. */
+/** Persisted metrics summary; `final_config` is backend-owned placement/topology (optional on older runs). */
+export interface SimulationRunMetricsSummary extends Record<string, unknown> {
+  final_config?: Record<string, unknown>;
+}
+
+/** Flat point: use `timestamp` (or `time` on some legacy payloads). When `?metric=` is omitted, each point may include `metric`. */
 export interface SimulationRunMetricsFlatPoint {
   metric?: string;
-  timestamp: string;
+  timestamp?: string;
+  /** Some nested-style points may appear on flat responses during rollout */
+  time?: string;
   value: number;
-  labels?: Record<string, string | undefined>;
+  labels?: Record<string, PersistedMetricLabelValue | undefined>;
   tags?: Record<string, unknown>;
   service_id?: string;
   host_id?: string;
@@ -522,6 +533,11 @@ export interface SimulationRunMetricsFlatResponse {
  * Get real-time metrics for a running simulation
  * TODO: Replace with WebSocket or SSE when backend is ready
  */
+export {
+  normalizePersistedMetricPoint,
+  type NormalizedPersistedMetricPoint,
+} from "@/lib/simulation/normalize-persisted-metric-point";
+
 export async function getSimulationMetrics(id: string): Promise<SimulationRun["results"] | null> {
   try {
     // When backend is ready, this could use WebSocket or SSE:

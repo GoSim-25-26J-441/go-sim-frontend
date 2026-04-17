@@ -13,7 +13,14 @@ import {
   putDiagramScenarioDraft,
   regenerateDiagramScenario,
 } from "@/lib/api-client/simulation";
-import { parseSimulationScenarioYaml } from "@/lib/simulation/scenario-yaml-parse";
+import {
+  parseSimulationScenarioYaml,
+  scenarioStateToYaml,
+  type ArrivalType,
+  type ScenarioAutoscalingPolicies,
+  type ScenarioPolicies,
+  type ScenarioState,
+} from "@/lib/simulation/scenario-yaml-parse";
 import { useAuth } from "@/providers/auth-context";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import {
@@ -65,223 +72,7 @@ interface SimulationFormData {
   real_time_mode: boolean;
 }
 
-// Scenario editor state mirroring simulation-core YAML schema
-// memory_gb is optional; omit or 0 means simulator default (16 GB)
-interface ScenarioHost {
-  id: string;
-  cores: number;
-  memory_gb?: number;
-}
-
-interface ScenarioDownstreamCallLatency {
-  mean: number;
-  sigma: number;
-}
-
-interface ScenarioDownstreamCall {
-  to: string;
-  call_count_mean: number;
-  call_latency_ms: ScenarioDownstreamCallLatency;
-  downstream_fraction_cpu: number;
-}
-
-interface ScenarioNetLatency {
-  mean: number;
-  sigma: number;
-}
-
-interface ScenarioEndpoint {
-  path: string;
-  mean_cpu_ms: number;
-  cpu_sigma_ms: number;
-  default_memory_mb?: number;
-  downstream: ScenarioDownstreamCall[];
-  net_latency_ms: ScenarioNetLatency;
-}
-
-interface ScenarioService {
-  id: string;
-  replicas: number;
-  model: string;
-  cpu_cores?: number;
-  memory_mb?: number;
-  endpoints: ScenarioEndpoint[];
-}
-
-type ArrivalType = "poisson" | "uniform" | "normal" | "bursty" | "constant";
-
-interface ScenarioArrival {
-  type: ArrivalType;
-  rate_rps: number;
-  stddev_rps?: number;
-  burst_rate_rps?: number;
-  burst_duration_seconds?: number;
-  quiet_duration_seconds?: number;
-}
-
-interface ScenarioWorkloadPattern {
-  from: string;
-  to: string;
-  arrival: ScenarioArrival;
-}
-
-interface ScenarioAutoscalingServicePolicy {
-  service_id: string;
-  min_replicas: number;
-  max_replicas: number;
-  target_p95_latency_ms: number;
-  target_cpu_utilization: number;
-  scale_up_step: number;
-  scale_down_step: number;
-}
-
-interface ScenarioAutoscalingPolicies {
-  services: ScenarioAutoscalingServicePolicy[];
-}
-
-interface ScenarioPolicies {
-  autoscaling?: ScenarioAutoscalingPolicies;
-  // Other policy groups are passed through to simulation-core
-  [key: string]: unknown;
-}
-
-interface ScenarioState {
-  hosts: ScenarioHost[];
-  services: ScenarioService[];
-  workload: ScenarioWorkloadPattern[];
-  policies?: ScenarioPolicies;
-}
-
 type RunMode = "standard" | "batch_recommendation" | "batch_legacy" | "online_optimization";
-
-function scenarioToYaml(scenario: ScenarioState): string {
-  const lines: string[] = [];
-
-  // hosts
-  lines.push("hosts:");
-  if (scenario.hosts.length === 0) {
-    lines.push("  []");
-  } else {
-    for (const host of scenario.hosts) {
-      lines.push(`  - id: ${host.id || "host-1"}`);
-      lines.push(`    cores: ${host.cores || 1}`);
-      if (host.memory_gb != null && host.memory_gb > 0) {
-        lines.push(`    memory_gb: ${host.memory_gb}`);
-      }
-    }
-  }
-
-  // services
-  lines.push("", "services:");
-  if (scenario.services.length === 0) {
-    lines.push("  []");
-  } else {
-    for (const svc of scenario.services) {
-      lines.push(`  - id: ${svc.id || "svc1"}`);
-      lines.push(`    replicas: ${svc.replicas || 1}`);
-      lines.push(`    model: ${svc.model || "cpu"}`);
-
-      const cpuCores = svc.cpu_cores && svc.cpu_cores > 0 ? svc.cpu_cores : 1.0;
-      const memoryMb = svc.memory_mb && svc.memory_mb > 0 ? svc.memory_mb : 512.0;
-      lines.push(`    cpu_cores: ${cpuCores}`);
-      lines.push(`    memory_mb: ${memoryMb}`);
-
-      lines.push("    endpoints:");
-      if (svc.endpoints.length === 0) {
-        lines.push("      []");
-      } else {
-        for (const ep of svc.endpoints) {
-          lines.push(`      - path: ${ep.path}`);
-          lines.push(`        mean_cpu_ms: ${ep.mean_cpu_ms}`);
-          lines.push(`        cpu_sigma_ms: ${ep.cpu_sigma_ms}`);
-          const defaultMem = ep.default_memory_mb && ep.default_memory_mb > 0 ? ep.default_memory_mb : 10.0;
-          lines.push(`        default_memory_mb: ${defaultMem}`);
-
-          // downstream
-          lines.push("        downstream:");
-          if (!ep.downstream || ep.downstream.length === 0) {
-            lines.push("          []");
-          } else {
-            for (const d of ep.downstream) {
-              lines.push(`          - to: ${d.to}`);
-              lines.push(`            call_count_mean: ${d.call_count_mean}`);
-              lines.push("            call_latency_ms:");
-              lines.push(`              mean: ${d.call_latency_ms.mean}`);
-              lines.push(`              sigma: ${d.call_latency_ms.sigma}`);
-              lines.push(`            downstream_fraction_cpu: ${d.downstream_fraction_cpu}`);
-            }
-          }
-
-          // net latency
-          lines.push("        net_latency_ms:");
-          lines.push(`          mean: ${ep.net_latency_ms.mean}`);
-          lines.push(`          sigma: ${ep.net_latency_ms.sigma}`);
-        }
-      }
-    }
-  }
-
-  // workload
-  lines.push("", "workload:");
-  if (scenario.workload.length === 0) {
-    lines.push("  []");
-  } else {
-    for (const w of scenario.workload) {
-      lines.push(`  - from: ${w.from || "client"}`);
-      lines.push(`    to: ${w.to || "svc1:/test"}`);
-      lines.push("    arrival:");
-      lines.push(`      type: ${w.arrival.type}`);
-      lines.push(`      rate_rps: ${w.arrival.rate_rps ?? 0}`);
-
-      if (w.arrival.type === "normal") {
-        lines.push(`      stddev_rps: ${w.arrival.stddev_rps ?? 0}`);
-      } else if (w.arrival.type === "bursty") {
-        lines.push(`      burst_rate_rps: ${w.arrival.burst_rate_rps ?? 0}`);
-        lines.push(
-          `      burst_duration_seconds: ${w.arrival.burst_duration_seconds ?? 0}`
-        );
-        lines.push(
-          `      quiet_duration_seconds: ${w.arrival.quiet_duration_seconds ?? 0}`
-        );
-      } else {
-        // keep optional fields present with safe defaults so the engine has everything it expects
-        lines.push(`      stddev_rps: ${w.arrival.stddev_rps ?? 0}`);
-        lines.push(`      burst_rate_rps: ${w.arrival.burst_rate_rps ?? 0}`);
-        lines.push(
-          `      burst_duration_seconds: ${w.arrival.burst_duration_seconds ?? 0}`
-        );
-        lines.push(
-          `      quiet_duration_seconds: ${w.arrival.quiet_duration_seconds ?? 0}`
-        );
-      }
-    }
-  }
-
-  // policies (optional, passed through)
-  lines.push("", "policies:");
-  const autoscaling = (scenario.policies as ScenarioPolicies | undefined)?.autoscaling;
-  if (!autoscaling || !autoscaling.services || autoscaling.services.length === 0) {
-    lines.push("  {}");
-  } else {
-    lines.push("  autoscaling:");
-    lines.push("    services:");
-    for (const svcPol of autoscaling.services) {
-      lines.push("      - service_id: " + (svcPol.service_id || "service"));
-      lines.push("        min_replicas: " + (svcPol.min_replicas ?? 1));
-      lines.push("        max_replicas: " + (svcPol.max_replicas ?? 1));
-      lines.push(
-        "        target_p95_latency_ms: " + (svcPol.target_p95_latency_ms ?? 0)
-      );
-      lines.push(
-        "        target_cpu_utilization: " + (svcPol.target_cpu_utilization ?? 0)
-      );
-      lines.push("        scale_up_step: " + (svcPol.scale_up_step ?? 1));
-      lines.push("        scale_down_step: " + (svcPol.scale_down_step ?? 1));
-    }
-  }
-
-  return lines.join("\n");
-}
 
 function buildBatchRecommendationOptimizationPayload(br: BatchRecommendationFormState): Record<string, unknown> {
   const objective =
@@ -367,6 +158,43 @@ const SAMPLE_DIAGRAM_OPTION: DiagramVersion = {
   description: "A pre-built sample scenario to get started quickly.",
 };
 
+/** Fresh editor baseline when switching diagram versions or before a new draft load (avoids submitting a previous version's scenario). */
+function createInitialScenarioEditorState(): ScenarioState {
+  return {
+    hosts: [{ id: "host-1", cores: 4, memory_gb: 16 }],
+    services: [
+      {
+        id: "svc1",
+        replicas: 1,
+        model: "cpu",
+        cpu_cores: 1,
+        memory_mb: 512,
+        endpoints: [
+          {
+            path: "/test",
+            mean_cpu_ms: 10,
+            cpu_sigma_ms: 2,
+            default_memory_mb: 16,
+            downstream: [],
+            net_latency_ms: { mean: 5, sigma: 1 },
+          },
+        ],
+      },
+    ],
+    workload: [
+      {
+        from: "client",
+        to: "svc1:/test",
+        arrival: {
+          type: "poisson",
+          rate_rps: 10,
+        },
+      },
+    ],
+    policies: undefined,
+  };
+}
+
 export default function ProjectNewSimulationPage() {
   const router = useRouter();
   const params = useParams();
@@ -387,6 +215,7 @@ export default function ProjectNewSimulationPage() {
 
   /** Backend diagram scenario draft (GET/PUT); not used for sample mode */
   const [scenarioDraftLoading, setScenarioDraftLoading] = useState(false);
+  const draftBlocking = !isSampleScenario && scenarioDraftLoading;
   const [scenarioDraftError, setScenarioDraftError] = useState<string | null>(null);
   const [scenarioDraftStatusLabel, setScenarioDraftStatusLabel] = useState<string | null>(null);
   /** Last YAML persisted on the server for this diagram version (dirty detection). Null = sample or fallback/local-only. */
@@ -394,6 +223,14 @@ export default function ProjectNewSimulationPage() {
   const [usedLocalScenarioFallback, setUsedLocalScenarioFallback] = useState(false);
   const [saveScenarioBusy, setSaveScenarioBusy] = useState(false);
   const [regenerateBusy, setRegenerateBusy] = useState(false);
+  /** No server baseline and no intentional AMG/APD local fallback — running would use wrong or default YAML. */
+  const draftUnavailableBlocking =
+    !isSampleScenario &&
+    !scenarioDraftLoading &&
+    scenarioDraftError != null &&
+    savedScenarioYaml == null &&
+    !usedLocalScenarioFallback;
+  const diagramScenarioDraftBlocked = draftBlocking || draftUnavailableBlocking;
 
   /** YAML template from version API response (yaml_content field), when a saved version is loaded */
   const versionYamlTemplate =
@@ -533,6 +370,10 @@ export default function ProjectNewSimulationPage() {
       setScenarioDraftLoading(true);
       setScenarioDraftError(null);
       setUsedLocalScenarioFallback(false);
+      setSavedScenarioYaml(null);
+      setScenarioDraftStatusLabel(null);
+      setScenario(createInitialScenarioEditorState());
+      setScenarioError(null);
       try {
         const data = await getDiagramScenarioDraft(projectId, selectedVersionId);
         if (cancelled) return;
@@ -652,45 +493,13 @@ export default function ProjectNewSimulationPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
-  const [scenario, setScenario] = useState<ScenarioState>({
-    hosts: [{ id: "host-1", cores: 4, memory_gb: 16 }],
-    services: [
-      {
-        id: "svc1",
-        replicas: 1,
-        model: "cpu",
-        cpu_cores: 1,
-        memory_mb: 512,
-        endpoints: [
-          {
-            path: "/test",
-            mean_cpu_ms: 10,
-            cpu_sigma_ms: 2,
-            default_memory_mb: 16,
-            downstream: [],
-            net_latency_ms: { mean: 5, sigma: 1 },
-          },
-        ],
-      },
-    ],
-    workload: [
-      {
-        from: "client",
-        to: "svc1:/test",
-        arrival: {
-          type: "poisson",
-          rate_rps: 10,
-        },
-      },
-    ],
-    policies: undefined,
-  });
+  const [scenario, setScenario] = useState<ScenarioState>(() => createInitialScenarioEditorState());
 
   const arrivalTypes: ArrivalType[] = ["poisson", "uniform", "normal", "bursty", "constant"];
 
   const { yaml: scenarioYaml, error: scenarioYamlError } = useMemo(() => {
     try {
-      return { yaml: scenarioToYaml(scenario), error: null as string | null };
+      return { yaml: scenarioStateToYaml(scenario), error: null as string | null };
     } catch (err) {
       return {
         yaml: "",
@@ -699,10 +508,24 @@ export default function ProjectNewSimulationPage() {
     }
   }, [scenario]);
 
-  const scenarioDirty =
-    !isSampleScenario &&
-    savedScenarioYaml != null &&
-    scenarioYaml.trim() !== savedScenarioYaml.trim();
+  /** Canonical form of the last loaded draft (parse → serialize) so formatting-only drift does not mark the editor dirty. */
+  const canonicalSavedScenarioYaml = useMemo(() => {
+    if (savedScenarioYaml == null) return null;
+    const parsed = parseSimulationScenarioYaml(savedScenarioYaml);
+    if (!parsed.ok) return null;
+    try {
+      return scenarioStateToYaml(parsed.state).trim();
+    } catch {
+      return null;
+    }
+  }, [savedScenarioYaml]);
+
+  /** Editor matches last known backend draft for this diagram version (or sample flow). */
+  const isDiagramScenarioSynced = useMemo(() => {
+    if (isSampleScenario) return true;
+    if (canonicalSavedScenarioYaml == null) return false;
+    return scenarioYaml.trim() === canonicalSavedScenarioYaml;
+  }, [isSampleScenario, canonicalSavedScenarioYaml, scenarioYaml]);
 
   const applyDraftResponseToEditor = (data: { scenario_yaml?: string } & Record<string, unknown>) => {
     const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
@@ -720,7 +543,7 @@ export default function ProjectNewSimulationPage() {
   };
 
   const handleSaveDiagramScenario = async () => {
-    if (selectedVersionId === "sample" || scenarioDraftLoading) return;
+    if (selectedVersionId === "sample" || diagramScenarioDraftBlocked) return;
     setSaveScenarioBusy(true);
     setScenarioDraftError(null);
     try {
@@ -876,7 +699,12 @@ export default function ProjectNewSimulationPage() {
   const validateScenarioStep = (): boolean => {
     let scenarioIssue: string | null = null;
 
-    if (scenario.hosts.length === 0) {
+    if (draftBlocking) {
+      scenarioIssue = "Wait for the scenario draft to finish loading.";
+    } else if (draftUnavailableBlocking) {
+      scenarioIssue =
+        "The diagram scenario draft could not be loaded. Retry or regenerate from the diagram before continuing.";
+    } else if (scenario.hosts.length === 0) {
       scenarioIssue = "At least one host is required.";
     } else if (
       scenario.hosts.some(
@@ -1017,20 +845,30 @@ export default function ProjectNewSimulationPage() {
     }
 
     if (runMode === "online_optimization") {
-      if (optimization.target_p95_latency_ms <= 0) {
-        newErrors.config = "Online runs require target P95 latency greater than 0 ms";
-      } else if (optimization.control_interval_ms <= 0) {
-        newErrors.config = "Control interval must be greater than 0";
-      } else if (optimization.min_hosts < 1) {
-        newErrors.config = "Min hosts must be at least 1";
-      } else if (optimization.max_hosts < optimization.min_hosts) {
-        newErrors.config = "Max hosts must be >= min hosts";
-      } else if (
-        (optimization.optimization_target_primary === "cpu_utilization" ||
-          optimization.optimization_target_primary === "memory_utilization") &&
-        optimization.target_util_low >= optimization.target_util_high
-      ) {
-        newErrors.config = "Scale-down utilization must be less than scale-up utilization";
+      const primary = optimization.optimization_target_primary;
+      if (primary === "p95_latency") {
+        if (optimization.target_p95_latency_ms <= 0) {
+          newErrors.config = "Online P95-primary runs require target P95 latency greater than 0 ms";
+        }
+      } else if (primary === "cpu_utilization" || primary === "memory_utilization") {
+        if (optimization.target_p95_latency_ms < 0) {
+          newErrors.config = "Target P95 guardrail cannot be negative";
+        }
+      }
+      if (!newErrors.config) {
+        if (optimization.control_interval_ms <= 0) {
+          newErrors.config = "Control interval must be greater than 0";
+        } else if (optimization.min_hosts < 1) {
+          newErrors.config = "Min hosts must be at least 1";
+        } else if (optimization.max_hosts < optimization.min_hosts) {
+          newErrors.config = "Max hosts must be >= min hosts";
+        } else if (
+          (optimization.optimization_target_primary === "cpu_utilization" ||
+            optimization.optimization_target_primary === "memory_utilization") &&
+          optimization.target_util_low >= optimization.target_util_high
+        ) {
+          newErrors.config = "Scale-down utilization must be less than scale-up utilization";
+        }
       }
     }
 
@@ -1038,13 +876,26 @@ export default function ProjectNewSimulationPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeCreateRun = async (
+    mode: "sample" | "diagram_saved" | "diagram_transient" | "diagram_save_and_run"
+  ) => {
+    if (draftBlocking) {
+      setErrors({ general: "Wait for the scenario draft to finish loading." });
+      return;
+    }
+    if (draftUnavailableBlocking) {
+      setErrors({
+        general:
+          "The diagram scenario draft could not be loaded. Retry or regenerate from the diagram before running.",
+      });
+      return;
+    }
+    if (!validateScenarioStep() || !validateConfigStep()) return;
 
     setIsSubmitting(true);
+    setErrors({});
 
     try {
-      // Always use the scenario built in Step 1 (sample only seeds the form; edits are what we send)
       const finalScenarioYaml = scenarioYaml;
       const durationMs =
         runMode === "online_optimization"
@@ -1058,7 +909,6 @@ export default function ProjectNewSimulationPage() {
         return Number.isFinite(n) ? Math.trunc(n) : undefined;
       };
 
-      // Build optimization payload based on run mode
       let optimizationPayload: Record<string, unknown> | undefined;
       if (runMode === "batch_recommendation") {
         optimizationPayload = buildBatchRecommendationOptimizationPayload(batchRecommendation);
@@ -1139,33 +989,47 @@ export default function ProjectNewSimulationPage() {
         ...(optimizationPayload ? { optimization: optimizationPayload } : {}),
       };
 
-      if (isSampleScenario) {
+      if (mode === "sample") {
         body.scenario_yaml = finalScenarioYaml;
+      } else if (mode === "diagram_saved") {
+        body.diagram_version_id = selectedVersionId;
+      } else if (mode === "diagram_transient") {
+        body.diagram_version_id = selectedVersionId;
+        body.scenario_yaml = finalScenarioYaml;
+        body.save_scenario = false;
       } else {
         body.diagram_version_id = selectedVersionId;
-        const hasServerBaseline = savedScenarioYaml != null;
-        const unsavedEdits =
-          !hasServerBaseline || finalScenarioYaml.trim() !== (savedScenarioYaml ?? "").trim();
-        if (unsavedEdits) {
-          if (hasServerBaseline) {
-            const go =
-              typeof window !== "undefined" &&
-              window.confirm(
-                "You have unsaved scenario edits. Run using the current editor content? This overwrites the cached scenario on the server for this diagram version."
-              );
-            if (!go) {
-              setIsSubmitting(false);
-              return;
-            }
-          }
-          body.scenario_yaml = finalScenarioYaml;
-          body.overwrite_scenario_cache = true;
+        body.scenario_yaml = finalScenarioYaml;
+        body.save_scenario = true;
+        body.overwrite_scenario_cache = false;
+      }
+
+      const isSaveAndRun = mode === "diagram_save_and_run";
+      let runResponse;
+      try {
+        runResponse = await createProjectSimulationRun(projectId, body);
+      } catch (err) {
+        if (
+          isSaveAndRun &&
+          isSimulationApiError(err) &&
+          err.status === 409
+        ) {
+          const ok =
+            typeof window !== "undefined" &&
+            window.confirm(
+              "Conflict saving the scenario. Retry and overwrite the cached scenario on the server?"
+            );
+          if (!ok) throw err;
+          runResponse = await createProjectSimulationRun(projectId, {
+            ...body,
+            overwrite_scenario_cache: true,
+          });
+        } else {
+          throw err;
         }
       }
 
-      const { run } = await createProjectSimulationRun(projectId, body);
-
-      router.push(`/project/${projectId}/simulation/${run.run_id}`);
+      router.push(`/project/${projectId}/simulation/${runResponse.run.run_id}`);
     } catch (error) {
       console.error("Error creating simulation:", error);
       let message = "Failed to create simulation. Please try again.";
@@ -1173,9 +1037,9 @@ export default function ProjectNewSimulationPage() {
         const d = error.detailsSummary;
         const suffix = d ? `\n${d}` : "";
         if (error.status === 400) {
-          message = `Invalid scenario or request: ${error.message}${suffix}`;
+          message = `Invalid scenario YAML or request: ${error.message}${suffix}`;
         } else if (error.status === 404) {
-          message = `Not found: ${error.message}${suffix}`;
+          message = `Not found (diagram version or scenario missing): ${error.message}${suffix}`;
         } else if (error.status === 409) {
           message = `Conflict: ${error.message}${suffix}`;
         } else if (error.status === 500) {
@@ -1192,6 +1056,23 @@ export default function ProjectNewSimulationPage() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (currentStep !== 3) return;
+    if (isSampleScenario) {
+      void executeCreateRun("sample");
+      return;
+    }
+    if (isDiagramScenarioSynced) {
+      void executeCreateRun("diagram_saved");
+      return;
+    }
+    setErrors({
+      general:
+        'Choose "Run without saving" or "Save and run" — or save the scenario on step 1 first.',
+    });
   };
 
   return (
@@ -1367,7 +1248,7 @@ export default function ProjectNewSimulationPage() {
       </div>
 
       {/* Form */}
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleFormSubmit} className="space-y-6">
         <div className="bg-card rounded-lg p-6 border border-border space-y-6">
           {/* Step 2: Configuration */}
           {currentStep === 2 && (
@@ -1829,18 +1710,20 @@ export default function ProjectNewSimulationPage() {
                           </label>
                           <input
                             type="number"
-                            min={1}
+                            min={0}
                             value={optimization.target_p95_latency_ms}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const n = v === "" ? 0 : Number(v);
                               setOptimization((prev) => ({
                                 ...prev,
-                                target_p95_latency_ms: Number(e.target.value) || 1,
-                              }))
-                            }
+                                target_p95_latency_ms: Number.isFinite(n) ? Math.max(0, n) : 0,
+                              }));
+                            }}
                             className="w-full px-3 py-1.5 bg-black/40 border border-white/20 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                           />
                           <p className="text-[10px] text-white/40 mt-0.5">
-                            Scale-down blocked if P95 would exceed this.
+                            Use 0 for no P95 guardrail; scale-down is blocked if P95 would exceed a positive value.
                           </p>
                         </div>
                         <div>
@@ -2034,10 +1917,11 @@ export default function ProjectNewSimulationPage() {
                 </button>
                 <button
                   type="button"
+                  disabled={diagramScenarioDraftBlocked}
                   onClick={() => {
-                    if (validateConfigStep()) setCurrentStep(3);
+                    if (validateScenarioStep() && validateConfigStep()) setCurrentStep(3);
                   }}
-                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90"
+                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Next: Review
                 </button>
@@ -2058,6 +1942,15 @@ export default function ProjectNewSimulationPage() {
               {scenarioDraftError && (
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-xs text-amber-200">
                   {scenarioDraftError}
+                </div>
+              )}
+
+              {draftUnavailableBlocking && (
+                <div className="bg-red-500/10 border border-red-500/35 rounded-lg px-3 py-2 text-xs text-red-200">
+                  The scenario draft for this diagram version could not be loaded from the simulation service. You
+                  cannot save or run until it loads successfully — use{" "}
+                  <span className="font-semibold text-white/90">Regenerate from diagram</span> or
+                  switch version, or fix the service error and reload.
                 </div>
               )}
 
@@ -2083,8 +1976,7 @@ export default function ProjectNewSimulationPage() {
                             {scenarioDraftStatusLabel}
                           </span>
                         )}
-                        {!scenarioDraftLoading &&
-                          (savedScenarioYaml == null || scenarioDirty) && (
+                        {!scenarioDraftLoading && !isDiagramScenarioSynced && (
                             <span className="text-amber-200/90">Unsaved changes</span>
                           )}
                       </>
@@ -2093,7 +1985,7 @@ export default function ProjectNewSimulationPage() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={scenarioDraftLoading || saveScenarioBusy || isSampleScenario}
+                      disabled={diagramScenarioDraftBlocked || saveScenarioBusy || isSampleScenario}
                       onClick={() => void handleSaveDiagramScenario()}
                       className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/10 text-white hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
@@ -3335,7 +3227,7 @@ export default function ProjectNewSimulationPage() {
                 <p className="text-xs text-white/60 mb-2">
                   {isSampleScenario
                     ? "YAML generated from the editor for the sample flow (matches the predefined sample scenario file)."
-                    : "YAML generated from the editor. For diagram versions, it reflects the server-owned draft when loaded; save to persist edits, or submit a run to use the cached draft when unchanged."}
+                    : "YAML generated from the editor. For diagram versions, load/save via the simulation service; on review, run the saved draft, run once without saving, or save and run together."}
                 </p>
                 {scenarioYamlError && (
                   <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
@@ -3352,12 +3244,13 @@ export default function ProjectNewSimulationPage() {
               <div className="flex justify-end pt-4 border-t border-border mt-4">
                 <button
                   type="button"
+                  disabled={diagramScenarioDraftBlocked}
                   onClick={() => {
                     if (validateScenarioStep()) {
                       setCurrentStep(2);
                     }
                   }}
-                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90"
+                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Next: Configuration
                 </button>
@@ -3579,38 +3472,103 @@ export default function ProjectNewSimulationPage() {
               </div>
 
               {/* Step 3 navigation + submit */}
-              <div className="flex items-center justify-between pt-4 border-t border-border">
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep(2)}
-                  className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
-                >
-                  Back
-                </button>
-                <div className="flex items-center gap-3">
-                  <Link
-                    href={`/project/${projectId}/simulation`}
-                    className="inline-flex items-center px-4 py-2 rounded-lg border border-white/20 bg-white/5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
-                  >
-                    Cancel
-                  </Link>
+              <div className="flex flex-col gap-3 pt-4 border-t border-border">
+                {!isSampleScenario && (
+                  <p className="text-xs text-white/50">
+                    {isDiagramScenarioSynced
+                      ? "Scenario matches the saved diagram draft — you can run without sending YAML again."
+                      : "You have local edits relative to the last loaded server draft. Run once without persisting, or save into the diagram draft and run."}
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
+                    type="button"
+                    onClick={() => setCurrentStep(2)}
+                    className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
                   >
-                    {isSubmitting ? (
+                    Back
+                  </button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Link
+                      href={`/project/${projectId}/simulation`}
+                      className="inline-flex items-center px-4 py-2 rounded-lg border border-white/20 bg-white/5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                    >
+                      Cancel
+                    </Link>
+                    {isSampleScenario && (
+                      <button
+                        type="submit"
+                        disabled={isSubmitting || diagramScenarioDraftBlocked}
+                        className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                            Creating...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4" />
+                            Create simulation
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {!isSampleScenario && isDiagramScenarioSynced && (
+                      <button
+                        type="submit"
+                        disabled={isSubmitting || diagramScenarioDraftBlocked}
+                        className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                            Starting…
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4" />
+                            Run saved scenario
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {!isSampleScenario && !isDiagramScenarioSynced && (
                       <>
-                        <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                        Creating...
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-4 h-4" />
-                        Create Simulation
+                        <button
+                          type="button"
+                          disabled={isSubmitting || diagramScenarioDraftBlocked}
+                          onClick={() => void executeCreateRun("diagram_transient")}
+                          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/25 bg-white/10 text-white text-sm hover:bg-white/15 disabled:opacity-50"
+                        >
+                          {isSubmitting ? (
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          ) : (
+                            <Play className="w-4 h-4" />
+                          )}
+                          Run without saving
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSubmitting || diagramScenarioDraftBlocked}
+                          onClick={() => void executeCreateRun("diagram_save_and_run")}
+                          className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                              Starting…
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-4 h-4" />
+                              Save and run
+                            </>
+                          )}
+                        </button>
                       </>
                     )}
-                  </button>
+                  </div>
                 </div>
               </div>
             </>

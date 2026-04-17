@@ -3,6 +3,8 @@
  * Keep in sync with the simulation backend contract for labels, tags, and ID fields.
  */
 
+import type { NormalizedPersistedMetricPoint } from "./normalize-persisted-metric-point";
+
 export type SeriesScopeInput = {
   labels?: Record<string, string | undefined>;
   tags?: Record<string, unknown>;
@@ -12,6 +14,11 @@ export type SeriesScopeInput = {
   node_id?: string;
   /** Present on flat /metrics/timeseries points; omitted on nested /metrics points (metric is on the parent series). */
   metric?: string;
+  /** Optional camelCase aliases (normalized persisted points). */
+  serviceId?: string;
+  hostId?: string;
+  instanceId?: string;
+  nodeId?: string;
 };
 
 export function extractSeriesScope(p: SeriesScopeInput): string {
@@ -21,6 +28,7 @@ export function extractSeriesScope(p: SeriesScopeInput): string {
   };
 
   return (
+    p.serviceId ??
     p.labels?.service ??
     p.labels?.service_id ??
     p.labels?.host ??
@@ -28,8 +36,11 @@ export function extractSeriesScope(p: SeriesScopeInput): string {
     p.labels?.instance ??
     p.labels?.instance_id ??
     p.service_id ??
+    p.hostId ??
     p.host_id ??
+    p.instanceId ??
     p.instance_id ??
+    p.nodeId ??
     p.node_id ??
     tag("service") ??
     tag("service_id") ??
@@ -39,6 +50,35 @@ export function extractSeriesScope(p: SeriesScopeInput): string {
     tag("instance_id") ??
     "unscoped"
   );
+}
+
+function labelsForScope(n: NormalizedPersistedMetricPoint): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(n.labels)) {
+    out[k] = typeof v === "string" ? v : String(v);
+  }
+  return out;
+}
+
+/** Use after {@link normalizePersistedMetricPoint} so grouping matches legacy `extractSeriesScope` priority. */
+export function extractSeriesScopeFromNormalized(n: NormalizedPersistedMetricPoint): string {
+  return extractSeriesScope({
+    labels: labelsForScope(n),
+    tags: n.tags,
+    serviceId: n.serviceId,
+    hostId: n.hostId,
+    instanceId: n.instanceId,
+    nodeId: n.nodeId,
+  });
+}
+
+export function flatTimeseriesSeriesKeyFromNormalized(
+  n: NormalizedPersistedMetricPoint,
+  fallbackMetric?: string
+): string {
+  const metric = n.metric ?? fallbackMetric;
+  const scope = extractSeriesScopeFromNormalized(n);
+  return metric ? `${metric}:${scope}` : scope;
 }
 
 /**

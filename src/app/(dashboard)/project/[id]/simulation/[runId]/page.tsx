@@ -29,11 +29,20 @@ import {
 } from "recharts";
 import { env } from "@/lib/env";
 import {
-  extractSeriesScope,
+  extractSeriesScopeFromNormalized,
   flatTimeseriesLegendLabel,
-  flatTimeseriesSeriesKey,
+  flatTimeseriesSeriesKeyFromNormalized,
   isUnscopedSeriesKey,
 } from "@/lib/simulation/metrics-series-scope";
+import {
+  normalizePersistedMetricPoint,
+  type NormalizedPersistedMetricPoint,
+} from "@/lib/simulation/normalize-persisted-metric-point";
+import {
+  placementStatusFromFinalConfig,
+  resolveFinalConfigForPlacement,
+  type PlacementPersistenceStatus,
+} from "@/lib/simulation/persisted-metrics-final-config";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
   patchRunConfiguration,
@@ -266,7 +275,8 @@ interface MetricTimeseries {
 
 /** Point from GET /runs/{id}/metrics/timeseries (flat series; optional metric per point when unfiltered). */
 interface TimeseriesPoint {
-  timestamp: string;
+  timestamp?: string;
+  time?: string;
   metric?: string;
   value: number;
   labels?: Record<string, string | undefined>;
@@ -278,6 +288,8 @@ interface TimeseriesPoint {
 }
 
 interface MetricsSummary {
+  /** Backend-owned final topology/placement (optional on older persisted runs). */
+  final_config?: Record<string, unknown>;
   metrics?: Record<string, unknown>;
   summary_data?: Record<string, unknown>;
   total_requests?: number;
@@ -356,7 +368,7 @@ interface ClusterResources {
   placements?: InstancePlacement[];
 }
 
-type PlacementStatus = "reported" | "empty" | "unavailable";
+type PlacementStatus = PlacementPersistenceStatus;
 
 /** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
 export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
@@ -509,15 +521,6 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
   }
 
   return { hosts, services, placements };
-}
-
-function placementStatusFromRecord(input: unknown): PlacementStatus {
-  const r = asRecord(input);
-  if (!r) return "unavailable";
-  if (!Object.prototype.hasOwnProperty.call(r, "placements")) return "unavailable";
-  const raw = r.placements;
-  if (!Array.isArray(raw)) return "unavailable";
-  return raw.length > 0 ? "reported" : "empty";
 }
 
 function isBatchOptimizationMeta(m?: RunInfo["metadata"]): boolean {
@@ -945,9 +948,11 @@ function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: Metric
         rows: (() => {
         const rowMap: Record<string, Record<string, number>> = {};
         for (const p of ts.points) {
-          const key = p.time;
-          if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-          rowMap[key][extractSeriesScope(p)] = p.value;
+          const n = normalizePersistedMetricPoint(p, ts.metric);
+          if (!n) continue;
+          const key = n.timestamp;
+          if (!rowMap[key]) rowMap[key] = { _t: new Date(n.timestamp).getTime() };
+          rowMap[key][extractSeriesScopeFromNormalized(n)] = n.value;
         }
           return Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
         })(),
@@ -967,9 +972,10 @@ function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: Metric
           ? Array.from(new Set(rows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))))
           : Array.from(
               new Set(
-                (timeseries!.find((ts) => ts.metric === item.metric)?.points ?? []).map((p) =>
-                  extractSeriesScope(p),
-                ),
+                (timeseries!.find((ts) => ts.metric === item.metric)?.points ?? []).map((p) => {
+                  const n = normalizePersistedMetricPoint(p, item.metric);
+                  return n ? extractSeriesScopeFromNormalized(n) : "unscoped";
+                }),
               ),
             )).filter((svc) => !isUnscopedSeriesKey(svc));
 
@@ -1581,7 +1587,7 @@ export default function SimulationRunPage() {
         };
         const dataPayload = parsed.data;
         const normalizedResources = normalizeClusterResources(dataPayload?.resources);
-        const liveStatusNow = placementStatusFromRecord(dataPayload?.resources);
+        const liveStatusNow = placementStatusFromFinalConfig(dataPayload?.resources);
         setLivePlacementStatus(liveStatusNow);
         if (normalizedResources) {
           setClusterResources((prev) => ({
@@ -1673,20 +1679,26 @@ export default function SimulationRunPage() {
   }, [runId]);
 
   const finalPlacementResources = useMemo<ClusterPlacementResources | null>(() => {
-    const cfg = runInfo?.metadata?.final_config;
-    const root = asRecord(cfg);
+    const resolved = resolveFinalConfigForPlacement(
+      metricsData?.summary as { final_config?: unknown } | undefined,
+      runInfo?.metadata?.final_config,
+    );
+    const root = asRecord(resolved);
     if (!root) return null;
     const candidate = root.resources ?? root.cluster_resources ?? root;
     return normalizeClusterResources(candidate);
-  }, [runInfo?.metadata?.final_config]);
+  }, [metricsData?.summary, runInfo?.metadata?.final_config]);
 
   const finalPlacementStatus = useMemo<PlacementStatus>(() => {
-    const cfg = runInfo?.metadata?.final_config;
-    const root = asRecord(cfg);
+    const resolved = resolveFinalConfigForPlacement(
+      metricsData?.summary as { final_config?: unknown } | undefined,
+      runInfo?.metadata?.final_config,
+    );
+    const root = asRecord(resolved);
     if (!root) return "unavailable";
     const candidate = root.resources ?? root.cluster_resources ?? root;
-    return placementStatusFromRecord(candidate);
-  }, [runInfo?.metadata?.final_config]);
+    return placementStatusFromFinalConfig(candidate);
+  }, [metricsData?.summary, runInfo?.metadata?.final_config]);
 
   const placementSource = useMemo<
     { sourceLabel: "live metrics_snapshot" | "final_config" | "unavailable"; mode: "live" | "final"; resources: ClusterPlacementResources | null; status: PlacementStatus }
@@ -1774,13 +1786,14 @@ export default function SimulationRunPage() {
         const samples: UnscopedMetricDebugPoint[] = [];
         for (const ts of data.timeseries) {
           for (const p of ts.points ?? []) {
-            if (extractSeriesScope(p) === "unscoped") {
+            const n = normalizePersistedMetricPoint(p, ts.metric);
+            if (n && extractSeriesScopeFromNormalized(n) === "unscoped") {
               samples.push({
                 source: "metrics.timeseries",
                 metric: ts.metric,
-                timestamp: p.time,
-                value: p.value,
-                labels: p.labels,
+                timestamp: n.timestamp,
+                value: n.value,
+                labels: p.labels as Record<string, string | undefined> | undefined,
                 tags: p.tags,
                 service_id: p.service_id,
                 instance_id: p.instance_id,
@@ -1981,12 +1994,16 @@ export default function SimulationRunPage() {
       const data = (await res.json()) as { run_id?: string; points?: TimeseriesPoint[] };
       const points = data.points ?? [];
       const unscoped = points
-        .filter((p) => extractSeriesScope(p) === "unscoped")
-        .map((p) => ({
+        .map((p) => {
+          const n = normalizePersistedMetricPoint(p, timeseriesApiMetric);
+          return n ? { p, n } : null;
+        })
+        .filter((x): x is { p: TimeseriesPoint; n: NormalizedPersistedMetricPoint } => x != null && extractSeriesScopeFromNormalized(x.n) === "unscoped")
+        .map(({ p, n }) => ({
           source: "metrics/timeseries" as const,
-          metric: p.metric ?? timeseriesApiMetric,
-          timestamp: p.timestamp,
-          value: p.value,
+          metric: n.metric ?? timeseriesApiMetric,
+          timestamp: n.timestamp,
+          value: n.value,
           labels: p.labels,
           tags: p.tags,
           service_id: p.service_id,
@@ -2041,9 +2058,12 @@ export default function SimulationRunPage() {
 
       const rowMap: Record<number, Record<string, number>> = {};
       for (const p of points) {
-        const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
+        const n = normalizePersistedMetricPoint(p, timeseriesApiMetric);
+        if (!n) continue;
+        const t = new Date(n.timestamp).getTime();
+        if (!Number.isFinite(t)) continue;
         if (!rowMap[t]) rowMap[t] = { _t: t };
-        rowMap[t][flatTimeseriesSeriesKey(p)] = p.value;
+        rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n, timeseriesApiMetric)] = n.value;
       }
       const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
       setTimeseriesApiRows(rows);
@@ -3517,7 +3537,7 @@ export default function SimulationRunPage() {
 
         {candidates === null && !candidatesLoading && !candidatesError && (
           <p className="text-xs text-white/30 italic">
-            Click "Fetch candidates" to load candidates for this run.
+            Click Fetch candidates to load candidates for this run.
           </p>
         )}
 

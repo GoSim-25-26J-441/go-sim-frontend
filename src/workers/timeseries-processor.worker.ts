@@ -4,9 +4,10 @@
  */
 
 import {
-  extractSeriesScope,
-  flatTimeseriesSeriesKey,
+  extractSeriesScopeFromNormalized,
+  flatTimeseriesSeriesKeyFromNormalized,
 } from "../lib/simulation/metrics-series-scope";
+import { normalizePersistedMetricPoint } from "../lib/simulation/normalize-persisted-metric-point";
 
 const MAX_POINTS = 1000;
 
@@ -59,9 +60,11 @@ function downsampleRows(rows: ChartRow[]): ChartRow[] {
 function processOneTimeseries(ts: MetricTimeseries): { metric: string; rows: ChartRow[] } {
   const rowMap: Record<string, ChartRow> = {};
   for (const p of ts.points) {
-    const key = p.time;
-    if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-    rowMap[key][extractSeriesScope(p)] = p.value;
+    const n = normalizePersistedMetricPoint(p, ts.metric);
+    if (!n) continue;
+    const key = n.timestamp;
+    if (!rowMap[key]) rowMap[key] = { _t: new Date(n.timestamp).getTime() };
+    rowMap[key][extractSeriesScopeFromNormalized(n)] = n.value;
   }
   const rows = Object.values(rowMap).sort((a, b) => a._t - b._t);
   return { metric: ts.metric, rows: downsampleRows(rows) };
@@ -76,9 +79,12 @@ function processMetrics(data: MetricsResponse): { type: "metricsResult"; timeser
 function processTimeseriesPoints(points: TimeseriesPoint[]): { type: "timeseriesResult"; rows: ChartRow[] } {
   const rowMap: Record<number, ChartRow> = {};
   for (const p of points) {
-    const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
+    const n = normalizePersistedMetricPoint(p);
+    if (!n) continue;
+    const t = new Date(n.timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
     if (!rowMap[t]) rowMap[t] = { _t: t };
-    rowMap[t][flatTimeseriesSeriesKey(p)] = p.value;
+    rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n)] = n.value;
   }
   const rows = Object.values(rowMap).sort((a, b) => a._t - b._t);
   return { type: "timeseriesResult", rows: downsampleRows(rows) };
