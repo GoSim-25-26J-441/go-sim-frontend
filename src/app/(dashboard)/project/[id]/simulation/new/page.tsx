@@ -33,6 +33,13 @@ import {
   type BatchRecommendationFormState,
 } from "./BatchRecommendationFields";
 import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
+import {
+  getSampleScenarioYaml,
+  isSampleScenarioId,
+  normalizeSampleVersionFromUrlParam,
+  SAMPLE_IDS,
+  SAMPLE_SCENARIO_DROPDOWN_OPTIONS,
+} from "@/lib/simulation/sample-scenarios";
 import { env } from "@/lib/env";
 
 function draftStatusFromResponse(data: Record<string, unknown>): string | null {
@@ -119,44 +126,11 @@ function buildBatchRecommendationOptimizationPayload(br: BatchRecommendationForm
   };
 }
 
-const SAMPLE_SCENARIO_YAML = `hosts:
-  - id: host-1
-    cores: 4
-    memory_gb: 16
-
-services:
-  - id: users
-    replicas: 2
-    model: cpu
-    cpu_cores: 1.0
-    memory_mb: 512
-    endpoints:
-      - path: /login
-        mean_cpu_ms: 10
-        cpu_sigma_ms: 2
-        default_memory_mb: 16
-        downstream: []
-        net_latency_ms:
-          mean: 5
-          sigma: 1
-
-workload:
-  - from: client
-    to: users:/login
-    arrival:
-      type: poisson
-      rate_rps: 10
-      stddev_rps: 0
-      burst_rate_rps: 0
-      burst_duration_seconds: 0
-      quiet_duration_seconds: 0
-`;
-
-const SAMPLE_DIAGRAM_OPTION: DiagramVersion = {
-  id: "sample",
-  label: "Sample scenario",
-  description: "A pre-built sample scenario to get started quickly.",
-};
+const SAMPLE_DROPDOWN_AS_DIAGRAM_VERSIONS: DiagramVersion[] = SAMPLE_SCENARIO_DROPDOWN_OPTIONS.map((o) => ({
+  id: o.id,
+  label: o.label,
+  description: o.description,
+}));
 
 /** Fresh editor baseline when switching diagram versions or before a new draft load (avoids submitting a previous version's scenario). */
 function createInitialScenarioEditorState(): ScenarioState {
@@ -205,13 +179,13 @@ export default function ProjectNewSimulationPage() {
   // Version/diagram selector phase (shown before the multi-step form)
   const { userId } = useAuth();
   const [versionPhase, setVersionPhase] = useState(true);
-  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>([SAMPLE_DIAGRAM_OPTION]);
+  const [availableVersions, setAvailableVersions] = useState<DiagramVersion[]>(SAMPLE_DROPDOWN_AS_DIAGRAM_VERSIONS);
   const [versionsLoading, setVersionsLoading] = useState(true);
-  const [selectedVersionId, setSelectedVersionId] = useState("sample");
+  const [selectedVersionId, setSelectedVersionId] = useState<string>(SAMPLE_IDS.basic);
   const [versionDetailResponse, setVersionDetailResponse] = useState<unknown>(null);
   const [versionDetailLoading, setVersionDetailLoading] = useState(false);
   const [debugView, setDebugView] = useState<"hide" | "show" | "yaml">("hide");
-  const isSampleScenario = selectedVersionId === "sample" || version === "sample";
+  const isSampleScenario = isSampleScenarioId(selectedVersionId);
 
   /** Backend diagram scenario draft (GET/PUT); not used for sample mode */
   const [scenarioDraftLoading, setScenarioDraftLoading] = useState(false);
@@ -223,6 +197,8 @@ export default function ProjectNewSimulationPage() {
   const [usedLocalScenarioFallback, setUsedLocalScenarioFallback] = useState(false);
   const [saveScenarioBusy, setSaveScenarioBusy] = useState(false);
   const [regenerateBusy, setRegenerateBusy] = useState(false);
+  /** Sample YAML applied to editor after sync parse (blocks submit until true). */
+  const [sampleScenarioReady, setSampleScenarioReady] = useState(false);
   /** No server baseline and no intentional AMG/APD local fallback — running would use wrong or default YAML. */
   const draftUnavailableBlocking =
     !isSampleScenario &&
@@ -230,7 +206,9 @@ export default function ProjectNewSimulationPage() {
     scenarioDraftError != null &&
     savedScenarioYaml == null &&
     !usedLocalScenarioFallback;
-  const diagramScenarioDraftBlocked = draftBlocking || draftUnavailableBlocking;
+  const sampleScenarioBlocked = isSampleScenario && !sampleScenarioReady;
+  const diagramScenarioDraftBlocked =
+    draftBlocking || draftUnavailableBlocking || sampleScenarioBlocked;
 
   /** YAML template from version API response (yaml_content field), when a saved version is loaded */
   const versionYamlTemplate =
@@ -270,11 +248,13 @@ export default function ProjectNewSimulationPage() {
               ? `Created ${new Date(v.created_at).toLocaleDateString()}`
               : undefined,
           }));
-          setAvailableVersions([SAMPLE_DIAGRAM_OPTION, ...mapped]);
+          setAvailableVersions([...SAMPLE_DROPDOWN_AS_DIAGRAM_VERSIONS, ...mapped]);
+        } else {
+          setAvailableVersions(SAMPLE_DROPDOWN_AS_DIAGRAM_VERSIONS);
         }
       })
       .catch(() => {
-        // Keep sample only on error or no data
+        setAvailableVersions(SAMPLE_DROPDOWN_AS_DIAGRAM_VERSIONS);
       })
       .finally(() => setVersionsLoading(false));
     return () => controller.abort();
@@ -283,13 +263,13 @@ export default function ProjectNewSimulationPage() {
   // When URL has ?version=..., show the form with that version (e.g. after refresh or shared link)
   useEffect(() => {
     if (!version) return;
-    setSelectedVersionId(version);
+    setSelectedVersionId(normalizeSampleVersionFromUrlParam(version) ?? version);
     setVersionPhase(false);
   }, [version]);
 
   // Fetch version detail (GET /api/amg-apd/versions/:id) when a non-sample version is selected
   useEffect(() => {
-    if (!selectedVersionId || selectedVersionId === "sample") {
+    if (!selectedVersionId || isSampleScenarioId(selectedVersionId)) {
       setVersionDetailResponse(null);
       return;
     }
@@ -317,24 +297,37 @@ export default function ProjectNewSimulationPage() {
     return () => controller.abort();
   }, [selectedVersionId, projectId, userId]);
 
-  // Sample mode: editor baseline comes from the predefined sample YAML file (not backend drafts).
+  // Sample mode: editor baseline from bundled registry (sample-scenarios.ts), not backend drafts.
   useEffect(() => {
-    if (selectedVersionId !== "sample") return;
+    if (!isSampleScenarioId(selectedVersionId)) {
+      setSampleScenarioReady(false);
+      return;
+    }
     setScenarioDraftLoading(false);
     setScenarioDraftError(null);
     setScenarioDraftStatusLabel(null);
     setSavedScenarioYaml(null);
     setUsedLocalScenarioFallback(false);
-    const parsed = parseSimulationScenarioYaml(SAMPLE_SCENARIO_YAML);
-    if (parsed.ok) {
-      setScenario(parsed.state as ScenarioState);
-      setScenarioError(null);
+    setSampleScenarioReady(false);
+    setScenario(createInitialScenarioEditorState());
+    const yaml = getSampleScenarioYaml(selectedVersionId);
+    if (!yaml) {
+      setScenarioDraftError("Unknown sample scenario.");
+      return;
     }
+    const parsed = parseSimulationScenarioYaml(yaml);
+    if (!parsed.ok) {
+      setScenarioDraftError(`Could not parse sample scenario YAML: ${parsed.error}`);
+      return;
+    }
+    setScenario(parsed.state as ScenarioState);
+    setScenarioError(null);
+    setSampleScenarioReady(true);
   }, [selectedVersionId]);
 
   // Diagram version: load simulation scenario from backend; optional local AMG/APD transform only if backend is unavailable.
   useEffect(() => {
-    if (selectedVersionId === "sample") return;
+    if (isSampleScenarioId(selectedVersionId)) return;
 
     let cancelled = false;
 
@@ -543,7 +536,7 @@ export default function ProjectNewSimulationPage() {
   };
 
   const handleSaveDiagramScenario = async () => {
-    if (selectedVersionId === "sample" || diagramScenarioDraftBlocked) return;
+    if (isSampleScenario || diagramScenarioDraftBlocked) return;
     setSaveScenarioBusy(true);
     setScenarioDraftError(null);
     try {
@@ -591,7 +584,7 @@ export default function ProjectNewSimulationPage() {
   };
 
   const handleRegenerateDiagramScenario = async () => {
-    if (selectedVersionId === "sample" || scenarioDraftLoading) return;
+    if (isSampleScenario || scenarioDraftLoading) return;
     setRegenerateBusy(true);
     setScenarioDraftError(null);
     try {
@@ -704,6 +697,9 @@ export default function ProjectNewSimulationPage() {
     } else if (draftUnavailableBlocking) {
       scenarioIssue =
         "The diagram scenario draft could not be loaded. Retry or regenerate from the diagram before continuing.";
+    } else if (sampleScenarioBlocked) {
+      scenarioIssue =
+        "The bundled sample scenario could not be loaded (parse error). Fix the YAML or choose another version.";
     } else if (scenario.hosts.length === 0) {
       scenarioIssue = "At least one host is required.";
     } else if (
@@ -887,6 +883,13 @@ export default function ProjectNewSimulationPage() {
       setErrors({
         general:
           "The diagram scenario draft could not be loaded. Retry or regenerate from the diagram before running.",
+      });
+      return;
+    }
+    if (sampleScenarioBlocked) {
+      setErrors({
+        general:
+          "The sample scenario is not ready (parse error). Choose another version or fix the bundled sample YAML.",
       });
       return;
     }
@@ -1138,9 +1141,9 @@ export default function ProjectNewSimulationPage() {
                   {availableVersions.find((v) => v.id === selectedVersionId)!.description}
                 </p>
               )}
-              {availableVersions.length === 1 && (
+              {availableVersions.filter((v) => !isSampleScenarioId(v.id)).length === 0 && (
                 <p className="text-xs text-amber-400/80 pt-1">
-                  No saved diagram versions for this project. Use the sample or create versions in
+                  No saved diagram versions for this project. Use a bundled sample or create versions in
                   Pattern Detection first.
                 </p>
               )}
@@ -1219,8 +1222,8 @@ export default function ProjectNewSimulationPage() {
           <div className="p-3 border-t border-white/10 bg-black/20 max-h-64 overflow-auto">
             {versionDetailLoading ? (
               <p className="text-xs text-white/50">Loading…</p>
-            ) : selectedVersionId === "sample" ? (
-              <p className="text-xs text-white/50">Select a saved diagram version (not sample) to load response.</p>
+            ) : isSampleScenario ? (
+              <p className="text-xs text-white/50">Select a saved diagram version (not a bundled sample) to load response.</p>
             ) : versionDetailResponse === null ? (
               <p className="text-xs text-white/50">No response yet.</p>
             ) : (
@@ -1238,8 +1241,8 @@ export default function ProjectNewSimulationPage() {
               <pre className="text-[11px] font-mono text-white/80 whitespace-pre-wrap break-all">
                 {versionYamlTemplate}
               </pre>
-            ) : selectedVersionId === "sample" ? (
-              <p className="text-xs text-white/50">Select a saved diagram version (not sample) to load YAML template.</p>
+            ) : isSampleScenario ? (
+              <p className="text-xs text-white/50">Select a saved diagram version (not a bundled sample) to load YAML template.</p>
             ) : (
               <p className="text-xs text-white/50">No YAML template in response yet.</p>
             )}

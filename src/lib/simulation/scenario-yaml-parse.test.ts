@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SAMPLE_SCENARIO_V2_YAML } from "./sample-scenario-v2-yaml";
 import { parseSimulationScenarioYaml, scenarioStateToYaml } from "./scenario-yaml-parse";
 
 const BACKEND_SERVICE_FIELDS_YAML = `
@@ -207,5 +208,52 @@ describe("scenario-yaml-parse", () => {
     expect(p.state.policies?.autoscaling?.services).toEqual([]);
     const out = scenarioStateToYaml(p.state).trim();
     expect(out).toContain("cooldown_ms: 5000");
+  });
+
+  it("ScenarioV2 bundled sample: parse → scenarioStateToYaml preserves representative v2 fields", () => {
+    const first = parseSimulationScenarioYaml(SAMPLE_SCENARIO_V2_YAML);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const out = scenarioStateToYaml(first.state).trim();
+    expect(out).toMatch(/schema_version:\s*(?:0\.2\.0|"0\.2\.0")/);
+    expect(out).toContain("simulation_limits:");
+    expect(out).toContain("max_trace_depth: 48");
+    expect(out).toContain("max_async_hops: 12");
+    expect(out).toContain("zone: zone-a");
+    expect(out).toContain("rack: r1");
+    expect(out).toContain("tier: edge");
+    expect(out).toContain("kind: api_gateway");
+    expect(out).toContain("role: ingress");
+    expect(out).toContain("strategy: least_queue");
+    expect(out).toContain("locality_zone_from: client_zone");
+    expect(out).toContain("horizontal: true");
+    expect(out).toContain("required_zones:");
+    expect(out).toContain("spread_across_zones: true");
+    expect(out).toContain("kind: queue");
+    expect(out).toContain("consumer_concurrency: 2");
+    expect(out).toContain("kind: topic");
+    expect(out).toContain("publish_ack: leader_ack");
+    expect(out).toContain("kind: database");
+    expect(out).toContain("kind: cache");
+    expect(out).toContain("hit_rate: 0.78");
+    expect(out).toContain("kind: external");
+    expect(out).toContain("source_kind: client");
+    expect(out).toContain("traffic_class: ingress");
+    expect(out).toContain("client_zone: zone-a");
+    expect(out).toContain("source_kind: batch_job");
+    expect(out).toContain("traffic_class: background");
+    expect(out).toContain("type: constant");
+    expect(out).toContain("enabled: true");
+    expect(out).toContain("target_cpu_util: 0.65");
+    expect(out).toContain("scale_step: 1");
+    expect(out).toContain("retries:");
+    expect(out).toContain("max_retries: 2");
+    expect(out).toContain("backoff: exponential");
+
+    const second = parseSimulationScenarioYaml(out);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(scenarioStateToYaml(second.state).trim()).toBe(out);
   });
 });

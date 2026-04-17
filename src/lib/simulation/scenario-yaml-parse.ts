@@ -101,7 +101,8 @@ export interface ScenarioState {
   extra?: Record<string, unknown>;
 }
 
-const ROOT_KNOWN = new Set(["hosts", "services", "workload", "policies"]);
+/** Top-level keys mapped into structured editor fields; `metadata`, `simulation_limits`, etc. stay in `ScenarioState.extra`. */
+const ROOT_STRUCTURE_KEYS = new Set(["hosts", "services", "workload", "policies"]);
 
 function num(v: unknown, fallback: number): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -351,7 +352,7 @@ export function parseSimulationScenarioYaml(
 
     const policies = parsePolicies(root.policies);
 
-    const rootExtra = partitionExtra(root, ROOT_KNOWN);
+    const rootExtra = partitionExtra(root, ROOT_STRUCTURE_KEYS);
 
     return {
       ok: true,
@@ -372,6 +373,11 @@ export function parseSimulationScenarioYaml(
 /** Serialize editor scenario state to YAML (inverse of parseSimulationScenarioYaml for known + passthrough fields). */
 export function scenarioStateToYaml(scenario: ScenarioState): string {
   const lines: string[] = [];
+
+  if (scenario.extra && Object.keys(scenario.extra).length > 0) {
+    lines.push(...emitExtraLines(scenario.extra, 0));
+    lines.push("");
+  }
 
   lines.push("hosts:");
   if (scenario.hosts.length === 0) {
@@ -445,8 +451,8 @@ export function scenarioStateToYaml(scenario: ScenarioState): string {
   } else {
     for (const w of scenario.workload) {
       lines.push(`  - from: ${w.from || "client"}`);
-      lines.push(`    to: ${w.to || "svc1:/test"}`);
       lines.push(...emitExtraLines(w.extra, 4));
+      lines.push(`    to: ${w.to || "svc1:/test"}`);
       lines.push("    arrival:");
       lines.push(`      type: ${w.arrival.type}`);
       lines.push(`      rate_rps: ${w.arrival.rate_rps ?? 0}`);
@@ -510,10 +516,6 @@ export function scenarioStateToYaml(scenario: ScenarioState): string {
         }
       }
     }
-  }
-
-  if (scenario.extra && Object.keys(scenario.extra).length > 0) {
-    lines.push(...emitExtraLines(scenario.extra, 0));
   }
 
   return lines.join("\n");
