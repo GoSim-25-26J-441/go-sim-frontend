@@ -8,6 +8,7 @@ import type {
   CallProtocol,
   DetectionKind,
 } from "@/app/features/amg-apd/types";
+import { applyReciprocalCallLanes } from "@/app/features/amg-apd/utils/reciprocalCallLanes";
 
 const ADD_NODE_TOOLS: EditTool[] = [
   "add-service",
@@ -207,6 +208,11 @@ export function useCyInteractions({
         };
 
         cy.add({ group: "edges", data: edgeData, classes: "calls" });
+
+        applyReciprocalCallLanes(cy);
+        try {
+          cy.style().update();
+        } catch {}
 
         setPendingSource(null);
         safeUnselectAll();

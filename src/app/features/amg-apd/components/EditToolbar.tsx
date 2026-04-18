@@ -1,12 +1,12 @@
 "use client";
 
-import Image from "next/image";
 import { useState, useMemo } from "react";
-import { Trash2 } from "lucide-react";
+import type { DragEvent as ReactDragEvent } from "react";
 import type {
   EditTool,
   CallProtocol,
   DetectionKind,
+  NodeKind,
 } from "@/app/features/amg-apd/types";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import {
@@ -16,11 +16,12 @@ import {
 } from "@/app/features/amg-apd/utils/antiPatternChunks";
 import {
   DIAGRAM_NODE_ICON_PATHS,
-  DIAGRAM_TOOL_ICON_PATHS,
 } from "@/app/features/amg-apd/utils/diagramNodeIcons";
 
-const TOOL_ICONS: Record<Exclude<EditTool, "delete-element">, string> = {
-  select: DIAGRAM_TOOL_ICON_PATHS.select,
+const TOOL_ICONS: Record<
+  "add-service" | "add-api-gateway" | "add-database" | "add-event-topic" | "add-external-system" | "add-client" | "add-user-actor",
+  string
+> = {
   "add-service": DIAGRAM_NODE_ICON_PATHS.service,
   "add-api-gateway": DIAGRAM_NODE_ICON_PATHS.gateway,
   "add-database": DIAGRAM_NODE_ICON_PATHS.database,
@@ -28,80 +29,69 @@ const TOOL_ICONS: Record<Exclude<EditTool, "delete-element">, string> = {
   "add-external-system": DIAGRAM_NODE_ICON_PATHS.external,
   "add-client": DIAGRAM_NODE_ICON_PATHS.client,
   "add-user-actor": DIAGRAM_NODE_ICON_PATHS.user,
-  "connect-calls": DIAGRAM_TOOL_ICON_PATHS.connect,
 };
 
-type ToolRowDef = { t: EditTool; label: string; title: string; hint: string };
-
-/** Select / connect — amber/orange only when selected. */
-const INTERACTION_TOOLS: ToolRowDef[] = [
-  {
-    t: "select",
-    label: "Select / Move",
-    title: "Select, move and inspect elements",
-    hint: "Click the canvas",
-  },
-  {
-    t: "connect-calls",
-    label: "Connect nodes",
-    title: "Choose a source node, then click another node to add a call",
-    hint: "Click two nodes",
-  },
-  {
-    t: "delete-element",
-    label: "Delete",
-    title: "Click a node or connection on the canvas to remove it",
-    hint: "Click target",
-  },
-];
+type ToolRowDef = {
+  t: EditTool;
+  label: string;
+  title: string;
+  hint: string;
+  dragKind: NodeKind;
+};
 
 /** Add-node tools — diagram-style white tiles; sky when selected. */
 const NODE_ADD_TOOLS: ToolRowDef[] = [
   {
     t: "add-service",
     label: "Service",
-    title: "Add a new service (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add a new service",
+    hint: "Drag to canvas",
+    dragKind: "SERVICE",
   },
   {
     t: "add-api-gateway",
     label: "API Gateway",
-    title: "Add an API gateway (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add an API gateway",
+    hint: "Drag to canvas",
+    dragKind: "API_GATEWAY",
   },
   {
     t: "add-database",
     label: "Database",
-    title: "Add a new database (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add a database",
+    hint: "Drag to canvas",
+    dragKind: "DATABASE",
   },
   {
     t: "add-event-topic",
     label: "Event Topic",
-    title: "Add an event topic (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add an event topic",
+    hint: "Drag to canvas",
+    dragKind: "EVENT_TOPIC",
   },
   {
     t: "add-external-system",
     label: "External System",
-    title: "Add an external system (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add an external system",
+    hint: "Drag to canvas",
+    dragKind: "EXTERNAL_SYSTEM",
   },
   {
     t: "add-client",
     label: "Client (Web/Mobile)",
-    title: "Add a client (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add a client",
+    hint: "Drag to canvas",
+    dragKind: "CLIENT",
   },
   {
     t: "add-user-actor",
     label: "User / Actor",
-    title: "Add a user or actor (click on the background)",
-    hint: "Click on canvas",
+    title: "Drag and drop to add a user/actor",
+    hint: "Drag to canvas",
+    dragKind: "USER_ACTOR",
   },
 ];
 
-const TOOLS_HEADING = "Tools";
 const NODES_HEADING = "Nodes";
 const ANTIPATTERNS_HEADING = "Anti-patterns";
 
@@ -112,13 +102,6 @@ const rowBase =
 const diagramRowIdle = `${rowBase} cursor-pointer border-black bg-white text-black shadow-sm hover:bg-white/85`;
 
 const toneRowClasses = {
-  tool: {
-    idle: diagramRowIdle,
-    active: `${rowBase} cursor-pointer border-amber-500 bg-gradient-to-br from-amber-50 via-white to-amber-100/50 text-black ring-2 ring-amber-400/55 shadow-[0_0_22px_rgba(251,191,36,0.35)]`,
-    iconWrapIdle: "bg-slate-100/90",
-    iconWrapActive: "bg-amber-200/55",
-    hintActive: "text-amber-900/70",
-  },
   node: {
     idle: diagramRowIdle,
     active: `${rowBase} cursor-pointer border-sky-600 bg-gradient-to-br from-sky-100/95 via-white to-sky-200/65 text-black ring-2 ring-sky-600/42 shadow-[0_0_20px_rgba(2,132,199,0.26)]`,
@@ -137,28 +120,32 @@ const toneRowClasses = {
 
 type Props = {
   editMode: boolean;
-  tool: EditTool;
   pendingSourceId: string | null;
-  onToolChange: (tool: EditTool) => void;
   defaultCallProtocol?: CallProtocol;
   defaultCallSync?: boolean;
   onDefaultCallChange?: (kind: CallProtocol, sync: boolean) => void;
-  onAddAntiPattern?: (kind: DetectionKind) => void;
   pendingAntiPatternKind?: DetectionKind | null;
   variant?: "overlay" | "sidebar";
+  onNodeDragStart?: (kind: NodeKind) => (e: ReactDragEvent<HTMLButtonElement>) => void;
+  onAntiPatternDragStart?: (
+    kind: DetectionKind,
+  ) => (e: ReactDragEvent<HTMLButtonElement>) => void;
+  onToolDragEnd?: () => void;
+  draggingAntiPatternKind?: DetectionKind | null;
 };
 
 export default function EditToolbar({
   editMode,
-  tool,
   pendingSourceId,
-  onToolChange,
   defaultCallProtocol: _defaultCallProtocol = "rest",
   defaultCallSync: _defaultCallSync = true,
   onDefaultCallChange: _onDefaultCallChange,
-  onAddAntiPattern,
   pendingAntiPatternKind = null,
   variant = "overlay",
+  onNodeDragStart,
+  onAntiPatternDragStart,
+  onToolDragEnd,
+  draggingAntiPatternKind = null,
 }: Props) {
   void _defaultCallProtocol;
   void _defaultCallSync;
@@ -172,8 +159,6 @@ export default function EditToolbar({
   );
 
   const {
-    showToolsSection,
-    toolsToShow,
     showNodesSection,
     nodesToShow,
     showAntiSection,
@@ -185,8 +170,6 @@ export default function EditToolbar({
 
     if (!query) {
       return {
-        showToolsSection: true,
-        toolsToShow: INTERACTION_TOOLS,
         showNodesSection: true,
         nodesToShow: NODE_ADD_TOOLS,
         showAntiSection: true,
@@ -194,11 +177,6 @@ export default function EditToolbar({
       };
     }
 
-    const toolsHeadingMatches =
-      (query.length > 0 &&
-        TOOLS_HEADING.toLowerCase().includes(query)) ||
-      query === "tool" ||
-      query === "tools";
     const nodesHeadingMatches =
       (query.length > 0 &&
         NODES_HEADING.toLowerCase().includes(query)) ||
@@ -210,15 +188,12 @@ export default function EditToolbar({
       "anti-patterns".includes(query) ||
       "anti patterns".includes(query);
 
-    const matchingTools = INTERACTION_TOOLS.filter(matchesRow);
     const matchingNodes = NODE_ADD_TOOLS.filter(matchesRow);
     const matchingAnti = EDITABLE_ANTIPATTERNS.filter((kind) =>
       antipatternKindLabel(kind).toLowerCase().includes(query),
     );
 
     return {
-      showToolsSection: toolsHeadingMatches || matchingTools.length > 0,
-      toolsToShow: toolsHeadingMatches ? INTERACTION_TOOLS : matchingTools,
       showNodesSection: nodesHeadingMatches || matchingNodes.length > 0,
       nodesToShow: nodesHeadingMatches ? NODE_ADD_TOOLS : matchingNodes,
       showAntiSection: antiHeadingMatches || matchingAnti.length > 0,
@@ -228,49 +203,50 @@ export default function EditToolbar({
 
   if (!editMode) return null;
 
-  const ToolRow = ({
+  const NodeRow = ({
     t,
     label,
     title,
     hint,
-    tone,
-  }: ToolRowDef & { tone: "tool" | "node" }) => {
-    const active = tool === t;
-    const tc = toneRowClasses[tone];
+    dragKind,
+  }: ToolRowDef) => {
+    const tc = toneRowClasses.node;
+    const nodeDragDataClass =
+      "data-[dragging=true]:border-sky-700 data-[dragging=true]:bg-gradient-to-br data-[dragging=true]:from-sky-200/95 data-[dragging=true]:via-sky-50 data-[dragging=true]:to-sky-300/80 data-[dragging=true]:ring-2 data-[dragging=true]:ring-sky-700/55 data-[dragging=true]:shadow-[0_0_24px_rgba(3,105,161,0.42)]";
+    const nodeIconDragDataClass = "group-data-[dragging=true]:bg-sky-300/35";
+    const nodeHintDragDataClass = "group-data-[dragging=true]:text-sky-950/90";
     return (
       <button
         type="button"
+        draggable
         title={title}
-        onClick={() => onToolChange(t)}
-        className={active ? tc.active : tc.idle}
+        onDragStart={(e) => {
+          e.currentTarget.dataset.dragging = "true";
+          onNodeDragStart?.(dragKind)(e);
+        }}
+        onDragEnd={(e) => {
+          e.currentTarget.dataset.dragging = "false";
+          onToolDragEnd?.();
+        }}
+        className={`${tc.idle} group ${nodeDragDataClass}`}
       >
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
-            active ? tc.iconWrapActive : tc.iconWrapIdle
-          }`}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${tc.iconWrapIdle} ${nodeIconDragDataClass}`}
         >
-          {t === "delete-element" ? (
-            <Trash2
-              className="h-5 w-5 sm:h-6 sm:w-6 text-slate-800 pointer-events-none"
-              strokeWidth={2.25}
-              aria-hidden
-            />
-          ) : (
-            <Image
-              width={32}
-              height={32}
-              src={TOOL_ICONS[t as Exclude<EditTool, "delete-element">]}
-              alt=""
-              className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
-            />
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={TOOL_ICONS[t as keyof typeof TOOL_ICONS]}
+            alt=""
+            width={32}
+            height={32}
+            draggable={false}
+            className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
+          />
         </span>
         <div className="flex min-w-0 flex-1 flex-col text-left">
           <span className="truncate font-bold text-black">{label}</span>
           <span
-            className={`truncate text-[9px] sm:text-[10px] ${
-              active ? tc.hintActive : "text-black/80"
-            }`}
+            className={`truncate text-[9px] sm:text-[10px] text-black/80 ${nodeHintDragDataClass}`}
           >
             {hint}
           </span>
@@ -293,24 +269,13 @@ export default function EditToolbar({
       className={scrollOuterClass}
       onWheel={(e) => e.stopPropagation()}
     >
-      {showToolsSection && (
-        <>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-200/90 sm:text-[11px]">
-            {TOOLS_HEADING}
-          </div>
-          {toolsToShow.map((row) => (
-            <ToolRow key={row.t} {...row} tone="tool" />
-          ))}
-        </>
-      )}
-
       {showNodesSection && (
         <>
-          <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-sky-300/85 sm:text-[11px]">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-300/85 sm:text-[11px]">
             {NODES_HEADING}
           </div>
           {nodesToShow.map((row) => (
-            <ToolRow key={row.t} {...row} tone="node" />
+            <NodeRow key={row.t} {...row} />
           ))}
         </>
       )}
@@ -321,26 +286,25 @@ export default function EditToolbar({
             {ANTIPATTERNS_HEADING}
           </div>
           <p className="text-[9px] text-rose-200/60 sm:text-[10px]">
-            Click to place a sample subgraph that triggers the detector.
+            Drag and drop a sample subgraph that triggers the detector.
           </p>
           {antiToShow.map((kind) => {
-            const isPending = pendingAntiPatternKind === kind;
+            const isDragging =
+              draggingAntiPatternKind === kind || pendingAntiPatternKind === kind;
             const ac = toneRowClasses.anti;
             return (
               <button
                 key={kind}
                 type="button"
-                title={`Add a sample graph that triggers ${antipatternKindLabel(kind)}. Then click on the canvas to place it.`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onAddAntiPattern?.(kind);
-                }}
-                className={isPending ? ac.pending : ac.idle}
+                draggable
+                title={`Drag and drop a sample graph that triggers ${antipatternKindLabel(kind)}.`}
+                onDragStart={onAntiPatternDragStart?.(kind)}
+                onDragEnd={onToolDragEnd}
+                className={isDragging ? ac.pending : ac.idle}
               >
                 <span
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
-                    isPending ? ac.iconWrapPending : ac.iconWrapIdle
+                    isDragging ? ac.iconWrapPending : ac.iconWrapIdle
                   }`}
                 >
                   {/* Native img: reliable src swap on error for SVG→PNG fallback */}
@@ -372,10 +336,10 @@ export default function EditToolbar({
                   </span>
                   <span
                     className={`truncate text-[9px] sm:text-[10px] ${
-                      isPending ? ac.hintPending : "text-black/80"
+                      isDragging ? ac.hintPending : "text-black/80"
                     }`}
                   >
-                    Click on canvas
+                    Drag to canvas
                   </span>
                 </div>
               </button>
@@ -385,7 +349,6 @@ export default function EditToolbar({
       )}
 
       {query &&
-        !showToolsSection &&
         !showNodesSection &&
         !showAntiSection && (
           <p className="py-4 text-center text-[11px] text-slate-500">

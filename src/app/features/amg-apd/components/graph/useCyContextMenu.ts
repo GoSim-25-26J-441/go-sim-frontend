@@ -8,10 +8,12 @@ import type cytoscape from "cytoscape";
 export function useCyContextMenu({
   cy,
   onNodeContext,
+  onEdgeContext,
   onCanvasContext,
 }: {
   cy: cytoscape.Core | null;
   onNodeContext: (nodeId: string, clientX: number, clientY: number) => void;
+  onEdgeContext: (edgeId: string, clientX: number, clientY: number) => void;
   onCanvasContext: (
     modelPos: { x: number; y: number },
     clientX: number,
@@ -21,7 +23,7 @@ export function useCyContextMenu({
   useEffect(() => {
     if (!cy) return;
 
-    const handler = (evt: any) => {
+    const handler = (evt: cytoscape.EventObject) => {
       const oe = evt.originalEvent as MouseEvent | undefined;
       oe?.preventDefault?.();
 
@@ -33,6 +35,10 @@ export function useCyContextMenu({
       }
       if (target?.isNode?.() && !target.hasClass?.("halo")) {
         if (oe) onNodeContext(target.id(), oe.clientX, oe.clientY);
+        return;
+      }
+      if (target?.isEdge?.()) {
+        if (oe) onEdgeContext(target.id(), oe.clientX, oe.clientY);
       }
     };
 
@@ -40,5 +46,5 @@ export function useCyContextMenu({
     return () => {
       cy.off("cxttap", handler);
     };
-  }, [cy, onNodeContext, onCanvasContext]);
+  }, [cy, onNodeContext, onEdgeContext, onCanvasContext]);
 }
