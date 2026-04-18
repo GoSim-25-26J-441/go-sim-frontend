@@ -8,12 +8,12 @@
 #   BUCKET: S3 bucket (e.g. arcfind-builds)
 #   REGION: AWS region (e.g. us-east-1)
 #
-# Env (optional): APP_DIR, PARAM_NAME, SYSTEMD_UNIT_NAME, NGINX_CONF_DEST
+# Env (optional): APP_DIR, PARAM_NAME, SYSTEMD_UNIT_NAME, NGINX_CONF_D
 #   APP_DIR: app directory (default: /opt/go-sim-frontend)
 #   PARAM_NAME: Parameter Store path for .env (default: /arcfind/production/frontend)
 #   SYSTEMD_UNIT_NAME: systemd unit (default: go-sim-frontend)
-#   NGINX_CONF_DEST: if set, copy bundled nginx vhost here (default when nginx exists:
-#     /etc/nginx/conf.d/go-sim-frontend.conf). Set empty to skip nginx.
+#   NGINX_CONF_D: nginx conf.d directory (default: /etc/nginx/conf.d). Vhost file is always
+#     app.microsim.dev.conf under that directory; it is installed only if missing.
 
 set -e
 
@@ -102,22 +102,32 @@ systemctl enable "${SYSTEMD_UNIT_NAME}.service" 2>/dev/null || true
 systemctl restart "${SYSTEMD_UNIT_NAME}.service"
 systemctl --no-pager -l status "${SYSTEMD_UNIT_NAME}.service" || true
 
-# Nginx vhost: ship template in build tarball at scripts/nginx-go-sim-frontend.conf
-NGINX_TEMPLATE="${APP_DIR}/scripts/nginx-go-sim-frontend.conf"
-if command -v nginx >/dev/null 2>&1 && [ -f "$NGINX_TEMPLATE" ]; then
-  NGINX_DEST="${NGINX_CONF_DEST:-/etc/nginx/conf.d/go-sim-frontend.conf}"
-  echo "[$(date -Iseconds)] Installing nginx vhost -> $NGINX_DEST"
-  install -m 0644 "$NGINX_TEMPLATE" "$NGINX_DEST"
-  if nginx -t 2>&1; then
-    systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || true
-    echo "[$(date -Iseconds)] Nginx reloaded"
+# Nginx vhost: ship template in build tarball as scripts/app.microsim.dev.conf
+NGINX_CONF_D="${NGINX_CONF_D:-/etc/nginx/conf.d}"
+NGINX_VHOST_BASENAME="app.microsim.dev.conf"
+NGINX_INSTALLED="${NGINX_CONF_D}/${NGINX_VHOST_BASENAME}"
+NGINX_TEMPLATE="${APP_DIR}/scripts/${NGINX_VHOST_BASENAME}"
+
+if command -v nginx >/dev/null 2>&1 && [ -d "$NGINX_CONF_D" ]; then
+  if [ -f "$NGINX_INSTALLED" ]; then
+    echo "[$(date -Iseconds)] Nginx vhost already present: $NGINX_INSTALLED (skip install)"
+  elif [ -f "$NGINX_TEMPLATE" ]; then
+    echo "[$(date -Iseconds)] Installing nginx vhost -> $NGINX_INSTALLED"
+    install -m 0644 "$NGINX_TEMPLATE" "$NGINX_INSTALLED"
+    if nginx -t 2>&1; then
+      systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || true
+      echo "[$(date -Iseconds)] Nginx reloaded"
+    else
+      echo "[$(date -Iseconds)] WARNING: nginx -t failed; removing new vhost file"
+      rm -f "$NGINX_INSTALLED"
+    fi
   else
-    echo "[$(date -Iseconds)] WARNING: nginx -t failed; leaving vhost file in place"
+    echo "[$(date -Iseconds)] No bundled nginx template at $NGINX_TEMPLATE (add scripts/${NGINX_VHOST_BASENAME} to build tarball)"
   fi
 elif [ -f "$NGINX_TEMPLATE" ]; then
-  echo "[$(date -Iseconds)] Nginx template present but nginx not installed; skip vhost install"
+  echo "[$(date -Iseconds)] Nginx template present but nginx or $NGINX_CONF_D missing; skip vhost install"
 else
-  echo "[$(date -Iseconds)] No nginx template at $NGINX_TEMPLATE (add scripts/nginx-go-sim-frontend.conf to build tarball)"
+  echo "[$(date -Iseconds)] No nginx template at $NGINX_TEMPLATE"
 fi
 
 echo "[$(date -Iseconds)] Deploy finished successfully"

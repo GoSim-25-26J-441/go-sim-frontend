@@ -6,9 +6,9 @@ This app is deployed to an EC2 instance using GitHub Actions (build in CI), S3, 
 
 - **GitHub Actions**
   - **CI job:** On push or pull_request to main, dev, ci: checkout, `npm i`, `npm run build`.
-  - **Deploy job:** After CI, only on push to main (or `workflow_dispatch`). Builds the app, creates a tarball (`.next`, `public`, `package.json`, `package-lock.json`, `ecosystem.config.js`, `scripts/nginx-go-sim-frontend.conf`), uploads it to `s3://<DEPLOY_BUCKET>/go-sim-frontend/build.tar.gz`, uploads `scripts/deploy-ec2.sh` to `s3://<DEPLOY_BUCKET>/go-sim-frontend/scripts/deploy.sh`, then invokes SSM to run a command on EC2 that downloads the script from S3 and executes `deploy.sh BUCKET REGION`.
+  - **Deploy job:** After CI, only on push to main (or `workflow_dispatch`). Builds the app, creates a tarball (`.next`, `public`, `package.json`, `package-lock.json`, `ecosystem.config.js`, `scripts/app.microsim.dev.conf`), uploads it to `s3://<DEPLOY_BUCKET>/go-sim-frontend/build.tar.gz`, uploads `scripts/deploy-ec2.sh` to `s3://<DEPLOY_BUCKET>/go-sim-frontend/scripts/deploy.sh`, then invokes SSM to run a command on EC2 that downloads the script from S3 and executes `deploy.sh BUCKET REGION`.
   - **Deploy completion:** The workflow waits on **SSM `get-command-invocation` only** (`Status` / `ResponseCode`). There is **no HTTP health check** against the app URL; treat SSM `Success` + `ResponseCode` 0 as deploy success.
-- **EC2:** The deploy script downloads the build from S3, extracts to the app directory, runs `npm ci --omit=dev`, fetches env from Parameter Store into `.env.local`, creates `/etc/systemd/system/go-sim-frontend.service` **if missing**, then `systemctl restart go-sim-frontend`. If `nginx` is on the host and `scripts/nginx-go-sim-frontend.conf` is in the tarball, the script copies it to `/etc/nginx/conf.d/go-sim-frontend.conf`, runs `nginx -t`, and reloads nginx.
+- **EC2:** The deploy script downloads the build from S3, extracts to the app directory, runs `npm ci --omit=dev`, fetches env from Parameter Store into `.env.local`, creates `/etc/systemd/system/go-sim-frontend.service` **if missing**, then `systemctl restart go-sim-frontend`. If `nginx` is on the host and **`/etc/nginx/conf.d/app.microsim.dev.conf` is not already present**, the script copies the bundled `scripts/app.microsim.dev.conf` from the tarball to that path, runs `nginx -t`, and reloads nginx.
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ Optional environment variables:
 - **PARAM_NAME:** Parameter Store path for the env file (default: `/arcfind/production/frontend`).
 - **SYSTEMD_UNIT_NAME:** systemd unit name without `.service` (default: `go-sim-frontend`).
 - **APP_HOST:** Host Next binds to (default: `127.0.0.1`; use with nginx reverse proxy).
-- **NGINX_CONF_DEST:** Destination for the nginx vhost file (default: `/etc/nginx/conf.d/go-sim-frontend.conf` when nginx is installed).
+- **NGINX_CONF_D:** Nginx `conf.d` directory (default: `/etc/nginx/conf.d`). The vhost filename is always `app.microsim.dev.conf`; it is installed only if that file does not already exist there.
 
 The script is invoked as `deploy.sh BUCKET REGION`.
 
@@ -58,7 +58,7 @@ The script is invoked as `deploy.sh BUCKET REGION`.
 
 - **First deploy:** Creates `/etc/systemd/system/go-sim-frontend.service`, enables and starts the service. The unit file is **not overwritten** on later deploys if it already exists; delete the unit on the instance if you need to regenerate it.
 - **PM2 / ecosystem.config.js:** Still included in the tarball for local or manual PM2 use; **production EC2 deploy uses systemd**, not PM2.
-- **Nginx:** Edit `scripts/nginx-go-sim-frontend.conf` in the repo (e.g. `server_name`) or override the file on the server after deploy.
+- **Nginx:** Edit `scripts/app.microsim.dev.conf` in the repo (e.g. `server_name`) or manage `/etc/nginx/conf.d/app.microsim.dev.conf` directly on the server; deploy will not overwrite an existing file.
 
 ## Troubleshooting
 

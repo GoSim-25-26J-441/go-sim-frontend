@@ -82,7 +82,7 @@ jobs:
 
       - name: Create build artifact
         run: |
-          tar -czf build.tar.gz .next public package.json package-lock.json ecosystem.config.js scripts/nginx-go-sim-frontend.conf
+          tar -czf build.tar.gz .next public package.json package-lock.json ecosystem.config.js scripts/app.microsim.dev.conf
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
