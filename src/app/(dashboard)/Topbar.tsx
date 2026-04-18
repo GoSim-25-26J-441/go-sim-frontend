@@ -7,12 +7,14 @@ import { useRouter } from "next/navigation";
 import { LogOut, User, FileText } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import { useEffect, useRef, useState } from "react";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 export default function Topbar() {
   const router = useRouter();
   const { signOut, userProfile, user } = useAuth();
 
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [imageLoadError, setImageLoadError] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
@@ -39,12 +41,11 @@ export default function Topbar() {
     };
   }, [isDropdownOpen]);
 
-  const handleLogout = async () => {
+  const performLogout = async () => {
     try {
       setIsSigningOut(true);
-      setIsDropdownOpen(false);
       await signOut();
-
+      setLogoutConfirmOpen(false);
       router.replace("/");
       router.refresh();
     } catch (error) {
@@ -65,8 +66,8 @@ export default function Topbar() {
     .slice(0, 2);
 
   return (
-    <header className="sticky top-0 z-40 h-20 mx-6">
-      <div className="flex h-full max-w-[1800px] mx-auto items-center justify-between">
+    <header className="sticky top-0 z-40 h-full px-6">
+      <div className="flex h-full w-full items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />
         </Link>
@@ -140,7 +141,10 @@ export default function Topbar() {
 
                   <button
                     type="button"
-                    onClick={handleLogout}
+                    onClick={() => {
+                      setIsDropdownOpen(false);
+                      setLogoutConfirmOpen(true);
+                    }}
                     disabled={isSigningOut}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -153,6 +157,19 @@ export default function Topbar() {
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={logoutConfirmOpen}
+        onClose={() => !isSigningOut && setLogoutConfirmOpen(false)}
+        title="Sign out?"
+        message="You will need to sign in again to access your account and projects."
+        confirmLabel={isSigningOut ? "Logging out…" : "Log out"}
+        cancelLabel="Cancel"
+        variant="info"
+        closeOnConfirm={false}
+        confirmLoading={isSigningOut}
+        onConfirm={performLogout}
+      />
     </header>
   );
 }

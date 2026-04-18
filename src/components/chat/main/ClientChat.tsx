@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import {
   Send,
@@ -13,12 +13,14 @@ import {
   Check,
   ArrowLeft,
   X,
+  PenSquare,
 } from "lucide-react";
 import {
   useGetProjectThreadIdQuery,
   useGetMessagesQuery,
   useSendMessageMutation,
   type ChatMessageItem,
+  type ChatResponse,
 } from "@/app/store/chatApi";
 import { useToast } from "@/hooks/useToast";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
@@ -29,17 +31,36 @@ import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type Props = { id: string };
 type ChatMode = "thinking" | "default" | "instant";
+type UiChatMessage = ChatMessageItem & { responseTimeMs?: number };
+
+const MAX_MESSAGE_503_RETRIES = 6;
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function getFetchErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
 
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const urlThreadId = searchParams.get("thread");
   const fromDiagram = searchParams.get("from") === "diagram";
+  const diagramVersionParam =
+    searchParams.get("diagramVersion") ??
+    searchParams.get("diagram_version");
 
   const [threadId, setThreadId] = useState<string | null>(urlThreadId);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
+  const [messages, setMessages] = useState<UiChatMessage[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>("default");
   const [thinkingDetail, setThinkingDetail] = useState<string>("high");
@@ -57,7 +78,21 @@ export default function ClientChat({ id }: Props) {
 
   const [showCheckPatternsOverlay, setShowCheckPatternsOverlay] =
     useState(false);
+  const [pendingResponseMs, setPendingResponseMs] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const INPUT_MAX_HEIGHT_PX = 200;
+
+  const syncInputHeight = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT_PX)}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    syncInputHeight();
+  }, [input, syncInputHeight]);
 
   const {
     data: projectThreadId,
@@ -90,6 +125,23 @@ export default function ClientChat({ id }: Props) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (pendingResponseMs === null) return;
+    const startedAt = Date.now() - pendingResponseMs;
+    const t = window.setInterval(() => {
+      setPendingResponseMs(Date.now() - startedAt);
+    }, 100);
+    return () => window.clearInterval(t);
+  }, [pendingResponseMs]);
+
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  };
 
   useEffect(() => {
     const hasShownModal = sessionStorage.getItem(`design-modal-shown-${id}`);
@@ -125,9 +177,55 @@ export default function ClientChat({ id }: Props) {
     router,
   ]);
 
+  const openDiagramCanvas = useCallback(() => {
+    const q = new URLSearchParams();
+    q.set("project", id);
+    if (threadId) {
+      q.set("thread", threadId);
+      q.set("reload", "1");
+    }
+    if (diagramVersionParam) {
+      q.set("diagramVersion", diagramVersionParam);
+    }
+    router.push(`/diagram?${q.toString()}`);
+  }, [id, threadId, diagramVersionParam, router]);
+
   useEffect(() => {
     if (messagesData) {
-      setMessages(messagesData.filter((m) => m.message.trim()));
+      const incoming = messagesData.filter((m) => m.message.trim());
+      setMessages((prev) => {
+        // Preserve frontend-only response timers when history refetches.
+        const responseTimeBySignature = new Map<string, number>();
+        const diagramVersionBySignature = new Map<string, string | null>();
+        for (const msg of prev) {
+          if (msg.role !== "assistant") continue;
+          const key = `${msg.role}::${msg.message}`;
+          if (msg.responseTimeMs !== undefined) {
+            responseTimeBySignature.set(key, msg.responseTimeMs);
+          }
+          if (msg.diagram_version_id_used !== undefined) {
+            diagramVersionBySignature.set(key, msg.diagram_version_id_used);
+          }
+        }
+
+        return incoming.map((msg) => {
+          if (msg.role !== "assistant") return msg;
+          const key = `${msg.role}::${msg.message}`;
+          const preserved = responseTimeBySignature.get(key);
+          const preservedDv = diagramVersionBySignature.get(key);
+          const diagram_version_id_used =
+            msg.diagram_version_id_used !== undefined
+              ? msg.diagram_version_id_used
+              : preservedDv !== undefined
+                ? preservedDv
+                : null;
+          return {
+            ...msg,
+            ...(preserved !== undefined ? { responseTimeMs: preserved } : {}),
+            diagram_version_id_used,
+          };
+        });
+      });
     }
   }, [messagesData]);
 
@@ -167,9 +265,17 @@ export default function ClientChat({ id }: Props) {
     ]);
     setInput("");
     setErr(null);
+    const startedAt = Date.now();
+    setPendingResponseMs(0);
+
+    const diagramVersionId =
+      searchParams.get("diagramVersion") ??
+      searchParams.get("diagram_version") ??
+      undefined;
+    const hadDiagramVersionParam = Boolean(diagramVersionId);
 
     try {
-      const response = await sendMessage({
+      const baseArg = {
         projectId: id,
         threadId,
         message: text,
@@ -178,15 +284,50 @@ export default function ClientChat({ id }: Props) {
         ...(Object.keys(designAnswers).length > 0
           ? { design: designAnswers }
           : {}),
-      }).unwrap();
+        ...(diagramVersionId ? { diagram_version_id: diagramVersionId } : {}),
+      };
+
+      let response: ChatResponse | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < MAX_MESSAGE_503_RETRIES; attempt++) {
+        try {
+          response = await sendMessage(baseArg).unwrap();
+          break;
+        } catch (e) {
+          lastError = e;
+          const status = getFetchErrorStatus(e);
+          if (status === 503 && attempt < MAX_MESSAGE_503_RETRIES - 1) {
+            if (attempt === 0) {
+              showToast("Diagram is still saving; retrying…", "info");
+            }
+            await delay(450 * (attempt + 1));
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      if (!response) throw lastError ?? new Error("No response");
+
+      const responseTimeMs = Date.now() - startedAt;
 
       if (aliveRef.current) {
+        const raw = response as Record<string, unknown>;
+        const dvRaw =
+          raw.diagram_version_id_used ?? raw.diagramVersionIdUsed;
+        const diagram_version_id_used =
+          typeof dvRaw === "string" && dvRaw.trim().length > 0
+            ? dvRaw.trim()
+            : null;
+
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
             message: response.answer || response.message || "No response",
             ts: Date.now(),
+            responseTimeMs,
+            diagram_version_id_used,
           },
         ]);
       }
@@ -196,11 +337,21 @@ export default function ClientChat({ id }: Props) {
       if (!isOnChatPage) {
         showToast("Chat received a response", "chat");
       }
+
+      if (hadDiagramVersionParam && aliveRef.current) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("diagramVersion");
+        params.delete("diagram_version");
+        const q = params.toString();
+        router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+      }
     } catch (e) {
       if (aliveRef.current) {
         setErr(e instanceof Error ? e.message : "Failed to send");
         setMessages((prev) => prev.slice(0, -1));
       }
+    } finally {
+      setPendingResponseMs(null);
     }
   }
 
@@ -281,9 +432,10 @@ export default function ClientChat({ id }: Props) {
         >
           <div className="flex items-center gap-3 min-w-0">
             <button
+              type="button"
               onClick={() => router.push(`/project/${id}/summary`)}
               className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
-              aria-label="Go back"
+              aria-label="Back to project summary"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
@@ -370,6 +522,21 @@ export default function ClientChat({ id }: Props) {
             )}
 
             <button
+              type="button"
+              onClick={openDiagramCanvas}
+              disabled={checkingThread}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 shrink-0 bg-amber-400 text-black border border-amber-500/80 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none"
+              title={
+                threadId
+                  ? "Open diagram canvas (reloads latest saved design)"
+                  : "Open diagram canvas for this project"
+              }
+            >
+              <PenSquare className="w-3.5 h-3.5 shrink-0" />
+              Diagram canvas
+            </button>
+
+            <button
               onClick={() => {
                 if (Object.keys(designAnswers).length === 0) {
                   setOpenCheckPatternsAfterDesign(true);
@@ -393,132 +560,142 @@ export default function ClientChat({ id }: Props) {
           />
         )}
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {loadingHistory && (
-            <div className="flex items-center justify-center gap-2 py-6">
-              <Loader2
-                className="w-4 h-4 animate-spin"
-                style={{ color: "rgba(255,255,255,0.3)" }}
-              />
-              <span
-                className="text-sm"
-                style={{ color: "rgba(255,255,255,0.3)" }}
-              >
-                Loading history…
-              </span>
-            </div>
-          )}
-
-          {messages.map((m, i) => (
-            <MessageBubble
-              key={`${m.ts ?? i}-${i}`}
-              role={m.role}
-              text={m.message}
-            />
-          ))}
-
-          {loading && (
-            <div className="flex justify-start gap-2">
-              <div
-                className="rounded-2xl px-4 py-2.5 flex items-center gap-2"
-                style={{
-                  backgroundColor: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  borderBottomLeftRadius: "4px",
-                }}
-              >
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="w-full max-w-3xl mx-auto space-y-5">
+            {loadingHistory && (
+              <div className="flex items-center justify-center gap-2 py-6">
                 <Loader2
-                  className="w-3.5 h-3.5 animate-spin"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  className="w-4 h-4 animate-spin"
+                  style={{ color: "rgba(255,255,255,0.3)" }}
                 />
                 <span
                   className="text-sm"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  style={{ color: "rgba(255,255,255,0.3)" }}
                 >
-                  Thinking…
+                  Loading history…
                 </span>
               </div>
-            </div>
-          )}
+            )}
 
-          {err && (
-            <div
-              className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
-              style={{
-                backgroundColor: "rgba(239,68,68,0.08)",
-                border: "1px solid rgba(239,68,68,0.2)",
-                color: "#fca5a5",
-              }}
-            >
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              {err}
-            </div>
-          )}
+            {messages.map((m, i) => (
+              <MessageBubble
+                key={`${m.ts ?? i}-${i}`}
+                role={m.role}
+                text={m.message}
+                responseTimeMs={m.responseTimeMs}
+                diagramVersionIdUsed={
+                  m.role === "assistant"
+                    ? m.diagram_version_id_used
+                    : undefined
+                }
+              />
+            ))}
 
-          <div ref={messagesEndRef} />
+            {loading && (
+              <div className="flex justify-start gap-2">
+                <div
+                  className="rounded-2xl px-4 py-2.5 flex items-center gap-2"
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    borderBottomLeftRadius: "4px",
+                  }}
+                >
+                  <Loader2
+                    className="w-3.5 h-3.5 animate-spin"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  />
+                  <span
+                    className="text-sm"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  >
+                    Thinking… 
+                  </span>
+                  <span
+                    className="text-[10px]"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
+                  >
+                   {pendingResponseMs !== null ? `(Response time: ${formatDuration(pendingResponseMs)})` : ""}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {err && (
+              <div
+                className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
+                style={{
+                  backgroundColor: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.2)",
+                  color: "#fca5a5",
+                }}
+              >
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                {err}
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
         </div>
 
         <div
           className="px-4 pb-4 pt-3"
           style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
         >
-          {!threadId && !checkingThread && (
-            <div
-              className="mb-2 px-3 py-2 text-xs rounded-lg text-center"
-              style={{
-                backgroundColor: "rgba(251,191,36,0.08)",
-                border: "1px solid rgba(251,191,36,0.2)",
-                color: "#fcd34d",
-              }}
-            >
-              No thread found — start a conversation to create one.
-            </div>
-          )}
+          <div className="w-full max-w-3xl mx-auto">
+            {!threadId && !checkingThread && (
+              <div
+                className="mb-2 px-3 py-2 text-xs rounded-lg text-center"
+                style={{
+                  backgroundColor: "rgba(251,191,36,0.08)",
+                  border: "1px solid rgba(251,191,36,0.2)",
+                  color: "#fcd34d",
+                }}
+              >
+                No thread found — start a conversation to create one.
+              </div>
+            )}
 
-          <div className="flex items-center gap-2">
-            <input
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                if (err) setErr(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={inputRef}
+                rows={1}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  if (err) setErr(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={
+                  !threadId && !checkingThread
+                    ? "No active thread…"
+                    : "Type your message…"
                 }
-              }}
-              placeholder={
-                !threadId && !checkingThread
-                  ? "No active thread…"
-                  : "Type your message…"
-              }
-              disabled={!threadId || loading}
-              className="flex-1 rounded-full px-4 py-2.5 text-sm focus:outline-none transition-all duration-150 bg-white text-black placeholder:text-black/20 disabled:opacity-40 disabled:cursor-not-allowed"
-              onFocus={(e) =>
-                ((e.currentTarget as HTMLElement).style.borderColor =
-                  "rgba(255,255,255,0.3)")
-              }
-              onBlur={(e) =>
-                ((e.currentTarget as HTMLElement).style.borderColor =
-                  "rgba(255,255,255,0.1)")
-              }
-            />
-            <button
-              disabled={!threadId || loading || !input.trim()}
-              onClick={handleSend}
-              className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 ${
-                !threadId || loading || !input.trim()
-                  ? "bg-white/80 cursor-not-allowed"
-                  : "bg-white hover:bg-white/80 cursor-pointer"
-              } ${!threadId || loading || !input.trim() ? "text-black/40" : "text-black/90"} ${!threadId || loading || !input.trim() ? "hover:bg-white/60" : "hover:bg-white/40"}`}
-            >
-              {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </button>
+                disabled={!threadId || loading}
+                className="flex-1 min-h-[44px] max-h-[200px] resize-none rounded-3xl px-4 py-2.5 text-sm leading-snug focus:outline-none transition-all duration-150 bg-white text-black placeholder:text-black/20 disabled:opacity-40 disabled:cursor-not-allowed overflow-y-auto border border-black/10 focus:border-black/25"
+              />
+              <button
+                disabled={!threadId || loading || !input.trim()}
+                onClick={handleSend}
+                className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all duration-150 mb-0.5 ${
+                  !threadId || loading || !input.trim()
+                    ? "bg-white/80 cursor-not-allowed"
+                    : "bg-white hover:bg-white/80 cursor-pointer"
+                } ${!threadId || loading || !input.trim() ? "text-black/40" : "text-black/90"} ${!threadId || loading || !input.trim() ? "hover:bg-white/60" : "hover:bg-white/40"}`}
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>

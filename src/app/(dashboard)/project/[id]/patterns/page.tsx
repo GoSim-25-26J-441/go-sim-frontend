@@ -33,7 +33,8 @@ export default function ProjectPatternsPage({
           </h1>
         </div>
         <button
-          onClick={() => router.push(`/project/${projectId}/chat`)}
+          type="button"
+          onClick={() => void returnToChat()}
           className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
         >
           {returning ? "Opening chat…" : "Return to Chat"}

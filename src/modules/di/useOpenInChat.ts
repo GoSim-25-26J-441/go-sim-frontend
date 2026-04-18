@@ -6,7 +6,21 @@ import { getProjectThreadId } from "./getProjectThread";
 
 type OpenChatFromDiagramOpts = {
   onLoadingChange?: (loading: boolean, message?: string) => void;
+  diagramVersionId?: string;
 };
+
+function chatQueryFromThread(
+  projectId: string,
+  threadId: string,
+  extras?: { fromDiagram?: boolean; diagramVersionId?: string },
+) {
+  const params = new URLSearchParams();
+  params.set("thread", threadId);
+  if (extras?.fromDiagram) params.set("from", "diagram");
+  if (extras?.diagramVersionId)
+    params.set("diagramVersion", extras.diagramVersionId);
+  return `/project/${projectId}/chat?${params.toString()}`;
+}
 
 export function useOpenInChat() {
   const router = useRouter();
@@ -29,8 +43,17 @@ export function useOpenInChat() {
       if (existingThreadId) {
         console.log("Found existing thread:", existingThreadId);
         opts?.onLoadingChange?.(false);
-        // Navigate to existing thread (no need to send initial message)
-        router.push(`/project/${projectId}/chat?thread=${existingThreadId}`);
+        // Same as before unless we need to pass a freshly saved diagram version
+        if (opts?.diagramVersionId) {
+          router.push(
+            chatQueryFromThread(projectId, existingThreadId, {
+              fromDiagram: true,
+              diagramVersionId: opts.diagramVersionId,
+            }),
+          );
+        } else {
+          router.push(`/project/${projectId}/chat?thread=${existingThreadId}`);
+        }
         return existingThreadId;
       }
 
@@ -83,7 +106,12 @@ export function useOpenInChat() {
       opts?.onLoadingChange?.(false);
 
       // Navigate to chat — user will send their own first message
-      router.push(`/project/${projectId}/chat?thread=${newThreadId}&from=diagram`);
+      router.push(
+        chatQueryFromThread(projectId, newThreadId, {
+          fromDiagram: true,
+          diagramVersionId: opts?.diagramVersionId,
+        }),
+      );
       
       return newThreadId;
     } catch (error) {

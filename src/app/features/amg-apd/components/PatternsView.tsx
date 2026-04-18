@@ -16,15 +16,20 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { useOpenInChat } from "@/modules/di/useOpenInChat";
+import { fetchLatestProjectDiagramVersionId } from "@/modules/di/fetchLatestProjectDiagramVersionId";
 import type {
   AnalysisResult,
   AmgApdVersionSummary,
+  Graph,
 } from "@/app/features/amg-apd/types";
+import {
+  nodeLayoutPayloadFromGraph,
+  type NodeLayoutPayload,
+} from "@/app/features/amg-apd/utils/graphEditUtils";
 
 type PatternsViewProps = {
-  /** When provided, all API calls are project-scoped and Return to Chat links to project chat */
   projectId?: string;
-  /** Custom handler for Return to Chat button */
   onReturnToChat?: () => void;
 };
 
@@ -42,6 +47,7 @@ export default function PatternsView({
   const { userId } = useAuth();
 
   const showToast = useToast((s) => s.showToast);
+  const openInChat = useOpenInChat();
   const headers = () =>
     getAmgApdHeaders({
       userId: userId ?? undefined,
@@ -66,6 +72,7 @@ export default function PatternsView({
   >(null);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
+  const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
   const restoreStartedRef = useRef(false);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
@@ -74,6 +81,7 @@ export default function PatternsView({
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
     title?: string,
+    nodeLayout?: NodeLayoutPayload,
   ): Promise<AnalysisResult> {
     let versionTitle = title;
     if (versionTitle == null || versionTitle.trim() === "") {
@@ -98,6 +106,9 @@ export default function PatternsView({
     const fd = new FormData();
     fd.append("file", blob, "architecture.yaml");
     fd.append("title", versionTitle.trim());
+    if (nodeLayout && Object.keys(nodeLayout).length > 0) {
+      fd.append("node_layout", JSON.stringify(nodeLayout));
+    }
 
     const res = await fetch("/api/amg-apd/analyze-upload", {
       method: "POST",
@@ -211,7 +222,15 @@ export default function PatternsView({
     if (onReturnToChat) {
       onReturnToChat();
     } else if (projectId) {
-      router.push(`/project/${projectId}/chat`);
+      void (async () => {
+        try {
+          const diagramVersionId =
+            await fetchLatestProjectDiagramVersionId(projectId);
+          await openInChat(projectId, { diagramVersionId });
+        } catch {
+          showToast("Could not open chat", "error");
+        }
+      })();
     } else {
       showToast("Return to Chat is not available here", "info");
     }
@@ -256,8 +275,10 @@ export default function PatternsView({
       showToast("No graph data to download.", "warning");
       return;
     }
+    const graphFromCanvas = exportGraphJsonRef.current?.() ?? null;
+    const graph = graphFromCanvas ?? last.graph;
     const payload = {
-      graph: last.graph,
+      graph,
       detections: last.detections ?? [],
       dot_content: last.dot_content ?? undefined,
       version_id: last.version_id,
@@ -375,6 +396,10 @@ export default function PatternsView({
         );
       }
 
+      const nodeLayout = nodeLayoutPayloadFromGraph(
+        exportGraphJsonRef.current?.() ?? undefined,
+      );
+
       setEditedYaml(fixedYaml);
       setLast(fixedAnalysis);
       setSugs((data?.applied_fixes ?? []) as Suggestion[]);
@@ -382,7 +407,11 @@ export default function PatternsView({
 
       setRegenerating(true);
       try {
-        const saved = await analyzeAndSaveAsNewVersion(fixedYaml);
+        const saved = await analyzeAndSaveAsNewVersion(
+          fixedYaml,
+          undefined,
+          nodeLayout,
+        );
         setLast(saved);
         setGraphRegenerating(true);
         setGraphVersion((v) => v + 1);
@@ -629,11 +658,18 @@ export default function PatternsView({
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
+              onExportGraphJsonReady={(getGraph) => {
+                exportGraphJsonRef.current = getGraph;
+              }}
               onDuplicateName={(name) => setDuplicateNameForModal(name)}
-              onGenerateGraph={async (yaml) => {
+              onGenerateGraph={async (yaml, nodeLayout) => {
                 setRegenerating(true);
                 try {
-                  const data = await analyzeAndSaveAsNewVersion(yaml);
+                  const data = await analyzeAndSaveAsNewVersion(
+                    yaml,
+                    undefined,
+                    nodeLayout,
+                  );
                   setLast(data);
                   setEditedYaml(yaml);
                   setGraphVersion((v) => v + 1);
