@@ -134,5 +134,25 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
       return src && tgt && nodeIds.has(src) && nodeIds.has(tgt);
     });
 
+  const directedCallKeys = new Set<string>();
+  for (const edge of edges) {
+    if (edge.data.kind === "CALLS") {
+      directedCallKeys.add(`${edge.data.source}→${edge.data.target}`);
+    }
+  }
+
+  for (const edge of edges) {
+    if (edge.data.kind !== "CALLS") continue;
+    const s = edge.data.source as string;
+    const t = edge.data.target as string;
+    if (!s || !t || s === t) continue;
+    if (!directedCallKeys.has(`${t}→${s}`)) continue;
+    const lane = s < t ? 1 : -1;
+    (edge.data as Record<string, unknown>).reciprocalCallLane = lane;
+    const parts = (edge.classes ?? "").split(/\s+/).filter(Boolean);
+    if (!parts.includes("reciprocal-call")) parts.push("reciprocal-call");
+    edge.classes = parts.join(" ");
+  }
+
   return [...nodes, ...edges];
 }

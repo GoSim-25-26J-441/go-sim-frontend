@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import CytoscapeComponent from "react-cytoscapejs";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
@@ -45,6 +46,16 @@ import {
   type NodeLayoutPayload,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
+import { applyReciprocalCallLanes } from "@/app/features/amg-apd/utils/reciprocalCallLanes";
+import {
+  compositeHeaderAndGraph,
+  EXPORT_IMAGE_FRAME_BG,
+  MIN_EXPORT_GRAPH_PIXEL_WIDTH,
+  padCanvasUniform,
+  renderExportImageHeader,
+  scaleCanvasToMinWidth,
+} from "@/app/features/amg-apd/utils/exportImageComposite";
+import { diagramNodeLabelText } from "@/app/features/amg-apd/mappers/cyto/diagramNodeStyle";
 
 import { useToast } from "@/hooks/useToast";
 import { getCyLayout } from "@/app/features/amg-apd/components/graph/getCyLayouts";
@@ -59,7 +70,10 @@ import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
 import NodeDualLineLabels from "@/app/features/amg-apd/components/graph/NodeDualLineLabels";
 import EdgeCallFlowBolts from "@/app/features/amg-apd/components/graph/EdgeCallFlowBolts";
-import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
+import {
+  getGraphStatsFromCy,
+  recomputeStats,
+} from "@/app/features/amg-apd/components/graph/recomputeStats";
 import {
   ChevronLeft,
   ChevronRight,
@@ -85,8 +99,182 @@ function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   return true;
 }
 
+const CY_EXPORT_LABEL_KEYS = [
+  "label",
+  "font-size",
+  "color",
+  "text-valign",
+  "text-halign",
+  "text-margin-y",
+  "text-wrap",
+  "text-max-width",
+  "text-background-color",
+  "text-background-opacity",
+  "text-background-padding",
+] as const;
+
+/** Rasterize graph with two-line node labels (name + type) for PNG when html2canvas fails. */
+async function exportCyToCanvasWithNodeLabels(
+  cy: cytoscape.Core,
+): Promise<HTMLCanvasElement | null> {
+  const nodes = cy.nodes().filter((n) => !n.hasClass("halo"));
+
+  try {
+    cy.batch(() => {
+      nodes.forEach((n) => {
+        n.style({
+          label: diagramNodeLabelText({ data: (key) => n.data(key) }),
+          "font-size": 6,
+          color: "#0f172a",
+          "text-valign": "top",
+          "text-halign": "center",
+          "text-margin-y": "-14px",
+          "text-wrap": "wrap",
+          "text-max-width": "90px",
+          "text-background-color": "#ffffff",
+          "text-background-opacity": 0.93,
+          "text-background-padding": 2,
+        });
+      });
+    });
+    cy.style().update();
+
+    const pngDataUrl = cy.png({
+      full: true,
+      scale: 2,
+      bg: "#f9fafb",
+    });
+
+    return await new Promise<HTMLCanvasElement | null>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas);
+      };
+      img.onerror = () => resolve(null);
+      img.src = pngDataUrl;
+    });
+  } catch {
+    return null;
+  } finally {
+    try {
+      cy.batch(() => {
+        nodes.forEach((n) => {
+          for (const k of CY_EXPORT_LABEL_KEYS) {
+            n.removeStyle(k);
+          }
+        });
+      });
+      cy.style().update();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Wider CSS width so html2canvas + cytoscape fit() spread nodes horizontally. */
+const MIN_EXPORT_GRAPH_CSS_WIDTH = 1260;
+
+async function captureGraphRegionHtmlToCanvas(
+  wrap: HTMLDivElement,
+): Promise<HTMLCanvasElement | null> {
+  try {
+    const { default: html2canvas } = await import("html2canvas");
+    return await html2canvas(wrap, {
+      backgroundColor: "#f9fafb",
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      ignoreElements: (node) => {
+        const el = node as HTMLElement;
+        return (
+          el.getAttribute?.("role") === "menu" ||
+          !!el.closest?.('[role="menu"]')
+        );
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Temporarily widens the graph panel, re-fits the graph, captures, then restores
+ * viewport so the PNG uses horizontal space like a wide layout.
+ */
+async function captureGraphWithExpandedViewport(
+  wrap: HTMLDivElement,
+  cy: cytoscape.Core,
+): Promise<HTMLCanvasElement | null> {
+  const row = wrap.parentElement;
+  const savedZoom = cy.zoom();
+  const p = cy.pan();
+  const savedPan = { x: p.x, y: p.y };
+  const prevWrap = {
+    minWidth: wrap.style.minWidth,
+    width: wrap.style.width,
+    maxWidth: wrap.style.maxWidth,
+    flex: wrap.style.flex,
+    boxSizing: wrap.style.boxSizing,
+  };
+  const prevRow = row
+    ? { overflow: row.style.overflow, minWidth: row.style.minWidth }
+    : null;
+
+  const rectW = wrap.getBoundingClientRect().width;
+  const vw =
+    typeof window !== "undefined" ? window.innerWidth : MIN_EXPORT_GRAPH_CSS_WIDTH;
+  const targetCss = Math.max(
+    rectW,
+    Math.min(MIN_EXPORT_GRAPH_CSS_WIDTH, Math.floor(vw * 0.94)),
+  );
+
+  wrap.style.boxSizing = "border-box";
+  wrap.style.minWidth = `${targetCss}px`;
+  wrap.style.width = `${targetCss}px`;
+  wrap.style.maxWidth = "none";
+  if (row) {
+    row.style.overflow = "visible";
+    row.style.minWidth = `${targetCss}px`;
+  }
+
+  try {
+    cy.resize();
+    cy.fit(cy.elements(), 72);
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => setTimeout(r, 70));
+    return await captureGraphRegionHtmlToCanvas(wrap);
+  } catch {
+    return null;
+  } finally {
+    wrap.style.minWidth = prevWrap.minWidth;
+    wrap.style.width = prevWrap.width;
+    wrap.style.maxWidth = prevWrap.maxWidth;
+    wrap.style.flex = prevWrap.flex;
+    wrap.style.boxSizing = prevWrap.boxSizing;
+    if (row && prevRow) {
+      row.style.overflow = prevRow.overflow;
+      row.style.minWidth = prevRow.minWidth;
+    }
+    cy.resize();
+    cy.zoom(savedZoom);
+    cy.pan(savedPan);
+  }
+}
+
 type ContextMenuState =
   | { type: "node"; nodeId: string; relX: number; relY: number }
+  | { type: "edge"; edgeId: string; relX: number; relY: number }
   | {
       type: "canvas";
       modelX: number;
@@ -97,6 +285,19 @@ type ContextMenuState =
 
 const CONTEXT_MENU_W = 184;
 const CONTEXT_MENU_H = 148;
+const DND_NODE_MIME = "application/x-pattern-node-kind";
+const DND_ANTI_PATTERN_MIME = "application/x-pattern-antipattern-kind";
+const DND_NODE_TEXT_PREFIX = "__pattern_node__:";
+const DND_ANTI_TEXT_PREFIX = "__pattern_antipattern__:";
+const NODE_KIND_VALUES: NodeKind[] = [
+  "SERVICE",
+  "API_GATEWAY",
+  "DATABASE",
+  "EVENT_TOPIC",
+  "EXTERNAL_SYSTEM",
+  "CLIENT",
+  "USER_ACTOR",
+];
 
 type CopiedNodeClipboard = { kind: NodeKind; label: string };
 
@@ -121,18 +322,31 @@ export default function GraphCanvas({
   data,
   readOnly = false,
   isGenerating = false,
+  showRegeneratingOverlay = false,
+  layoutMode = "default",
   onGenerateGraph,
   onExportImageReady,
   onExportGraphJsonReady,
   onDuplicateName,
+  onResetCanvas,
+  fullscreenButton,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
+  /** Spinner over the graph workspace without unmounting Cytoscape (keeps edits). */
+  showRegeneratingOverlay?: boolean;
+  layoutMode?: "default" | "fullscreen";
+  fullscreenButton?: {
+    onClick: () => void;
+    isFullscreen: boolean;
+  };
   onGenerateGraph?: (
     yaml: string,
     nodeLayout?: NodeLayoutPayload,
   ) => void | Promise<void>;
+  /** Restore graph + YAML to last committed baseline (Patterns view). */
+  onResetCanvas?: () => void;
   /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
   onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
   /** Called when cy is ready; parent can call getter to export graph JSON including node x/y from the canvas */
@@ -149,6 +363,11 @@ export default function GraphCanvas({
   }
 
   const analysis = data as AnalysisResult;
+  /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
+  const workAreaHeightClass =
+    layoutMode === "fullscreen"
+      ? "min-h-0 h-full max-h-full self-stretch"
+      : GRAPH_WORK_AREA_HEIGHT_CLASS;
 
   const showToast = useToast((s) => s.showToast);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -168,6 +387,9 @@ export default function GraphCanvas({
   const [defaultCallSync, setDefaultCallSync] = useState(true);
   const [pendingAntiPatternKind, setPendingAntiPatternKind] =
     useState<DetectionKind | null>(null);
+  const [draggingAntiPatternKind, setDraggingAntiPatternKind] =
+    useState<DetectionKind | null>(null);
+  const draggingNodeKindRef = useRef<NodeKind | null>(null);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [copiedNode, setCopiedNode] = useState<CopiedNodeClipboard | null>(null);
@@ -227,9 +449,14 @@ export default function GraphCanvas({
           /* Do not bypass `width` — stylesheet controls thin stroke + arrow-scale (gradient lines). */
           e.removeStyle("width");
           e.removeStyle("arrow-scale");
-          e.style("curve-style", "bezier");
+          e.removeStyle("source-endpoint");
+          e.removeStyle("target-endpoint");
+          e.style("curve-style", "straight");
+          e.style("source-arrow-shape", "none");
           e.style("target-arrow-shape", "triangle");
         });
+
+        applyReciprocalCallLanes(cy);
 
         cy.style().update();
         cy.resize();
@@ -256,10 +483,115 @@ export default function GraphCanvas({
     setTool(t);
   }, []);
 
-  const handleAddAntiPattern = useCallback((kind: DetectionKind) => {
-    setPendingSource(null);
-    setTool("select");
-    setPendingAntiPatternKind((prev) => (prev === kind ? null : kind));
+  const addNodeAt = useCallback(
+    (kind: NodeKind, pos: { x: number; y: number }) => {
+      if (!cyAlive(cy)) return;
+      const prefix = NODE_KIND_TO_LABEL_PREFIX[kind];
+      const label = getNextUniqueLabel(cy, prefix);
+      const idBase = prefix.replace(/-/g, "_");
+      const id = `${idBase}-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`;
+      cy.add({
+        group: "nodes",
+        data: { id, label, kind },
+        position: pos,
+        grabbable: true,
+        selectable: true,
+        locked: false,
+      });
+      const node = cy.getElementById(id);
+      if (!node.empty()) {
+        try {
+          node.unlock();
+          node.grabify();
+          node.selectify();
+          cy.elements().unselect();
+        } catch {}
+        node.select();
+        setSelected({ type: "node", data: node.data() });
+      }
+      recomputeStats(cy, analysis, setStats);
+    },
+    [cy, analysis],
+  );
+
+  const addAntiPatternAt = useCallback(
+    (kind: DetectionKind, pos: { x: number; y: number }) => {
+      const { nodes, edges } = getAntiPatternChunk(kind);
+      const offsetNodes = nodes.map((el) => {
+        const p = el.position;
+        if (!p) return el;
+        return {
+          ...el,
+          position: {
+            x: p.x + pos.x,
+            y: p.y + pos.y,
+          },
+          grabbable: true,
+          selectable: true,
+          locked: false,
+        };
+      });
+
+      const preparedEdges = edges.map((el) => ({
+        ...el,
+        classes: `${typeof el.classes === "string" ? `${el.classes} ` : ""}calls rest`,
+        style: {
+          ...(el as any).style,
+          opacity: 1,
+          "line-opacity": 1,
+          "target-arrow-opacity": 1,
+          "curve-style": "straight",
+          "target-arrow-shape": "triangle",
+          "line-color": "#475569",
+          "target-arrow-color": "#475569",
+        },
+      }));
+
+      setLocalAdditions((prev) => [...prev, { nodes: offsetNodes, edges: preparedEdges }]);
+      setSelected(null);
+      setPendingSource(null);
+      setPendingAntiPatternKind(null);
+      setTool("select");
+
+      requestAnimationFrame(() => {
+        if (!cyAlive(cy)) return;
+        recomputeStats(cy, analysis, setStats);
+      });
+    },
+    [cy, analysis],
+  );
+
+  const handleNodeDragStart = useCallback(
+    (kind: NodeKind) => (e: ReactDragEvent<HTMLButtonElement>) => {
+      if (!effectiveEditMode) return;
+      e.dataTransfer.setData(DND_NODE_MIME, kind);
+      e.dataTransfer.setData("application/x-node-kind", kind);
+      e.dataTransfer.setData("text/plain", `${DND_NODE_TEXT_PREFIX}${kind}`);
+      e.dataTransfer.effectAllowed = "copy";
+      draggingNodeKindRef.current = kind;
+      setDraggingAntiPatternKind(null);
+    },
+    [effectiveEditMode],
+  );
+
+  const handleAntiPatternDragStart = useCallback(
+    (kind: DetectionKind) => (e: ReactDragEvent<HTMLButtonElement>) => {
+      if (!effectiveEditMode) return;
+      e.dataTransfer.setData(DND_ANTI_PATTERN_MIME, kind);
+      e.dataTransfer.setData("text/plain", `${DND_ANTI_TEXT_PREFIX}${kind}`);
+      e.dataTransfer.effectAllowed = "copy";
+      setDraggingAntiPatternKind(kind);
+      draggingNodeKindRef.current = null;
+    },
+    [effectiveEditMode],
+  );
+
+  const clearToolDragState = useCallback(() => {
+    draggingNodeKindRef.current = null;
+    setDraggingAntiPatternKind(null);
+    setPendingAntiPatternKind(null);
   }, []);
 
   const { tooltip } = useCyTooltip({
@@ -284,54 +616,7 @@ export default function GraphCanvas({
     defaultCallSync,
     pendingAntiPatternKind,
     setPendingAntiPatternKind,
-    onAddAntiPatternAt: (kind, pos) => {
-      const { nodes, edges } = getAntiPatternChunk(kind);
-
-      const offsetNodes = nodes.map((el) => {
-        const p = el.position;
-        if (!p) return el;
-        return {
-          ...el,
-          position: {
-            x: p.x + pos.x,
-            y: p.y + pos.y,
-          },
-          grabbable: true,
-          selectable: true,
-          locked: false,
-        };
-      });
-
-      const preparedEdges = edges.map((el) => ({
-        ...el,
-        classes: `${typeof el.classes === "string" ? `${el.classes} ` : ""}calls rest`,
-        style: {
-          ...(el as any).style,
-          opacity: 1,
-          "line-opacity": 1,
-          "target-arrow-opacity": 1,
-          "curve-style": "bezier",
-          "target-arrow-shape": "triangle",
-          "line-color": "#475569",
-          "target-arrow-color": "#475569",
-        },
-      }));
-
-      setLocalAdditions((prev) => [
-        ...prev,
-        { nodes: offsetNodes, edges: preparedEdges },
-      ]);
-
-      setSelected(null);
-      setPendingSource(null);
-      setPendingAntiPatternKind(null);
-      setTool("select");
-
-      requestAnimationFrame(() => {
-        if (!cyAlive(cy)) return;
-        recomputeStats(cy, analysis, setStats);
-      });
-    },
+    onAddAntiPatternAt: addAntiPatternAt,
   });
 
   const openContextMenuAt = useCallback(
@@ -380,6 +665,29 @@ export default function GraphCanvas({
     [openContextMenuAt],
   );
 
+  const onEdgeContextMenuOpen = useCallback(
+    (edgeId: string, clientX: number, clientY: number) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const relX = Math.min(
+        Math.max(4, clientX - r.left),
+        Math.max(4, el.clientWidth - CONTEXT_MENU_W - 4),
+      );
+      const relY = Math.min(
+        Math.max(4, clientY - r.top),
+        Math.max(4, el.clientHeight - CONTEXT_MENU_H - 4),
+      );
+      setContextMenu({
+        type: "edge",
+        edgeId,
+        relX,
+        relY,
+      });
+    },
+    [],
+  );
+
   const onCanvasContextMenuOpen = useCallback(
     (modelPos: { x: number; y: number }, clientX: number, clientY: number) => {
       openContextMenuAt(
@@ -394,6 +702,7 @@ export default function GraphCanvas({
   useCyContextMenu({
     cy,
     onNodeContext: onNodeContextMenuOpen,
+    onEdgeContext: onEdgeContextMenuOpen,
     onCanvasContext: onCanvasContextMenuOpen,
   });
 
@@ -447,7 +756,7 @@ export default function GraphCanvas({
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
 
-  const EXPORT_PADDING = 64;
+  const EXPORT_PADDING = 32;
 
   useEffect(() => {
     if (!onExportImageReady || !cyAlive(cy)) return;
@@ -456,67 +765,55 @@ export default function GraphCanvas({
       const wrap = containerRef.current;
       if (!c || !cyAlive(c)) return null;
 
-      const padComposite = async (sourceCanvas: HTMLCanvasElement) => {
-        const pad = EXPORT_PADDING;
-        const w = sourceCanvas.width + 2 * pad;
-        const h = sourceCanvas.height + 2 * pad;
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return sourceCanvas.toDataURL("image/png");
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(sourceCanvas, pad, pad);
-        return canvas.toDataURL("image/png");
-      };
+      const detections = analysis.detections;
 
       return (async (): Promise<string | null> => {
-        try {
-          if (wrap) {
-            const { default: html2canvas } = await import("html2canvas");
-            const shot = await html2canvas(wrap, {
-              backgroundColor: "#f9fafb",
-              scale: 2,
-              useCORS: true,
-              allowTaint: true,
-              logging: false,
-            });
-            return padComposite(shot);
+        let graphCanvas: HTMLCanvasElement | null = null;
+
+        if (wrap) {
+          graphCanvas = await captureGraphWithExpandedViewport(wrap, c);
+          if (!graphCanvas) {
+            graphCanvas = await captureGraphRegionHtmlToCanvas(wrap);
           }
-        } catch {
-          /* fall through to cy.png */
         }
 
+        if (!graphCanvas) {
+          graphCanvas = await exportCyToCanvasWithNodeLabels(c);
+        }
+
+        if (!graphCanvas) return null;
+
+        graphCanvas = scaleCanvasToMinWidth(
+          graphCanvas,
+          MIN_EXPORT_GRAPH_PIXEL_WIDTH,
+        );
+
+        const exportStats =
+          getGraphStatsFromCy(c, analysis) ?? computeStatsFromData(analysis);
+        const header = renderExportImageHeader(
+          graphCanvas.width,
+          detections,
+          exportStats,
+        );
+        const merged = compositeHeaderAndGraph(header, graphCanvas, {
+          gap: 16,
+          pad: 12,
+          background: EXPORT_IMAGE_FRAME_BG,
+        });
+        const padded = padCanvasUniform(
+          merged,
+          EXPORT_PADDING,
+          EXPORT_IMAGE_FRAME_BG,
+        );
+
         try {
-          const pngDataUrl = c.png({
-            full: true,
-            scale: 2,
-            bg: "#ffffff",
-          });
-          return new Promise<string | null>((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-              const canvas = document.createElement("canvas");
-              canvas.width = img.width;
-              canvas.height = img.height;
-              const ctx = canvas.getContext("2d");
-              if (!ctx) {
-                resolve(pngDataUrl);
-                return;
-              }
-              ctx.drawImage(img, 0, 0);
-              void padComposite(canvas).then(resolve);
-            };
-            img.onerror = () => resolve(pngDataUrl);
-            img.src = pngDataUrl;
-          });
+          return padded.toDataURL("image/png");
         } catch {
           return null;
         }
       })();
     });
-  }, [cy, onExportImageReady]);
+  }, [cy, onExportImageReady, analysis]);
 
   useEffect(() => {
     if (!onExportGraphJsonReady) return;
@@ -569,6 +866,11 @@ export default function GraphCanvas({
       toRemove.remove();
     });
 
+    applyReciprocalCallLanes(cy);
+    try {
+      cy.style().update();
+    } catch {}
+
     setSelected(null);
     setPendingSource(null);
     recomputeStats(cy, analysis, setStats);
@@ -584,6 +886,11 @@ export default function GraphCanvas({
       if (last.nodes.length) cy.add(last.nodes);
       if (last.edges.length) cy.add(last.edges);
     });
+
+    applyReciprocalCallLanes(cy);
+    try {
+      cy.style().update();
+    } catch {}
 
     setSelected(null);
     setPendingSource(null);
@@ -664,7 +971,7 @@ export default function GraphCanvas({
     setContextMenu(null);
   }
 
-  function handleSaveChanges() {
+  async function handleSaveChanges() {
     if (!cyAlive(cy)) return;
 
     const error = validateGraphForSave(cy);
@@ -677,17 +984,27 @@ export default function GraphCanvas({
     const nodeLayout = nodeLayoutPayloadFromGraph(exportGraphJsonFromCy(cy));
     setEditedYaml(yaml);
 
+    if (onGenerateGraph) {
+      try {
+        await Promise.resolve(onGenerateGraph(yaml, nodeLayout));
+        setEditMode(false);
+        setTool("select");
+        setPendingSource(null);
+        setSelected(null);
+        setPendingAntiPatternKind(null);
+        setContextMenu(null);
+      } catch {
+        /* Parent already toasts; keep edit mode and canvas state */
+      }
+      return;
+    }
+
     setEditMode(false);
     setTool("select");
     setPendingSource(null);
     setSelected(null);
     setPendingAntiPatternKind(null);
     setContextMenu(null);
-
-    if (onGenerateGraph) {
-      void Promise.resolve(onGenerateGraph(yaml, nodeLayout)).catch(() => {});
-      return;
-    }
 
     // No callback: user is in a context where regenerate is not available (e.g. compare view)
     showToast(
@@ -786,6 +1103,30 @@ export default function GraphCanvas({
     setContextMenu(null);
   }
 
+  function handleContextDeleteNode(nodeId: string) {
+    if (!effectiveEditMode || !cyAlive(cy)) return;
+    const node = cy.getElementById(nodeId);
+    if (node.empty()) return;
+    try {
+      cy.elements().unselect();
+      node.select();
+    } catch {}
+    performDelete();
+    setContextMenu(null);
+  }
+
+  function handleContextDeleteEdge(edgeId: string) {
+    if (!effectiveEditMode || !cyAlive(cy)) return;
+    const edge = cy.getElementById(edgeId);
+    if (edge.empty()) return;
+    try {
+      cy.elements().unselect();
+      edge.select();
+    } catch {}
+    performDelete();
+    setContextMenu(null);
+  }
+
   function handleContextPaste() {
     if (
       !effectiveEditMode ||
@@ -873,7 +1214,7 @@ export default function GraphCanvas({
 
   return (
     <div
-      className={`flex flex-col gap-3 p-4 min-h-[70vh] min-w-0 ${readOnly ? "flex-1" : ""}`}
+      className={`flex flex-col min-w-0 ${layoutMode === "fullscreen" ? "min-h-0 h-full gap-2 px-2 py-2 sm:px-3 sm:py-2" : "min-h-[70vh] gap-3 p-4"} ${readOnly ? "flex-1" : ""}`}
     >
       <ControlPanel
         layoutName={layoutName}
@@ -882,35 +1223,54 @@ export default function GraphCanvas({
         stats={stats}
         editMode={effectiveEditMode}
         onToggleEdit={handleToggleEdit}
-        onSaveChanges={handleSaveChanges}
+        onSaveChanges={() => void handleSaveChanges()}
         data={analysis}
         isGenerating={isGenerating}
         readOnly={readOnly}
+        onResetCanvas={onResetCanvas}
+        resetDisabled={isGenerating}
+        fullscreenButton={fullscreenButton}
       />
 
-      <div className="flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden items-start">
+      <div
+        className={`flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden ${layoutMode === "fullscreen" ? "items-stretch" : "items-start"}`}
+      >
+        {showRegeneratingOverlay && (
+          <div
+            className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/35 backdrop-blur-[2px]"
+            aria-busy
+            aria-live="polite"
+          >
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
+            <span className="text-sm font-medium text-white/90">
+              Regenerating graph…
+            </span>
+            <span className="text-xs text-white/50 px-4 text-center max-w-sm">
+              Loading YAML, building graph, and detecting anti-patterns
+            </span>
+          </div>
+        )}
         {!readOnly &&
           effectiveEditMode &&
             (leftPanelCollapsed ? (
-            <div className="w-9 shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col items-center py-2 relative z-10">
-              <button
-                type="button"
-                onClick={() => setLeftPanelCollapsed(false)}
-                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-                aria-label="Show toolbox"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+            <button
+              type="button"
+              onClick={() => setLeftPanelCollapsed(false)}
+              title="Show toolbox"
+              aria-label="Show toolbox"
+              className={`w-10 shrink-0 flex flex-col items-center justify-start gap-2 pt-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors relative z-10 ${workAreaHeightClass}`}
+            >
+              <ChevronRight className="h-4 w-4 shrink-0" />
               <span
-                className="mt-2 text-[9px] text-slate-500"
+                className="text-[9px] opacity-80"
                 style={{ writingMode: "vertical-rl" }}
               >
                 Toolbox
               </span>
-            </div>
+            </button>
           ) : (
             <aside
-              className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+              className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${workAreaHeightClass}`}
             >
               <div className="flex items-center justify-between gap-1 mb-2 shrink-0">
                 <span className="text-xs font-semibold truncate text-slate-200 sm:text-sm">
@@ -931,23 +1291,24 @@ export default function GraphCanvas({
                 </div>
               </div>
               <div className="text-[10px] text-slate-500 mb-2 sm:text-xs sm:mb-3 shrink-0">
-                Click on canvas to add nodes, connect, or place anti-pattern samples.
+                Drag nodes or anti-patterns from the toolbox into the canvas.
               </div>
               <div className="flex min-h-0 flex-1 w-full flex-col">
                 <EditToolbar
                   editMode={effectiveEditMode}
-                  tool={tool}
                   pendingSourceId={pendingSource}
-                  onToolChange={handleToolChange}
                   defaultCallProtocol={defaultCallProtocol}
                   defaultCallSync={defaultCallSync}
                   onDefaultCallChange={(kind, sync) => {
                     setDefaultCallProtocol(kind);
                     setDefaultCallSync(sync);
                   }}
-                  onAddAntiPattern={handleAddAntiPattern}
                   pendingAntiPatternKind={pendingAntiPatternKind}
                   variant="sidebar"
+                  onNodeDragStart={handleNodeDragStart}
+                  onAntiPatternDragStart={handleAntiPatternDragStart}
+                  onToolDragEnd={clearToolDragState}
+                  draggingAntiPatternKind={draggingAntiPatternKind}
                 />
               </div>
             </aside>
@@ -955,9 +1316,57 @@ export default function GraphCanvas({
 
         <div
           ref={containerRef}
-          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${workAreaHeightClass}`}
           onContextMenu={(e) => {
             e.preventDefault();
+          }}
+          onDragOver={(e) => {
+            if (!effectiveEditMode) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={(e) => {
+            if (!effectiveEditMode || !cyAlive(cy)) return;
+            e.preventDefault();
+            const antiRawPrimary = e.dataTransfer.getData(DND_ANTI_PATTERN_MIME);
+            const nodeRawPrimary = e.dataTransfer.getData(DND_NODE_MIME);
+            const nodeRawLegacy = e.dataTransfer.getData("application/x-node-kind");
+            const textRaw = e.dataTransfer.getData("text/plain");
+            const textAnti = textRaw.startsWith(DND_ANTI_TEXT_PREFIX)
+              ? textRaw.slice(DND_ANTI_TEXT_PREFIX.length)
+              : "";
+            const textNode = textRaw.startsWith(DND_NODE_TEXT_PREFIX)
+              ? textRaw.slice(DND_NODE_TEXT_PREFIX.length)
+              : textRaw;
+            const textAsNode = NODE_KIND_VALUES.includes(textNode as NodeKind)
+              ? (textNode as NodeKind)
+              : "";
+            const antiRaw = antiRawPrimary || textAnti || draggingAntiPatternKind || "";
+            const nodeRaw = nodeRawPrimary || nodeRawLegacy || textAsNode;
+            const resolvedNodeRaw = nodeRaw || draggingNodeKindRef.current || "";
+            if (!antiRaw && !resolvedNodeRaw) {
+              clearToolDragState();
+              return;
+            }
+            const container = containerRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const renderedPos = {
+              x: e.clientX - rect.left,
+              y: e.clientY - rect.top,
+            };
+            const zoom = cy.zoom();
+            const pan = cy.pan();
+            const modelPos = {
+              x: (renderedPos.x - pan.x) / zoom,
+              y: (renderedPos.y - pan.y) / zoom,
+            };
+            if (antiRaw) {
+              addAntiPatternAt(antiRaw as DetectionKind, modelPos);
+            } else if (resolvedNodeRaw) {
+              addNodeAt(resolvedNodeRaw as NodeKind, modelPos);
+            }
+            clearToolDragState();
           }}
         >
           <CytoscapeComponent
@@ -1045,7 +1454,34 @@ export default function GraphCanvas({
                   >
                     Copy
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!effectiveEditMode}
+                    className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() =>
+                      effectiveEditMode &&
+                      handleContextDeleteNode(contextMenu.nodeId)
+                    }
+                  >
+                    Delete
+                  </button>
                 </>
+              )}
+
+              {contextMenu.type === "edge" && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!effectiveEditMode}
+                  className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={() =>
+                    effectiveEditMode &&
+                    handleContextDeleteEdge(contextMenu.edgeId)
+                  }
+                >
+                  Delete connection
+                </button>
               )}
 
               {contextMenu.type === "canvas" && (
@@ -1069,14 +1505,14 @@ export default function GraphCanvas({
               type="button"
               onClick={() => setRightPanelCollapsed(false)}
               title="Show details"
-              className="w-10 shrink-0 flex flex-col items-center justify-center gap-2 py-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors"
+              className={`w-10 shrink-0 flex flex-col items-center justify-start gap-2 pt-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors ${workAreaHeightClass}`}
             >
               <Info className="h-4 w-4 shrink-0" />
               <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
             </button>
           ) : (
             <aside
-              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${GRAPH_WORK_AREA_HEIGHT_CLASS}`}
+              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${workAreaHeightClass}`}
             >
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900/80 px-3 py-2.5">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-200">
@@ -1093,6 +1529,25 @@ export default function GraphCanvas({
               </div>
               {/* Single scroll surface for the whole panel (like Edit Tools); subsections do not scroll on their own */}
               <div className="isolate flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 pr-2 [scrollbar-gutter:stable] scrollbar-toolbox">
+                {!readOnly && effectiveEditMode && (
+                  <div className="rounded-xl border border-white/10 bg-gray-900/55 px-2.5 py-2.5">
+                    <div className="mb-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/65">
+                      Connection tools
+                    </div>
+                    <ConnectionsToolsPanel
+                      editMode={effectiveEditMode}
+                      currentTool={tool}
+                      onToolChange={handleToolChange}
+                      defaultCallProtocol={defaultCallProtocol}
+                      defaultCallSync={defaultCallSync}
+                      onDefaultCallChange={(kind, sync) => {
+                        setDefaultCallProtocol(kind);
+                        setDefaultCallSync(sync);
+                      }}
+                    />
+                  </div>
+                )}
+
                 <CollapsibleDetailsSection
                   collapsedLabel={
                     selected?.type === "node"
@@ -1121,28 +1576,10 @@ export default function GraphCanvas({
                   />
                 </CollapsibleDetailsSection>
 
-                {!readOnly && effectiveEditMode && (
-                  <CollapsibleDetailsSection
-                    collapsedLabel="Show connection tools"
-                    expandedTitle="Connection tools"
-                  >
-                    <ConnectionsToolsPanel
-                      editMode={effectiveEditMode}
-                      currentTool={tool}
-                      onToolChange={handleToolChange}
-                      defaultCallProtocol={defaultCallProtocol}
-                      defaultCallSync={defaultCallSync}
-                      onDefaultCallChange={(kind, sync) => {
-                        setDefaultCallProtocol(kind);
-                        setDefaultCallSync(sync);
-                      }}
-                    />
-                  </CollapsibleDetailsSection>
-                )}
-
                 <CollapsibleDetailsSection
                   collapsedLabel="Show anti-pattern details"
                   expandedTitle="Anti-pattern details"
+                  className="!border-white/10 !bg-gray-900/55 !shadow-none !ring-1 !ring-white/10"
                 >
                   <AntiPatternDetailsPanel
                     data={analysis}

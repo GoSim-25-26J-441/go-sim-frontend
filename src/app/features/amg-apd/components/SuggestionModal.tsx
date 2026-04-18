@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import BeforeAfterPreview from "./BeforeAfterPreview";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { X } from "lucide-react";
@@ -10,6 +11,11 @@ export type Suggestion = {
   kind: string;
   title: string;
   bullets: string[];
+  /** Ordered dependency endpoints for previews (detection order; id may be sorted differently). */
+  preview_from?: string;
+  preview_to?: string;
+  /** Ping-pong: "top" | "bottom" — which row’s call is removed in the preview. */
+  preview_remove_leg?: string;
   auto_fix_applied?: boolean;
   auto_fix_notes?: string[];
 };
@@ -71,11 +77,11 @@ export default function SuggestionModal({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+  const modal = (
+    <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
       <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40">
-        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0">
-          <div>
+        <div className="relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95">
+          <div className="min-w-0 pr-2">
             <h2 className="text-lg font-semibold text-white">
               Fix anti-patterns
             </h2>
@@ -90,9 +96,10 @@ export default function SuggestionModal({
               e.stopPropagation();
               onClose();
             }}
-            className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150 bg-white/10 text-white/80 hover:bg-white/20 hover:text-white border border-white/10"
+            className="relative z-[2] -mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/45 transition-colors duration-150 hover:bg-white/10 hover:text-white"
+            aria-label="Close"
           >
-            <X className="w-4 h-4" />
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
           </button>
         </div>
 
@@ -194,7 +201,13 @@ export default function SuggestionModal({
                         ))}
                       </ul>
 
-                      <BeforeAfterPreview suggestionId={s.id} kind={s.kind} />
+                      <BeforeAfterPreview
+                        suggestionId={s.id}
+                        kind={s.kind}
+                        previewFrom={s.preview_from}
+                        previewTo={s.preview_to}
+                        previewRemoveLeg={s.preview_remove_leg}
+                      />
 
                       {s.auto_fix_notes?.length ? (
                         <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
@@ -248,4 +261,7 @@ export default function SuggestionModal({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(modal, document.body);
 }

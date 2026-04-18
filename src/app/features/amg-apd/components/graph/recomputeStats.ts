@@ -6,18 +6,15 @@ function countByKind(nodes: cytoscape.NodeCollection, kind: string): number {
   return nodes.filter((n) => (n.data("kind") as string) === kind).length;
 }
 
-export function recomputeStats(
-  cy: cytoscape.Core | null,
+function buildStatsFromCy(
+  cy: cytoscape.Core,
   data: AnalysisResult,
-  setStats: (s: GraphStats) => void
-) {
-  if (!cy) return;
-
+): GraphStats {
   const nodes = cy.nodes();
   const edges = cy.edges().filter((e) => !e.data("decorative")).length;
   const detections = Array.isArray(data?.detections) ? data.detections.length : 0;
 
-  setStats({
+  return {
     services: countByKind(nodes, "SERVICE"),
     gateways: countByKind(nodes, "API_GATEWAY"),
     eventTopics: countByKind(nodes, "EVENT_TOPIC"),
@@ -27,5 +24,23 @@ export function recomputeStats(
     userActors: countByKind(nodes, "USER_ACTOR"),
     edges,
     detections,
-  });
+  };
+}
+
+/** Snapshot counts from the live canvas (for PNG export). */
+export function getGraphStatsFromCy(
+  cy: cytoscape.Core | null,
+  data: AnalysisResult,
+): GraphStats | null {
+  if (!cy) return null;
+  return buildStatsFromCy(cy, data);
+}
+
+export function recomputeStats(
+  cy: cytoscape.Core | null,
+  data: AnalysisResult,
+  setStats: (s: GraphStats) => void
+) {
+  if (!cy) return;
+  setStats(buildStatsFromCy(cy, data));
 }
