@@ -149,6 +149,33 @@ html.dark select {
   background: transparent;
 }
 
+/* Extra-thin scrollbar for dashboard sidebar lists */
+.scrollbar-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Edit toolbox + Details panel: gutter + deeper sky accent (slightly darker mid-blue, not navy) */
 .scrollbar-toolbox {
   scrollbar-width: thin;

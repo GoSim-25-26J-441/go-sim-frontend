@@ -70,14 +70,8 @@ export default function Topbar() {
     .slice(0, 2);
 
   return (
-    <header
-      className={
-        scrollTopbarWithContent
-          ? "relative z-40 h-20 mx-6 shrink-0"
-          : "sticky top-0 z-40 h-20 mx-6 shrink-0"
-      }
-    >
-      <div className="flex h-full max-w-450 mx-auto items-center justify-between">
+    <header className="sticky top-0 z-40 h-full px-6">
+      <div className="flex h-full w-full items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />
         </Link>
