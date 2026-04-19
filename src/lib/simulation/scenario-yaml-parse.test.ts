@@ -249,7 +249,7 @@ describe("scenario-yaml-parse", () => {
     expect(out).toContain("max_async_hops: 12");
     expect(out).toContain("zone: zone-a");
     expect(out).toContain("rack: r1");
-    expect(out).toContain("tier: edge");
+    expect(out).toContain("role: edge");
     expect(out).toContain("kind: api_gateway");
     expect(out).toContain("role: ingress");
     expect(out).toContain("strategy: least_queue");
