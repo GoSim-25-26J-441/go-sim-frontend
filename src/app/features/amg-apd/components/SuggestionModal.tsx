@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import BeforeAfterPreview from "./BeforeAfterPreview";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { X } from "lucide-react";
 
@@ -29,6 +30,7 @@ export default function SuggestionModal({
   onApply,
   applyLoading,
   disabledApply,
+  designerTourExpandFirstPreviewNonce = 0,
 }: {
   open: boolean;
   loading: boolean;
@@ -38,6 +40,8 @@ export default function SuggestionModal({
   onApply: (selectedIds: string[]) => void;
   applyLoading: boolean;
   disabledApply: boolean;
+  /** Bumps to auto-open the first card’s before/after block (designer tour). */
+  designerTourExpandFirstPreviewNonce?: number;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -79,7 +83,10 @@ export default function SuggestionModal({
 
   const modal = (
     <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
-      <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40">
+      <div
+        className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40"
+        data-amg-designer={AMG_DESIGNER.suggestionModal}
+      >
         <div className="relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95">
           <div className="min-w-0 pr-2">
             <h2 className="text-lg font-semibold text-white">
@@ -104,7 +111,10 @@ export default function SuggestionModal({
         </div>
 
         {suggestions.length > 0 && (
-          <div className="flex items-center gap-2 px-5 py-2 border-b border-white/10 shrink-0">
+          <div
+            data-amg-designer={AMG_DESIGNER.suggestionModalToolbar}
+            className="flex items-center gap-2 px-5 py-2 border-b border-white/10 shrink-0"
+          >
             <button
               type="button"
               onClick={selectAll}
@@ -147,6 +157,7 @@ export default function SuggestionModal({
                     key={id}
                     role="button"
                     tabIndex={0}
+                    data-amg-designer={idx === 0 ? AMG_DESIGNER.suggestionFirstCard : undefined}
                     onClick={() => toggleSuggestion(id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -201,13 +212,22 @@ export default function SuggestionModal({
                         ))}
                       </ul>
 
-                      <BeforeAfterPreview
-                        suggestionId={s.id}
-                        kind={s.kind}
-                        previewFrom={s.preview_from}
-                        previewTo={s.preview_to}
-                        previewRemoveLeg={s.preview_remove_leg}
-                      />
+                      <div
+                        data-amg-designer={
+                          idx === 0 ? AMG_DESIGNER.suggestionFirstPreview : undefined
+                        }
+                      >
+                        <BeforeAfterPreview
+                          suggestionId={s.id}
+                          kind={s.kind}
+                          previewFrom={s.preview_from}
+                          previewTo={s.preview_to}
+                          previewRemoveLeg={s.preview_remove_leg}
+                          expandSignal={
+                            idx === 0 ? designerTourExpandFirstPreviewNonce : 0
+                          }
+                        />
+                      </div>
 
                       {s.auto_fix_notes?.length ? (
                         <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
@@ -227,7 +247,10 @@ export default function SuggestionModal({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0">
+        <div
+          data-amg-designer={AMG_DESIGNER.suggestionModalFooter}
+          className="flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0"
+        >
           <span className="text-sm text-white/80">
             {hasSelection ? (
               <>
@@ -249,9 +272,7 @@ export default function SuggestionModal({
             </button>
             <button
               onClick={handleApply}
-              disabled={
-                disabledApply || applyLoading || !hasSelection || loading
-              }
+              disabled={disabledApply || applyLoading || !hasSelection || loading}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}

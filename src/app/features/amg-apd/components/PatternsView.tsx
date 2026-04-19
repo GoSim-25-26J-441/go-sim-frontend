@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
@@ -12,6 +12,8 @@ import SuggestionModal, {
   type Suggestion,
 } from "@/app/features/amg-apd/components/SuggestionModal";
 import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
+import PatternsDesignerTour from "@/app/features/amg-apd/components/patternsDesignerTour/PatternsDesignerTour";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
@@ -78,6 +80,58 @@ export default function PatternsView({
   const [fullscreenGenPhase, setFullscreenGenPhase] = useState<
     null | "generating" | "success"
   >(null);
+
+  const [newDesignerTourEnabled, setNewDesignerTourEnabled] = useState(true);
+  const [designerTourVersionsNonce, setDesignerTourVersionsNonce] =
+    useState(0);
+  const [designerTourWorkspaceNonce, setDesignerTourWorkspaceNonce] =
+    useState(0);
+  const [designerTourExpandDetailsNonce, setDesignerTourExpandDetailsNonce] =
+    useState(0);
+  const [designerTourSuggestionPreviewExpandNonce, setDesignerTourSuggestionPreviewExpandNonce] =
+    useState(0);
+  const [designerWelcomeOpen, setDesignerWelcomeOpen] = useState(false);
+  const dismissedDesignerWelcomeRef = useRef(false);
+
+  const openVersionsForTour = useCallback(() => {
+    setDesignerTourVersionsNonce((n) => n + 1);
+  }, []);
+  const prepareEditWorkspaceForTour = useCallback(() => {
+    setDesignerTourWorkspaceNonce((n) => n + 1);
+  }, []);
+  const expandDetailAccordionsForTour = useCallback(() => {
+    setDesignerTourExpandDetailsNonce((n) => n + 1);
+  }, []);
+  const expandSuggestionFirstPreviewForTour = useCallback(() => {
+    setDesignerTourSuggestionPreviewExpandNonce((n) => n + 1);
+  }, []);
+  const openSimulationModalForTour = useCallback(() => {
+    setSimulationModalOpen(true);
+  }, []);
+
+  const dismissDesignerWelcome = useCallback(() => {
+    dismissedDesignerWelcomeRef.current = true;
+    setDesignerWelcomeOpen(false);
+  }, []);
+
+  const handleTourChapterClose = useCallback(() => {
+    setOpen(false);
+    setSimulationModalOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!newDesignerTourEnabled) {
+      dismissedDesignerWelcomeRef.current = false;
+      setDesignerWelcomeOpen(false);
+    }
+  }, [newDesignerTourEnabled]);
+
+  useEffect(() => {
+    if (!newDesignerTourEnabled || !last?.graph || dismissedDesignerWelcomeRef.current) {
+      return;
+    }
+    setDesignerWelcomeOpen(true);
+  }, [newDesignerTourEnabled, last?.graph]);
 
   useEffect(() => {
     setPatternsGraphFullscreen(fullscreenOpen);
@@ -364,7 +418,7 @@ export default function PatternsView({
     showToast("Image downloaded", "success");
   }
 
-  async function openSuggestions() {
+  const openSuggestions = useCallback(async () => {
     if (!editedYaml) {
       showToast("No current YAML available. Upload a YAML first.", "warning");
       return;
@@ -380,7 +434,10 @@ export default function PatternsView({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...headers(),
+          ...getAmgApdHeaders({
+            userId: userId ?? undefined,
+            ...(projectId ? { chatId: projectId } : {}),
+          }),
         },
         body: JSON.stringify({
           yaml: editedYaml,
@@ -397,7 +454,7 @@ export default function PatternsView({
     } finally {
       setLoadingSug(false);
     }
-  }
+  }, [editedYaml, projectId, showToast, userId]);
 
   async function applySuggestions(selectedIds: string[]) {
     if (!editedYaml) {
@@ -565,45 +622,64 @@ export default function PatternsView({
     >
       {simulationModalOpen && (
         <div
-          className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-99999 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md"
           onClick={(e) =>
             e.target === e.currentTarget && setSimulationModalOpen(false)
           }
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-sm p-6 shadow-xl shadow-black/30"
+            data-amg-designer={AMG_DESIGNER.simulationModal}
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold text-white mb-1">
-              Proceed to Performance Simulation
-            </h3>
-            <p className="text-sm text-white/60 mb-4">
-              Select which version to use for the simulation.
-            </p>
-
-            <div className="flex flex-col gap-2 mb-4">
-              <label className="text-xs font-semibold text-[#9AA4B2] uppercase tracking-wider">
-                Version
-              </label>
-              <select
-                className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white scheme-dark focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
-                value={simulationSelectedVersion}
-                onChange={(e) => setSimulationSelectedVersion(e.target.value)}
-              >
-                <option value="">Select version…</option>
-                {versions.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    #{v.version_number} {v.title || "Untitled"}
-                  </option>
-                ))}
-              </select>
+            <div className="border-b border-white/10 bg-slate-900/80 px-6 py-5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
+                Performance simulation
+              </p>
+              <h3 className="mt-1.5 text-lg font-semibold tracking-tight text-white">
+                Continue to simulator
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-white/60">
+                Pick a saved diagram version. The simulator loads that snapshot so results match what you see in
+                patterns.
+              </p>
             </div>
 
-            <div className="flex justify-end gap-2">
+            <div className="px-6 py-5">
+              <div
+                className="flex flex-col gap-2"
+                data-amg-designer={AMG_DESIGNER.simulationVersionSelect}
+              >
+                <label
+                  htmlFor="simulation-version-select"
+                  className="text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+                >
+                  Version
+                </label>
+                <select
+                  id="simulation-version-select"
+                  className="rounded-xl border border-white/15 bg-slate-900/90 px-4 py-3 text-sm text-white shadow-inner shadow-black/20 transition-colors focus:border-sky-500/50 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                  value={simulationSelectedVersion}
+                  onChange={(e) => setSimulationSelectedVersion(e.target.value)}
+                >
+                  <option value="">Select a version…</option>
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      #{v.version_number} {v.title || "Untitled"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div
+              className="flex justify-end gap-2 border-t border-white/10 bg-slate-900/70 px-6 py-4"
+              data-amg-designer={AMG_DESIGNER.simulationModalFooter}
+            >
               <button
                 type="button"
                 onClick={() => setSimulationModalOpen(false)}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-white/85 transition-colors hover:border-white/25 hover:bg-white/10"
               >
                 Cancel
               </button>
@@ -611,7 +687,7 @@ export default function PatternsView({
                 type="button"
                 onClick={handleSimulationConfirm}
                 disabled={!simulationSelectedVersion}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                className="rounded-lg border border-emerald-500/40 bg-emerald-600/90 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500/95 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 Proceed
               </button>
@@ -629,6 +705,23 @@ export default function PatternsView({
         onApply={applySuggestions}
         applyLoading={applyLoading}
         disabledApply={!hasDetections || loadingSug}
+        designerTourExpandFirstPreviewNonce={designerTourSuggestionPreviewExpandNonce}
+      />
+
+      <PatternsDesignerTour
+        enabled={newDesignerTourEnabled}
+        onEnabledChange={setNewDesignerTourEnabled}
+        onRequestVersionsMenuOpen={openVersionsForTour}
+        onRequestEditWorkspace={prepareEditWorkspaceForTour}
+        onRequestExpandDetailAccordions={expandDetailAccordionsForTour}
+        hasSuggestionsTour={hasDetections && !!editedYaml}
+        onRunSuggestionsForTour={openSuggestions}
+        onRequestExpandSuggestionFirstPreview={expandSuggestionFirstPreviewForTour}
+        onRequestOpenSimulationModal={openSimulationModalForTour}
+        hasReturnToChatTour={!onReturnToChat}
+        welcomeIntroOpen={designerWelcomeOpen}
+        onDismissWelcomeIntro={dismissDesignerWelcome}
+        onTourChapterClose={handleTourChapterClose}
       />
 
       {typeof document !== "undefined" &&
@@ -656,10 +749,12 @@ export default function PatternsView({
             <VersionSidebar
               refreshTrigger={versionsRefreshTrigger}
               projectId={projectId}
+              designerTourForceOpenNonce={designerTourVersionsNonce}
             />
 
             <button
               type="button"
+              data-amg-designer={AMG_DESIGNER.viewSuggestions}
               onClick={openSuggestions}
               disabled={!hasDetections || !editedYaml}
               className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
@@ -678,47 +773,62 @@ export default function PatternsView({
               View Suggestions
             </button>
 
-            <button
-              type="button"
-              onClick={handleDownloadYaml}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            <div
+              className="flex flex-wrap items-center gap-2"
+              data-amg-designer={AMG_DESIGNER.toolbarDownloads}
             >
-              Download YAML
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownloadJson}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-            >
-              Download JSON
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownloadImage}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-            >
-              Download Image
-            </button>
-
-            {!onReturnToChat && (
               <button
                 type="button"
-                onClick={handleReturnToChat}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+                onClick={handleDownloadYaml}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
               >
-                Return to Chat
+                Download YAML
               </button>
-            )}
+
+              <button
+                type="button"
+                onClick={handleDownloadJson}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+              >
+                Download JSON
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadImage}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+              >
+                Download Image
+              </button>
+
+              {!onReturnToChat && (
+                <button
+                  type="button"
+                  data-amg-designer={AMG_DESIGNER.returnToChat}
+                  onClick={handleReturnToChat}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+                >
+                  Return to Chat
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-            <Legend versionCount={versionCount ?? undefined} showNodeTypes={false} />
+            <div
+              className="min-w-0"
+              data-amg-designer={AMG_DESIGNER.legend}
+            >
+              <Legend
+                versionCount={versionCount ?? undefined}
+                showNodeTypes={false}
+              />
+            </div>
 
             <div className="shrink-0">
               <button
                 type="button"
+                data-amg-designer={AMG_DESIGNER.simulator}
                 onClick={() => setSimulationModalOpen(true)}
                 className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
               >
@@ -748,7 +858,10 @@ export default function PatternsView({
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
                 Anti-pattern legend
               </div>
-              <div className="mt-2 min-w-0">
+              <div
+                className="mt-2 min-w-0"
+                data-amg-designer={AMG_DESIGNER.legend}
+              >
                 <Legend
                   versionCount={versionCount ?? undefined}
                   showNodeTypes={false}
@@ -786,6 +899,10 @@ export default function PatternsView({
                 onClick: () => setFullscreenOpen((o) => !o),
                 isFullscreen: fullscreenOpen,
               }}
+              newDesignerTourEnabled={newDesignerTourEnabled}
+              onNewDesignerTourEnabledChange={setNewDesignerTourEnabled}
+              designerTourWorkspaceNonce={designerTourWorkspaceNonce}
+              designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
             />
           </div>
         </div>

@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
+import { createPortal } from "react-dom";
 import CytoscapeComponent from "react-cytoscapejs";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
@@ -80,6 +81,10 @@ import {
   PanelRightClose,
   Info,
 } from "lucide-react";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
+import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
+import { ANTI_PATTERN_TOUR_HELP } from "@/app/features/amg-apd/components/patternsDesignerTour/antiPatternTourCopy";
+import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 
 cytoscape.use(dagre);
 cytoscape.use(coseBilkent);
@@ -330,6 +335,10 @@ export default function GraphCanvas({
   onDuplicateName,
   onResetCanvas,
   fullscreenButton,
+  newDesignerTourEnabled,
+  onNewDesignerTourEnabledChange,
+  designerTourWorkspaceNonce = 0,
+  designerTourExpandDetailsNonce = 0,
 }: {
   data?: AnalysisResult;
   readOnly?: boolean;
@@ -341,6 +350,12 @@ export default function GraphCanvas({
     onClick: () => void;
     isFullscreen: boolean;
   };
+  newDesignerTourEnabled?: boolean;
+  onNewDesignerTourEnabledChange?: (v: boolean) => void;
+  /** Incremented by Patterns designer tour to enter edit mode and expand side panels */
+  designerTourWorkspaceNonce?: number;
+  /** Incremented to expand all collapsible detail sections */
+  designerTourExpandDetailsNonce?: number;
   onGenerateGraph?: (
     yaml: string,
     nodeLayout?: NodeLayoutPayload,
@@ -395,6 +410,10 @@ export default function GraphCanvas({
   const [copiedNode, setCopiedNode] = useState<CopiedNodeClipboard | null>(null);
   const [renameFocusNonce, setRenameFocusNonce] = useState(0);
   const [nodeDetailsExpandNonce, setNodeDetailsExpandNonce] = useState(0);
+  const [antiPatternExpandNonce, setAntiPatternExpandNonce] = useState(0);
+  const [exportYamlExpandNonce, setExportYamlExpandNonce] = useState(0);
+  /** New Designer: explain each toolbox anti-pattern preset after canvas drop (drag only). */
+  const [antiPresetDropKind, setAntiPresetDropKind] = useState<DetectionKind | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [localAdditions, setLocalAdditions] = useState<
@@ -411,6 +430,34 @@ export default function GraphCanvas({
   const [stats, setStats] = useState<GraphStats>(() =>
     computeStatsFromData(analysis),
   );
+
+  useEffect(() => {
+    if (!designerTourWorkspaceNonce) return;
+    if (readOnly) return;
+    setEditMode(true);
+    setLeftPanelCollapsed(false);
+    setRightPanelCollapsed(false);
+  }, [designerTourWorkspaceNonce, readOnly]);
+
+  useEffect(() => {
+    if (!designerTourExpandDetailsNonce) return;
+    setNodeDetailsExpandNonce((n) => n + 1);
+    setAntiPatternExpandNonce((n) => n + 1);
+    setExportYamlExpandNonce((n) => n + 1);
+  }, [designerTourExpandDetailsNonce]);
+
+  useEffect(() => {
+    if (!antiPresetDropKind) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAntiPresetDropKind(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [antiPresetDropKind]);
+
+  useEffect(() => {
+    if (!newDesignerTourEnabled) setAntiPresetDropKind(null);
+  }, [newDesignerTourEnabled]);
 
   const elements = useMemo(() => {
     const base = toElements(analysis);
@@ -1212,7 +1259,14 @@ export default function GraphCanvas({
     [cy, setSelected],
   );
 
+  const antiPresetExplain =
+    antiPresetDropKind != null
+      ? (ANTI_PATTERN_TOUR_HELP[antiPresetDropKind] ??
+        "This structure is flagged because it matches a known risky pattern in your architecture model.")
+      : "";
+
   return (
+    <>
     <div
       className={`flex flex-col min-w-0 ${layoutMode === "fullscreen" ? "min-h-0 h-full gap-2 px-2 py-2 sm:px-3 sm:py-2" : "min-h-[70vh] gap-3 p-4"} ${readOnly ? "flex-1" : ""}`}
     >
@@ -1230,6 +1284,8 @@ export default function GraphCanvas({
         onResetCanvas={onResetCanvas}
         resetDisabled={isGenerating}
         fullscreenButton={fullscreenButton}
+        newDesignerTourEnabled={newDesignerTourEnabled}
+        onNewDesignerTourEnabledChange={onNewDesignerTourEnabledChange}
       />
 
       <div
@@ -1255,6 +1311,7 @@ export default function GraphCanvas({
             (leftPanelCollapsed ? (
             <button
               type="button"
+              data-amg-designer={AMG_DESIGNER.toolbox}
               onClick={() => setLeftPanelCollapsed(false)}
               title="Show toolbox"
               aria-label="Show toolbox"
@@ -1270,6 +1327,7 @@ export default function GraphCanvas({
             </button>
           ) : (
             <aside
+              data-amg-designer={AMG_DESIGNER.toolbox}
               className={`w-52 shrink-0 flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:w-60 sm:p-3 relative z-10 ${workAreaHeightClass}`}
             >
               <div className="flex items-center justify-between gap-1 mb-2 shrink-0">
@@ -1316,6 +1374,7 @@ export default function GraphCanvas({
 
         <div
           ref={containerRef}
+          data-amg-designer={AMG_DESIGNER.canvas}
           className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${workAreaHeightClass}`}
           onContextMenu={(e) => {
             e.preventDefault();
@@ -1362,7 +1421,11 @@ export default function GraphCanvas({
               y: (renderedPos.y - pan.y) / zoom,
             };
             if (antiRaw) {
-              addAntiPatternAt(antiRaw as DetectionKind, modelPos);
+              const kind = antiRaw as DetectionKind;
+              addAntiPatternAt(kind, modelPos);
+              if (newDesignerTourEnabled) {
+                setAntiPresetDropKind(kind);
+              }
             } else if (resolvedNodeRaw) {
               addNodeAt(resolvedNodeRaw as NodeKind, modelPos);
             }
@@ -1503,6 +1566,7 @@ export default function GraphCanvas({
           (rightPanelCollapsed ? (
             <button
               type="button"
+              data-amg-designer={AMG_DESIGNER.details}
               onClick={() => setRightPanelCollapsed(false)}
               title="Show details"
               className={`w-10 shrink-0 flex flex-col items-center justify-start gap-2 pt-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors ${workAreaHeightClass}`}
@@ -1512,6 +1576,7 @@ export default function GraphCanvas({
             </button>
           ) : (
             <aside
+              data-amg-designer={AMG_DESIGNER.details}
               className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${workAreaHeightClass}`}
             >
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900/80 px-3 py-2.5">
@@ -1530,7 +1595,10 @@ export default function GraphCanvas({
               {/* Single scroll surface for the whole panel (like Edit Tools); subsections do not scroll on their own */}
               <div className="isolate flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 pr-2 [scrollbar-gutter:stable] scrollbar-toolbox">
                 {!readOnly && effectiveEditMode && (
-                  <div className="rounded-xl border border-white/10 bg-gray-900/55 px-2.5 py-2.5">
+                  <div
+                    className="rounded-xl border border-white/10 bg-gray-900/55 px-2.5 py-2.5"
+                    data-amg-designer={AMG_DESIGNER.connectionTools}
+                  >
                     <div className="mb-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/65">
                       Connection tools
                     </div>
@@ -1548,60 +1616,120 @@ export default function GraphCanvas({
                   </div>
                 )}
 
-                <CollapsibleDetailsSection
-                  collapsedLabel={
-                    selected?.type === "node"
-                      ? "Show node details"
-                      : selected?.type === "edge"
-                        ? "Show connection details"
-                        : "Show selection details"
-                  }
-                  expandedTitle={
-                    selected?.type === "node"
-                      ? "Node details"
-                      : selected?.type === "edge"
-                        ? "Connection details"
-                        : "Selection"
-                  }
-                  forceExpandKey={nodeDetailsExpandNonce}
-                >
-                  <SelectionDetailsMain
-                    data={analysis}
-                    selected={selected}
-                    editMode={effectiveEditMode}
-                    renameFocusNonce={renameFocusNonce}
-                    onRenameNode={handleRenameNode}
-                    onRenameNodeLive={handleRenameNodeLive}
-                    onUpdateEdge={handleUpdateEdge}
-                  />
-                </CollapsibleDetailsSection>
+                <div data-amg-designer={AMG_DESIGNER.detailsSelection}>
+                  <CollapsibleDetailsSection
+                    collapsedLabel={
+                      selected?.type === "node"
+                        ? "Show node details"
+                        : selected?.type === "edge"
+                          ? "Show connection details"
+                          : "Show selection details"
+                    }
+                    expandedTitle={
+                      selected?.type === "node"
+                        ? "Node details"
+                        : selected?.type === "edge"
+                          ? "Connection details"
+                          : "Selection"
+                    }
+                    forceExpandKey={nodeDetailsExpandNonce}
+                  >
+                    <SelectionDetailsMain
+                      data={analysis}
+                      selected={selected}
+                      editMode={effectiveEditMode}
+                      renameFocusNonce={renameFocusNonce}
+                      onRenameNode={handleRenameNode}
+                      onRenameNodeLive={handleRenameNodeLive}
+                      onUpdateEdge={handleUpdateEdge}
+                    />
+                  </CollapsibleDetailsSection>
+                </div>
 
-                <CollapsibleDetailsSection
-                  collapsedLabel="Show anti-pattern details"
-                  expandedTitle="Anti-pattern details"
-                  className="!border-white/10 !bg-gray-900/55 !shadow-none !ring-1 !ring-white/10"
-                >
-                  <AntiPatternDetailsPanel
-                    data={analysis}
-                    selected={selected}
-                  />
-                </CollapsibleDetailsSection>
+                <div data-amg-designer={AMG_DESIGNER.detailsAntiPattern}>
+                  <CollapsibleDetailsSection
+                    collapsedLabel="Show anti-pattern details"
+                    expandedTitle="Anti-pattern details"
+                    forceExpandKey={antiPatternExpandNonce}
+                    className="!border-white/10 !bg-gray-900/55 !shadow-none !ring-1 !ring-white/10"
+                  >
+                    <AntiPatternDetailsPanel
+                      data={analysis}
+                      selected={selected}
+                    />
+                  </CollapsibleDetailsSection>
+                </div>
 
-                <CollapsibleDetailsSection
-                  collapsedLabel="Show JSON / YAML details"
-                  expandedTitle="Live graph export"
-                >
-                  <LiveGraphExportPreview
-                    cy={cy}
-                    graphFallback={analysis.graph}
-                    graphRev={phaseKey}
-                  />
-                </CollapsibleDetailsSection>
+                <div data-amg-designer={AMG_DESIGNER.detailsExport}>
+                  <CollapsibleDetailsSection
+                    collapsedLabel="Show JSON / YAML details"
+                    expandedTitle="Live graph export"
+                    forceExpandKey={exportYamlExpandNonce}
+                  >
+                    <LiveGraphExportPreview
+                      cy={cy}
+                      graphFallback={analysis.graph}
+                      graphRev={phaseKey}
+                    />
+                  </CollapsibleDetailsSection>
+                </div>
               </div>
             </aside>
           ))}
       </div>
     </div>
+    {typeof document !== "undefined" &&
+      antiPresetDropKind &&
+      createPortal(
+        <div
+          className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setAntiPresetDropKind(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="anti-preset-drop-title"
+          >
+            <div className="border-b border-white/10 px-5 py-4">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
+                New Designer
+              </p>
+              <h2
+                id="anti-preset-drop-title"
+                className="mt-1 text-base font-semibold text-white"
+              >
+                {antipatternKindLabel(antiPresetDropKind)} sample placed
+              </h2>
+              <p className="mt-2 text-[12px] leading-relaxed text-white/65">
+                You dropped a preset subgraph that illustrates this anti-pattern. The analyzer reports it
+                because the shape matches what the detectors look for in real architectures, not because the
+                template is random noise.
+              </p>
+            </div>
+            <div className="max-h-[min(52vh,22rem)] overflow-y-auto px-5 py-4">
+              <div className="flex justify-center">
+                <AntiPatternTourDiagram kind={antiPresetDropKind} />
+              </div>
+              <p className="mt-3 text-[12px] leading-relaxed text-white/70">{antiPresetExplain}</p>
+            </div>
+            <div className="border-t border-white/10 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setAntiPresetDropKind(null)}
+                className="w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
