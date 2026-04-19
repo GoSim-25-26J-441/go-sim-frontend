@@ -33,11 +33,14 @@ import {
 type PatternsViewProps = {
   projectId?: string;
   onReturnToChat?: () => void;
+  /** When false, versions / downloads / legend strip scrolls with the page. */
+  stickyToolbar?: boolean;
 };
 
 export default function PatternsView({
   projectId,
   onReturnToChat,
+  stickyToolbar = true,
 }: PatternsViewProps) {
   const router = useRouter();
   const last = useAmgApdStore((s) => s.last);
@@ -92,6 +95,7 @@ export default function PatternsView({
     useState(0);
   const [designerWelcomeOpen, setDesignerWelcomeOpen] = useState(false);
   const dismissedDesignerWelcomeRef = useRef(false);
+  const [designerResetAckOpen, setDesignerResetAckOpen] = useState(false);
 
   const openVersionsForTour = useCallback(() => {
     setDesignerTourVersionsNonce((n) => n + 1);
@@ -151,11 +155,20 @@ export default function PatternsView({
     const ok = resetGraphBaseline();
     if (ok) {
       setGraphVersion((v) => v + 1);
-      showToast("Graph reset to the last saved version", "success");
+      setDesignerResetAckOpen(true);
     } else {
       showToast("No saved baseline to reset to yet.", "warning");
     }
   }
+
+  useEffect(() => {
+    if (!designerResetAckOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDesignerResetAckOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [designerResetAckOpen]);
 
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
@@ -744,7 +757,13 @@ export default function PatternsView({
         )}
 
       {!fullscreenOpen && (
-        <div className="sticky top-0 z-20 shrink-0 overflow-hidden px-3 pt-2 pb-2 shadow-xl shadow-black/20 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
+        <div
+          className={
+            stickyToolbar
+              ? "sticky top-0 z-20 shrink-0 overflow-hidden px-3 pt-2 pb-2 shadow-xl shadow-black/20 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto"
+              : "shrink-0 overflow-hidden px-3 pt-2 pb-2 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto"
+          }
+        >
           <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-2">
             <VersionSidebar
               refreshTrigger={versionsRefreshTrigger}
@@ -976,6 +995,54 @@ export default function PatternsView({
                   </div>
                 </div>
               )}
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {designerResetAckOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setDesignerResetAckOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="designer-reset-ack-title"
+            >
+              <div className="border-b border-white/10 px-5 py-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
+                  New Designer
+                </p>
+                <h2
+                  id="designer-reset-ack-title"
+                  className="mt-1 text-base font-semibold text-white"
+                >
+                  Canvas reset
+                </h2>
+                <p className="mt-2 text-[12px] leading-relaxed text-white/65">
+                  Your unsaved edits on the graph were discarded. The canvas and
+                  live YAML were restored to the last saved baseline — the same
+                  snapshot you get after a successful generate, loading a
+                  version, or applying suggestions — so you can keep exploring
+                  from a clean, known-good state.
+                </p>
+              </div>
+              <div className="border-t border-white/10 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => setDesignerResetAckOpen(false)}
+                  className="w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+                >
+                  Got it
+                </button>
+              </div>
             </div>
           </div>,
           document.body,

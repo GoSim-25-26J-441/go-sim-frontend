@@ -173,29 +173,36 @@ export default function ControlPanel({
 
                 {showDesignerSwitch && (
                   <div
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md border border-white/[0.08] bg-slate-900/70 px-1.5 pl-2"
+                    className="inline-flex h-7 items-center gap-2 rounded-md border border-black/10 bg-white px-2 text-black transition-colors duration-150 hover:bg-gray-200"
                     data-amg-designer={AMG_DESIGNER.newDesignerSwitch}
                   >
                     <button
                       type="button"
                       role="switch"
                       aria-checked={newDesignerTourEnabled}
+                      title={
+                        newDesignerTourEnabled
+                          ? "New Designer hints and preset explanations on"
+                          : "New Designer hints and preset explanations off"
+                      }
                       onClick={() =>
                         onNewDesignerTourEnabledChange(!newDesignerTourEnabled)
                       }
-                      className={`relative h-[18px] w-[34px] shrink-0 rounded-full border border-white/10 transition-colors ${
+                      className={`relative h-[18px] w-[34px] shrink-0 rounded-full border transition-colors duration-200 ${
                         newDesignerTourEnabled
-                          ? "border-emerald-500/35 bg-emerald-600/85"
-                          : "bg-slate-700/90"
+                          ? "border-neutral-800 bg-neutral-950 shadow-inner shadow-black/20"
+                          : "border-neutral-400/80 bg-neutral-200"
                       }`}
                     >
                       <span
-                        className={`absolute top-px left-px h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out ${
-                          newDesignerTourEnabled ? "translate-x-4" : ""
+                        className={`absolute top-px left-px h-4 w-4 rounded-full shadow-sm transition-[transform,background-color] duration-200 ease-out ${
+                          newDesignerTourEnabled
+                            ? "translate-x-4 bg-neutral-200 ring-1 ring-black/10"
+                            : "translate-x-0 bg-neutral-950 ring-1 ring-black/10"
                         }`}
                       />
                     </button>
-                    <span className="text-[10px] font-medium tracking-wide text-white/70 whitespace-nowrap">
+                    <span className="text-[10px] font-medium tracking-wide whitespace-nowrap">
                       New Designer
                     </span>
                   </div>
