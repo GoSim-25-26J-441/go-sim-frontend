@@ -149,7 +149,9 @@ export function toCyElements(data?: AnalysisResult): ElementDefinition[] {
     if (!directedCallKeys.has(`${t}→${s}`)) continue;
     const lane = s < t ? 1 : -1;
     (edge.data as Record<string, unknown>).reciprocalCallLane = lane;
-    const parts = (edge.classes ?? "").split(/\s+/).filter(Boolean);
+    const rawClasses = edge.classes;
+    const classStr = Array.isArray(rawClasses) ? rawClasses.join(" ") : (rawClasses ?? "");
+    const parts = classStr.split(/\s+/).filter(Boolean);
     if (!parts.includes("reciprocal-call")) parts.push("reciprocal-call");
     edge.classes = parts.join(" ");
   }
