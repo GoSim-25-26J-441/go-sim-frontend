@@ -63,6 +63,7 @@ export default function ProjectPatternsPage({
         <PatternsView
           projectId={projectId}
           onReturnToChat={() => returnToChat()}
+          stickyToolbar={false}
         />
       </div>
     </div>
