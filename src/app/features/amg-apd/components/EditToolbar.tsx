@@ -17,6 +17,7 @@ import {
 import {
   DIAGRAM_NODE_ICON_PATHS,
 } from "@/app/features/amg-apd/utils/diagramNodeIcons";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
 const TOOL_ICONS: Record<
   "add-service" | "add-api-gateway" | "add-database" | "add-event-topic" | "add-external-system" | "add-client" | "add-user-actor",
@@ -270,18 +271,18 @@ export default function EditToolbar({
       onWheel={(e) => e.stopPropagation()}
     >
       {showNodesSection && (
-        <>
+        <div data-amg-designer={AMG_DESIGNER.editToolboxNodes}>
           <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-300/85 sm:text-[11px]">
             {NODES_HEADING}
           </div>
           {nodesToShow.map((row) => (
             <NodeRow key={row.t} {...row} />
           ))}
-        </>
+        </div>
       )}
 
       {showAntiSection && (
-        <>
+        <div data-amg-designer={AMG_DESIGNER.editToolboxAntiPatterns}>
           <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-rose-200/90 sm:text-[11px]">
             {ANTIPATTERNS_HEADING}
           </div>
@@ -345,7 +346,7 @@ export default function EditToolbar({
               </button>
             );
           })}
-        </>
+        </div>
       )}
 
       {query &&
@@ -359,7 +360,7 @@ export default function EditToolbar({
   );
 
   const searchBlock = (
-    <div className="mb-2 shrink-0">
+    <div className="mb-2 shrink-0" data-amg-designer={AMG_DESIGNER.editToolboxSearch}>
       <input
         type="search"
         value={searchQuery}
