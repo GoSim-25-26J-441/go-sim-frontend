@@ -44,6 +44,11 @@ export default function PatternsView({
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const regenerating = useAmgApdStore((s) => s.regenerating);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const commitGraphBaseline = useAmgApdStore((s) => s.commitGraphBaseline);
+  const resetGraphBaseline = useAmgApdStore((s) => s.resetGraphBaseline);
+  const setPatternsGraphFullscreen = useAmgApdStore(
+    (s) => s.setPatternsGraphFullscreen,
+  );
   const { userId } = useAuth();
 
   const showToast = useToast((s) => s.showToast);
@@ -59,7 +64,6 @@ export default function PatternsView({
   const [applyLoading, setApplyLoading] = useState(false);
   const [sugs, setSugs] = useState<Suggestion[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [graphRegenerating, setGraphRegenerating] = useState(false);
   const [graphVersion, setGraphVersion] = useState(0);
   const [versionCount, setVersionCount] = useState<number | null>(null);
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
@@ -70,13 +74,34 @@ export default function PatternsView({
   const [duplicateNameForModal, setDuplicateNameForModal] = useState<
     string | null
   >(null);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [fullscreenGenPhase, setFullscreenGenPhase] = useState<
+    null | "generating" | "success"
+  >(null);
+
+  useEffect(() => {
+    setPatternsGraphFullscreen(fullscreenOpen);
+  }, [fullscreenOpen, setPatternsGraphFullscreen]);
+
+  useEffect(() => {
+    return () => setPatternsGraphFullscreen(false);
+  }, [setPatternsGraphFullscreen]);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
   const restoreStartedRef = useRef(false);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
-  const showGraphOverlay = graphRegenerating || regenerating;
+
+  function handleResetCanvas() {
+    const ok = resetGraphBaseline();
+    if (ok) {
+      setGraphVersion((v) => v + 1);
+      showToast("Graph reset to the last saved version", "success");
+    } else {
+      showToast("No saved baseline to reset to yet.", "warning");
+    }
+  }
 
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
@@ -191,13 +216,28 @@ export default function PatternsView({
 
         setLast(data);
         setEditedYaml(yamlContent);
+        commitGraphBaseline();
       } catch {
         // Leave graph empty
       } finally {
         setRegenerating(false);
       }
     })();
-  }, [last?.graph, projectId, setLast, setEditedYaml, setRegenerating]);
+  }, [
+    last?.graph,
+    projectId,
+    setLast,
+    setEditedYaml,
+    setRegenerating,
+    commitGraphBaseline,
+  ]);
+
+  /** Baseline is not persisted; seed it when session storage rehydrates `last` + YAML. */
+  useEffect(() => {
+    if (!last?.graph || editedYaml == null || editedYaml === "") return;
+    const st = useAmgApdStore.getState();
+    if (!st.baselineLast?.graph) st.commitGraphBaseline();
+  }, [last?.graph, last?.version_id, editedYaml]);
 
   useEffect(() => {
     if (!last?.graph) return;
@@ -413,11 +453,10 @@ export default function PatternsView({
           nodeLayout,
         );
         setLast(saved);
-        setGraphRegenerating(true);
+        commitGraphBaseline();
         setGraphVersion((v) => v + 1);
         await refetchVersions();
         setVersionsRefreshTrigger((t) => t + 1);
-        setTimeout(() => setGraphRegenerating(false), 400);
         showToast("Suggestions applied successfully", "success");
       } catch (e: any) {
         setErr(e?.message ?? "Failed to save as new version");
@@ -430,6 +469,54 @@ export default function PatternsView({
       showToast(e?.message ?? "Failed to apply suggestions", "error");
     } finally {
       setApplyLoading(false);
+    }
+  }
+
+  async function generateGraphFromYaml(
+    yaml: string,
+    nodeLayout?: NodeLayoutPayload,
+    opts?: { exitFullscreenAfterSuccess?: boolean },
+  ) {
+    const exitAfter = opts?.exitFullscreenAfterSuccess === true;
+    if (exitAfter) {
+      setFullscreenGenPhase("generating");
+    }
+    setRegenerating(true);
+    try {
+      const data = await analyzeAndSaveAsNewVersion(
+        yaml,
+        undefined,
+        nodeLayout,
+      );
+      setLast(data);
+      setEditedYaml(yaml);
+      commitGraphBaseline();
+      setGraphVersion((v) => v + 1);
+      await refetchVersions();
+      setVersionsRefreshTrigger((t) => t + 1);
+      showToast("Graph generated successfully", "success");
+      if (exitAfter) {
+        setFullscreenGenPhase("success");
+        await new Promise((r) => window.setTimeout(r, 950));
+        setFullscreenOpen(false);
+        setFullscreenGenPhase(null);
+        if (projectId) {
+          router.push(`/project/${projectId}/patterns`);
+        } else {
+          router.refresh();
+        }
+      }
+    } catch (err: any) {
+      if (exitAfter) {
+        setFullscreenGenPhase(null);
+      }
+      showToast(
+        "Failed to generate graph: " + (err?.message ?? "Unknown error"),
+        "error",
+      );
+      throw err;
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -469,7 +556,13 @@ export default function PatternsView({
   }
 
   return (
-    <div className="space-y-6 max-w-400 mx-auto flex flex-col pb-6 min-w-0 w-full overflow-x-hidden">
+    <div
+      className={
+        fullscreenOpen
+          ? "mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
+          : "mx-auto flex min-h-0 w-full max-w-400 flex-col space-y-2 overflow-x-hidden pb-6"
+      }
+    >
       {simulationModalOpen && (
         <div
           className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -557,104 +650,125 @@ export default function PatternsView({
           document.body,
         )}
 
-      <div className="sticky top-0 z-20 p-3 shadow-xl shadow-black/20 overflow-hidden shrink-0 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
-        <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-white/10">
-          <VersionSidebar
-            refreshTrigger={versionsRefreshTrigger}
-            projectId={projectId}
-          />
+      {!fullscreenOpen && (
+        <div className="sticky top-0 z-20 shrink-0 overflow-hidden px-3 pt-2 pb-2 shadow-xl shadow-black/20 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto [&_select]:pointer-events-auto">
+          <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-2">
+            <VersionSidebar
+              refreshTrigger={versionsRefreshTrigger}
+              projectId={projectId}
+            />
 
-          <button
-            type="button"
-            onClick={openSuggestions}
-            disabled={!hasDetections || !editedYaml}
-            className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
-              hasDetections && editedYaml
-                ? "bg-white text-black hover:bg-gray-200"
-                : "bg-gray-500/50 text-white/60 cursor-not-allowed"
-            }`}
-            title={
-              !editedYaml
-                ? "No current YAML available"
-                : hasDetections
-                  ? "View suggestions to fix detected anti-patterns"
-                  : "No anti-patterns detected"
-            }
-          >
-            View Suggestions
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadYaml}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          >
-            Download YAML
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadJson}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          >
-            Download JSON
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadImage}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          >
-            Download Image
-          </button>
-
-          {!onReturnToChat && (
             <button
               type="button"
-              onClick={handleReturnToChat}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              onClick={openSuggestions}
+              disabled={!hasDetections || !editedYaml}
+              className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+                hasDetections && editedYaml
+                  ? "bg-white text-black hover:bg-gray-200"
+                  : "bg-gray-500/50 text-white/60 cursor-not-allowed"
+              }`}
+              title={
+                !editedYaml
+                  ? "No current YAML available"
+                  : hasDetections
+                    ? "View suggestions to fix detected anti-patterns"
+                    : "No anti-patterns detected"
+              }
             >
-              Return to Chat
+              View Suggestions
             </button>
-          )}
-        </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
-          <Legend versionCount={versionCount ?? undefined} />
-
-          <div className="shrink-0">
             <button
               type="button"
-              onClick={() => setSimulationModalOpen(true)}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              onClick={handleDownloadYaml}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
             >
-              Proceed to Performance Simulator
+              Download YAML
             </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadJson}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            >
+              Download JSON
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadImage}
+              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+            >
+              Download Image
+            </button>
+
+            {!onReturnToChat && (
+              <button
+                type="button"
+                onClick={handleReturnToChat}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              >
+                Return to Chat
+              </button>
+            )}
           </div>
-        </div>
-      </div>
 
-      <div className="bg-card/80 backdrop-blur-sm shadow-xl shadow-black/20 overflow-hidden flex flex-col min-w-0">
-        {showGraphOverlay ? (
-          <div className="relative flex-1 min-h-[50vh] flex items-center justify-center bg-black/30">
-            <div className="flex flex-col items-center gap-4">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9AA4B2] border-t-transparent" />
-              <span className="text-sm font-medium text-white/90">
-                Regenerating graph…
-              </span>
-              <span className="text-xs text-white/50">
-                {regenerating
-                  ? "Loading YAML, building graph, and detecting anti-patterns"
-                  : "Applying fixes and updating visualization"}
-              </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <Legend versionCount={versionCount ?? undefined} showNodeTypes={false} />
+
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => setSimulationModalOpen(true)}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+              >
+                Proceed to Performance Simulator
+              </button>
             </div>
           </div>
-        ) : (
-          <div className="flex-1 min-h-0 flex flex-col">
+        </div>
+      )}
+
+      <div
+        className={
+          fullscreenOpen
+            ? "relative flex min-h-0 w-full min-w-0 flex-1 flex-col"
+            : "relative min-w-0 w-full"
+        }
+      >
+        <div
+          className={
+            fullscreenOpen
+              ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2 bg-slate-950 p-2 sm:p-2.5"
+              : "flex min-w-0 flex-col overflow-hidden bg-card/80 shadow-xl shadow-black/20 backdrop-blur-sm"
+          }
+        >
+          {fullscreenOpen && (
+            <div className="shrink-0 border-b border-white/15 bg-slate-950 px-3 py-2.5 sm:px-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+                Anti-pattern legend
+              </div>
+              <div className="mt-2 min-w-0">
+                <Legend
+                  versionCount={versionCount ?? undefined}
+                  showNodeTypes={false}
+                />
+              </div>
+            </div>
+          )}
+          <div
+            className={
+              fullscreenOpen
+                ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-card/80 backdrop-blur-sm"
+                : "flex-1 min-h-0 flex flex-col"
+            }
+          >
             <GraphCanvas
               key={`amg-apd-graph-v${graphVersion}`}
               data={last}
               isGenerating={regenerating}
+              showRegeneratingOverlay={regenerating}
+              layoutMode={fullscreenOpen ? "fullscreen" : "default"}
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
@@ -662,34 +776,93 @@ export default function PatternsView({
                 exportGraphJsonRef.current = getGraph;
               }}
               onDuplicateName={(name) => setDuplicateNameForModal(name)}
-              onGenerateGraph={async (yaml, nodeLayout) => {
-                setRegenerating(true);
-                try {
-                  const data = await analyzeAndSaveAsNewVersion(
-                    yaml,
-                    undefined,
-                    nodeLayout,
-                  );
-                  setLast(data);
-                  setEditedYaml(yaml);
-                  setGraphVersion((v) => v + 1);
-                  await refetchVersions();
-                  setVersionsRefreshTrigger((t) => t + 1);
-                  showToast("Graph generated successfully", "success");
-                } catch (err: any) {
-                  showToast(
-                    "Failed to generate graph: " +
-                      (err?.message ?? "Unknown error"),
-                    "error",
-                  );
-                } finally {
-                  setRegenerating(false);
-                }
+              onGenerateGraph={(yaml, nodeLayout) =>
+                generateGraphFromYaml(yaml, nodeLayout, {
+                  exitFullscreenAfterSuccess: fullscreenOpen,
+                })
+              }
+              onResetCanvas={handleResetCanvas}
+              fullscreenButton={{
+                onClick: () => setFullscreenOpen((o) => !o),
+                isFullscreen: fullscreenOpen,
               }}
             />
           </div>
-        )}
+        </div>
       </div>
+
+      {fullscreenGenPhase &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[350000] flex items-center justify-center p-4 animate-in fade-in duration-300"
+            aria-live="polite"
+            aria-busy={fullscreenGenPhase === "generating"}
+          >
+            {/* Match CheckPatternsOverlay (chat “Check Anti-Patterns”) */}
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              aria-hidden
+            />
+            <div className="relative z-10 w-full max-w-sm rounded-lg border border-white/[0.08] bg-[#111]/98 shadow-xl p-5 animate-fade-in-up">
+              {fullscreenGenPhase === "generating" ? (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="h-8 w-8 rounded-full border-2 border-white/20 border-t-white/60 animate-spin" />
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-medium text-white">
+                      Generating new graph
+                    </p>
+                    <p className="text-xs text-white/50">
+                      Saving a new version, rebuilding the canvas, and running
+                      anti-pattern detection…
+                    </p>
+                  </div>
+                  <div className="w-full h-px bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-white/15 rounded-full animate-check-patterns-progress"
+                      style={{ width: "32%" }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="relative">
+                    <div className="absolute inset-0 rounded-full bg-emerald-500/25 animate-ping [animation-duration:2s]" />
+                    <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600/90 shadow-lg shadow-emerald-500/20">
+                      <svg
+                        className="h-6 w-6 text-white"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2.5}
+                        aria-hidden
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-medium text-white">Graph ready</p>
+                    <p className="text-xs text-white/50">
+                      Taking you back to the patterns view…
+                    </p>
+                  </div>
+                  <div className="w-full h-px bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 animate-check-patterns-progress"
+                      style={{ width: "55%" }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

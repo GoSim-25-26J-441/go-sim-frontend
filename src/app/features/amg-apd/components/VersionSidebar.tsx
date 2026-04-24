@@ -48,6 +48,7 @@ export default function VersionSidebar({
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const commitGraphBaseline = useAmgApdStore((s) => s.commitGraphBaseline);
   const showToast = useToast((s) => s.showToast);
 
   const closePanel = useCallback(() => setOpen(false), []);
@@ -138,6 +139,7 @@ export default function VersionSidebar({
 
       setLast(data);
       setEditedYaml(yamlContent);
+      commitGraphBaseline();
       showToast("Switched to version successfully", "success");
     } catch (e: any) {
       showToast(
@@ -299,7 +301,7 @@ export default function VersionSidebar({
                     ? `/project/${projectId}/patterns/compare`
                     : "/dashboard/patterns/compare"
                 }
-                className="text-xs hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
+                className="inline-flex items-center rounded-md border border-white/20 bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-gray-200"
                 onClick={closePanel}
               >
                 Compare

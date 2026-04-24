@@ -4,19 +4,45 @@
 import { env } from "@/lib/env";
 import { authenticatedFetch } from "./http";
 import { SimulationRun } from "@/types/simulation";
+import { SimulationApiError, type SimulationErrorBody } from "./simulation-errors";
 
 const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
 
+export { SimulationApiError, isSimulationApiError } from "./simulation-errors";
+export type {
+  ScenarioValidationIssue,
+  ScenarioValidationResult,
+} from "./scenario-validation";
+export { validateScenarioYaml } from "./scenario-validation";
+
 // --- Backend create run (project-level) ---
 
+/**
+ * Optimization JSON forwarded to simulation-core (passthrough).
+ * Known fields are typed; extra engine/proto keys are allowed via index signature.
+ *
+ * Offline hill-climbing: use objective, max_iterations, step_size, etc. — leave `batch` empty/absent.
+ * Batch beam search: set `batch` to a non-empty object and `online: false` (do not combine with online: true).
+ */
 export interface CreateProjectRunOptimization {
-  objective?: "p95_latency_ms" | "p99_latency_ms" | "mean_latency_ms" | "throughput_rps" | "error_rate" | "cost" | "cpu_utilization" | "memory_utilization";
+  objective?:
+    | "recommended_config"
+    | "p95_latency_ms"
+    | "p99_latency_ms"
+    | "mean_latency_ms"
+    | "throughput_rps"
+    | "error_rate"
+    | "cost"
+    | "cpu_utilization"
+    | "memory_utilization";
   max_iterations?: number;
   /** Cap total evaluations to avoid too many runs; e.g. 25 */
   max_evaluations?: number;
   step_size?: number;
   evaluation_duration_ms?: number;
   online?: boolean;
+  /** Beam / batch search nested config (enable_local_refinement, beam width, etc.) */
+  batch?: Record<string, unknown>;
   target_p95_latency_ms?: number;
   control_interval_ms?: number;
   min_hosts?: number;
@@ -33,16 +59,103 @@ export interface CreateProjectRunOptimization {
   scale_down_mem_util_max?: number;
   /** 0–1; 0 = host scale-in disabled */
   scale_down_host_cpu_util_max?: number;
+  max_controller_steps?: number;
+  max_online_duration_ms?: number;
+  allow_unbounded_online?: boolean;
+  max_noop_intervals?: number;
+  lease_ttl_ms?: number;
+  scale_down_cooldown_ms?: number;
+  host_drain_timeout_ms?: number;
+  memory_headroom_mb?: number;
+  [key: string]: unknown;
 }
 
+/**
+ * Create run: sample flow sends `scenario_yaml`. Diagram versions use `diagram_version_id`
+ * with optional `scenario_yaml` + `save_scenario` / `overwrite_scenario_cache` per backend contract.
+ */
 export interface CreateProjectRunRequest {
-  scenario_yaml: string;
+  scenario_yaml?: string;
+  diagram_version_id?: string;
+  /** Persist editor YAML as the reusable diagram scenario when starting the run. */
+  save_scenario?: boolean;
+  overwrite_scenario_cache?: boolean;
   duration_ms: number;
   real_time_mode?: boolean;
   config_yaml?: string;
   seed?: number;
   optimization?: CreateProjectRunOptimization;
   metadata?: Record<string, unknown>;
+}
+
+// --- Diagram version scenario draft (backend-owned AMG/APD → simulation YAML) ---
+
+/** GET/PUT diagram scenario — backend may add status fields; we pass through common names. */
+export interface DiagramScenarioDraftResponse {
+  scenario_yaml: string;
+  /** e.g. generated | edited | cached */
+  status?: string;
+  draft_status?: string;
+  source?: string;
+  [key: string]: unknown;
+}
+
+export async function getDiagramScenarioDraft(
+  projectId: string,
+  diagramVersionId: string
+): Promise<DiagramScenarioDraftResponse> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/diagram-versions/${encodeURIComponent(diagramVersionId)}/scenario`;
+  const response = await authenticatedFetch(url, { method: "GET" });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Load scenario draft failed");
+  }
+  return response.json() as Promise<DiagramScenarioDraftResponse>;
+}
+
+export async function putDiagramScenarioDraft(
+  projectId: string,
+  diagramVersionId: string,
+  body: { scenario_yaml: string; overwrite: boolean }
+): Promise<DiagramScenarioDraftResponse | void> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/diagram-versions/${encodeURIComponent(diagramVersionId)}/scenario`;
+  const response = await authenticatedFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Save scenario failed");
+  }
+  const text = await response.text();
+  if (!text.trim()) return;
+  try {
+    return JSON.parse(text) as DiagramScenarioDraftResponse;
+  } catch {
+    return;
+  }
+}
+
+export async function regenerateDiagramScenario(
+  projectId: string,
+  diagramVersionId: string,
+  body: { overwrite: boolean }
+): Promise<DiagramScenarioDraftResponse | void> {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/diagram-versions/${encodeURIComponent(diagramVersionId)}/scenario/regenerate`;
+  const response = await authenticatedFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Regenerate scenario failed");
+  }
+  const text = await response.text();
+  if (!text.trim()) return;
+  try {
+    return JSON.parse(text) as DiagramScenarioDraftResponse;
+  } catch {
+    return;
+  }
 }
 
 export interface CreateProjectRunResponseRun {
@@ -84,6 +197,7 @@ export interface PatchRunConfigurationPolicies {
 
 /** At least one of services, workload, or policies must be sent. */
 export interface PatchRunConfigurationBody {
+  /** Per-service vertical scale; cpu_cores / memory_mb: 0 = leave unchanged (engine contract). */
   services?: PatchRunConfigurationService[];
   workload?: PatchRunConfigurationWorkloadItem[];
   policies?: PatchRunConfigurationPolicies;
@@ -197,6 +311,35 @@ export async function getSimulationRun(id: string): Promise<SimulationRun | null
  * Backend: POST /api/v1/simulation/projects/:project_id/runs
  * Use returned run.run_id for start, SSE, stop, candidates (includes best-candidate).
  */
+async function throwSimulationHttpError(
+  response: Response,
+  fallback: string
+): Promise<never> {
+  const body = (await response.json().catch(() => ({}))) as SimulationErrorBody;
+  const msg =
+    typeof body.error === "string" && body.error.trim()
+      ? body.error.trim()
+      : `${fallback} (${response.status})`;
+  throw new SimulationApiError(msg, response.status, body);
+}
+
+/**
+ * Renew the online optimization lease before `lease_ttl_ms` expires (long online runs).
+ * Backend: POST /api/v1/simulation/runs/:id/online/renew-lease
+ */
+export async function renewOnlineLease(runId: string): Promise<{ ok?: boolean; message?: string }> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(runId)}/online/renew-lease`;
+  const response = await authenticatedFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!response.ok) {
+    await throwSimulationHttpError(response, "Lease renewal failed");
+  }
+  return response.json().catch(() => ({})) as Promise<{ ok?: boolean; message?: string }>;
+}
+
 export async function createProjectSimulationRun(
   projectId: string,
   body: CreateProjectRunRequest
@@ -208,12 +351,12 @@ export async function createProjectSimulationRun(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: "Failed to create simulation run" }));
-    throw new Error((err as { error?: string }).error ?? `Create run failed (${response.status})`);
+    await throwSimulationHttpError(response, "Create run failed");
   }
   const data = (await response.json()) as CreateProjectRunResponse;
   return data;
 }
+
 
 /**
  * Create a new simulation run (legacy shape; prefer createProjectSimulationRun for new flows)
@@ -337,10 +480,70 @@ export async function updateWorkloadRate(
   };
 }
 
+// --- Persisted run metrics (GET /runs/:id/metrics and /metrics/timeseries) ---
+
+/** Label values may be strings or coerced primitives from the backend. */
+export type PersistedMetricLabelValue = string | number | boolean;
+
+/** Nested series point: use `time` for the timestamp field. */
+export interface SimulationRunMetricsNestedPoint {
+  time: string;
+  value: number;
+  labels?: Record<string, PersistedMetricLabelValue | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  host_id?: string;
+  instance_id?: string;
+  node_id?: string;
+}
+
+export interface SimulationRunMetricsNestedTimeseries {
+  metric: string;
+  points: SimulationRunMetricsNestedPoint[];
+}
+
+/** GET /api/v1/simulation/runs/:id/metrics */
+export interface SimulationRunMetricsResponse {
+  run_id: string;
+  summary?: SimulationRunMetricsSummary;
+  timeseries?: SimulationRunMetricsNestedTimeseries[];
+}
+
+/** Persisted metrics summary; `final_config` is backend-owned placement/topology (optional on older runs). */
+export interface SimulationRunMetricsSummary extends Record<string, unknown> {
+  final_config?: Record<string, unknown>;
+}
+
+/** Flat point: use `timestamp` (or `time` on some legacy payloads). When `?metric=` is omitted, each point may include `metric`. */
+export interface SimulationRunMetricsFlatPoint {
+  metric?: string;
+  timestamp?: string;
+  /** Some nested-style points may appear on flat responses during rollout */
+  time?: string;
+  value: number;
+  labels?: Record<string, PersistedMetricLabelValue | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  host_id?: string;
+  instance_id?: string;
+  node_id?: string;
+}
+
+/** GET /api/v1/simulation/runs/:id/metrics/timeseries */
+export interface SimulationRunMetricsFlatResponse {
+  run_id: string;
+  points: SimulationRunMetricsFlatPoint[];
+}
+
 /**
  * Get real-time metrics for a running simulation
  * TODO: Replace with WebSocket or SSE when backend is ready
  */
+export {
+  normalizePersistedMetricPoint,
+  type NormalizedPersistedMetricPoint,
+} from "@/lib/simulation/normalize-persisted-metric-point";
+
 export async function getSimulationMetrics(id: string): Promise<SimulationRun["results"] | null> {
   try {
     // When backend is ready, this could use WebSocket or SSE:

@@ -238,6 +238,7 @@ function graphKindToCanvasType(kind: string): string {
     case "CLIENT":
       return "client";
     case "USER":
+    case "USER_ACTOR":
       return "user";
     case "EXTERNAL":
       return "external";
@@ -876,7 +877,7 @@ export default function DrawDiagram() {
       if (kind === "gateway") return "gateway";
       if (kind === "external") return "external";
       if (kind === "client") return "client";
-      if (kind === "user") return "user";
+      if (kind === "user") return "user_actor";
       return "service";
     };
 
@@ -1018,7 +1019,7 @@ export default function DrawDiagram() {
         else if (t === "gateway") kind = "gateway";
         else if (t === "external") kind = "external";
         else if (t === "client") kind = "client";
-        else if (t === "user") kind = "user";
+        else if (t === "user" || t === "user_actor") kind = "user";
         else if (t === "service") kind = "service";
 
         const { x, y } = positionFromSavedOrGrid(node, idx);
@@ -1237,12 +1238,15 @@ export default function DrawDiagram() {
     router.replace(qs ? `/diagram?${qs}` : "/diagram", { scroll: false });
   }, [reloadFlag, diagramLoaded, projectId, router, searchParams]);
 
+  const diagramKindToExportJson = (kind: NodeKind): string =>
+    kind === "user" ? "user_actor" : kind;
+
   const buildExportModel = () => {
     const services = nodes
       .filter((n) => DIAGRAM_SPEC_NODE_KINDS.includes(n.kind))
       .map((n) => ({
         name: n.name,
-        kind: n.kind,
+        kind: diagramKindToExportJson(n.kind),
       }));
 
     const datastores = nodes

@@ -35,6 +35,10 @@ type BackendRunSummary = {
     best_score?: number;
     iterations?: number;
     top_candidates?: string[];
+    batch_recommendation_feasible?: boolean;
+    batch_violation_score?: number;
+    batch_efficiency_score?: number;
+    batch_recommendation_summary?: string;
     [key: string]: unknown;
   };
 };
@@ -50,6 +54,7 @@ const MODE_LABELS: Record<string, string> = {
   batch: "Batch",
   online: "Online",
   batch_optimization: "Batch",
+  batch_recommendation: "Batch recommendation",
   online_optimization: "Online",
 };
 
@@ -340,7 +345,9 @@ export default function ProjectSimulationPage() {
 
                     {/* Optimization summary */}
                     {(run.metadata?.best_score != null ||
-                      run.metadata?.iterations != null) && (
+                      run.metadata?.iterations != null ||
+                      run.metadata?.batch_efficiency_score != null ||
+                      typeof run.metadata?.batch_recommendation_feasible === "boolean") && (
                       <div className="flex items-center gap-3 text-[11px] flex-wrap pt-0.5">
                         {run.metadata.iterations != null && (
                           <span className="text-white/40">
@@ -350,18 +357,52 @@ export default function ProjectSimulationPage() {
                             </span>
                           </span>
                         )}
-                        {run.metadata.best_score != null && (
-                          <span className="text-white/40">
-                            <span className="text-white/20">Best score </span>
-                            <span className="font-mono text-amber-300/80">
-                              {typeof run.metadata.best_score === "number"
-                                ? (run.metadata.objective === "cpu_utilization" ||
-                                  run.metadata.objective === "memory_utilization")
-                                  ? `${(run.metadata.best_score * 100).toFixed(2)}%`
-                                  : run.metadata.best_score.toFixed(4)
-                                : String(run.metadata.best_score)}
+                        {(run.metadata.mode === "batch" ||
+                          run.metadata.mode === "batch_optimization" ||
+                          run.metadata.mode === "batch_recommendation") &&
+                        (run.metadata.batch_efficiency_score != null ||
+                          run.metadata.batch_violation_score != null ||
+                          typeof run.metadata.batch_recommendation_feasible === "boolean") ? (
+                          <>
+                            {typeof run.metadata.batch_recommendation_feasible === "boolean" && (
+                              <span className="text-white/40">
+                                <span className="text-white/20">Feasible </span>
+                                <span className="font-mono text-emerald-300/80">
+                                  {run.metadata.batch_recommendation_feasible ? "yes" : "no"}
+                                </span>
+                              </span>
+                            )}
+                            {run.metadata.batch_violation_score != null && (
+                              <span className="text-white/40">
+                                <span className="text-white/20">Violation </span>
+                                <span className="font-mono text-amber-300/80">
+                                  {String(run.metadata.batch_violation_score)}
+                                </span>
+                              </span>
+                            )}
+                            {run.metadata.batch_efficiency_score != null && (
+                              <span className="text-white/40">
+                                <span className="text-white/20">Efficiency </span>
+                                <span className="font-mono text-amber-300/80">
+                                  {String(run.metadata.batch_efficiency_score)}
+                                </span>
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          run.metadata.best_score != null && (
+                            <span className="text-white/40">
+                              <span className="text-white/20">Best score </span>
+                              <span className="font-mono text-amber-300/80">
+                                {typeof run.metadata.best_score === "number"
+                                  ? (run.metadata.objective === "cpu_utilization" ||
+                                    run.metadata.objective === "memory_utilization")
+                                    ? `${(run.metadata.best_score * 100).toFixed(2)}%`
+                                    : run.metadata.best_score.toFixed(4)
+                                  : String(run.metadata.best_score)}
+                              </span>
                             </span>
-                          </span>
+                          )
                         )}
                       </div>
                     )}

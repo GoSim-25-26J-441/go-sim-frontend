@@ -28,10 +28,26 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { env } from "@/lib/env";
+import {
+  extractSeriesScopeFromNormalized,
+  flatTimeseriesLegendLabel,
+  flatTimeseriesSeriesKeyFromNormalized,
+  isUnscopedSeriesKey,
+} from "@/lib/simulation/metrics-series-scope";
+import {
+  normalizePersistedMetricPoint,
+  type NormalizedPersistedMetricPoint,
+} from "@/lib/simulation/normalize-persisted-metric-point";
+import {
+  placementStatusFromFinalConfig,
+  resolveFinalConfigForPlacement,
+  type PlacementPersistenceStatus,
+} from "@/lib/simulation/persisted-metrics-final-config";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
   patchRunConfiguration,
   patchRunWorkload,
+  renewOnlineLease,
   startSimulationRun,
   stopSimulationRun,
   type PatchRunConfigurationBody,
@@ -40,6 +56,12 @@ import {
   type PatchRunConfigurationPolicies,
 } from "@/lib/api-client/simulation";
 import YAML from "yaml";
+import ClusterPlacementView, {
+  type ClusterPlacementResources,
+  type ClusterPlacementHostResource,
+  type ClusterPlacementServiceResource,
+  type ClusterPlacementInstance,
+} from "@/components/simulation/ClusterPlacementView";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -105,12 +127,22 @@ interface Candidate {
   metrics?: {
     cpu_util_pct?: number;
     mem_util_pct?: number;
+    latency_p95_ms?: number;
+    latency_p99_ms?: number;
+    p95_latency_ms?: number;
+    throughput_rps?: number;
+    failed_requests?: number;
+    error_rate?: number;
     [key: string]: unknown;
   };
   sim_workload?: {
     concurrent_users?: number;
     [key: string]: unknown;
   };
+  /** Same shape as best_candidate on /candidates when the API embeds topology per row. */
+  topology?: BestCandidateTopology;
+  hosts?: BestCandidateHost[];
+  services?: BestCandidateService[];
   source?: string;
   s3_path?: string;
 }
@@ -161,11 +193,27 @@ interface RunInfo {
     description?: string;
     mode?: string;
     objective?: string;
-    // optimization summary (batch)
+    lease_ttl_ms?: number;
+    // optimization summary (batch / hill-climb)
     best_run_id?: string;
+    /** Hill-climb: scalar objective. Batch: legacy efficiency only — use batch_efficiency_score / summary for semantics. */
     best_score?: number;
     iterations?: number;
     top_candidates?: string[];
+    batch_recommendation_feasible?: boolean;
+    batch_violation_score?: number;
+    batch_efficiency_score?: number;
+    batch_recommendation_summary?: string;
+    batch_score_breakdown?: Record<string, unknown>;
+    /** Batch recommendation: ordered candidate run ids from the search. */
+    candidate_run_ids?: string[];
+    /** Aggregated metrics for the recommended / best candidate (engine-specific shape). */
+    best_candidate_metrics?: Record<string, unknown>;
+    /** Optional snapshots for before/after configuration diff (YAML or JSON). */
+    configuration_before?: unknown;
+    configuration_after?: unknown;
+    final_config?: unknown;
+    online_completion_reason?: string;
     // online optimization history
     optimization_history?: OptimizationStep[];
     [key: string]: unknown;
@@ -212,9 +260,12 @@ function sortAndDedupePoints(pts: TimePoint[]): TimePoint[] {
 interface MetricPoint {
   time: string;
   value: number;
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
   service_id?: string;
+  instance_id?: string;
+  host_id?: string;
   node_id?: string;
-  tags?: Record<string, string>;
 }
 
 interface MetricTimeseries {
@@ -222,7 +273,23 @@ interface MetricTimeseries {
   points: MetricPoint[];
 }
 
+/** Point from GET /runs/{id}/metrics/timeseries (flat series; optional metric per point when unfiltered). */
+interface TimeseriesPoint {
+  timestamp?: string;
+  time?: string;
+  metric?: string;
+  value: number;
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  host_id?: string;
+  instance_id?: string;
+  node_id?: string;
+}
+
 interface MetricsSummary {
+  /** Backend-owned final topology/placement (optional on older persisted runs). */
+  final_config?: Record<string, unknown>;
   metrics?: Record<string, unknown>;
   summary_data?: Record<string, unknown>;
   total_requests?: number;
@@ -279,6 +346,30 @@ interface HostResource {
   memory_gb?: number;
 }
 
+interface ServiceResource {
+  service_id: string;
+  replicas?: number;
+  cpu_cores?: number;
+  memory_mb?: number;
+}
+
+interface InstancePlacement {
+  service_id: string;
+  instance_id?: string;
+  host_id?: string;
+  lifecycle?: string;
+  cpu_utilization?: number;
+  memory_utilization?: number;
+}
+
+interface ClusterResources {
+  hosts?: HostResource[];
+  services?: ServiceResource[];
+  placements?: InstancePlacement[];
+}
+
+type PlacementStatus = PlacementPersistenceStatus;
+
 /** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
 export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
 
@@ -291,12 +382,34 @@ interface MetricsResponse {
   metrics?: { service_metrics?: ServiceMetricSnapshot[] };
 }
 
-/** Point from GET /runs/{id}/metrics/timeseries */
-interface TimeseriesPoint {
-  timestamp: string;
+interface UnscopedMetricDebugPoint {
+  source: "metrics.timeseries" | "metrics/timeseries";
   metric: string;
+  timestamp: string;
   value: number;
-  labels?: { service?: string; [key: string]: string | undefined };
+  labels?: Record<string, string | undefined>;
+  tags?: Record<string, unknown>;
+  service_id?: string;
+  instance_id?: string;
+  host_id?: string;
+  node_id?: string;
+}
+
+function mergeUnscopedDebugPoints(
+  prev: UnscopedMetricDebugPoint[],
+  incoming: UnscopedMetricDebugPoint[],
+): UnscopedMetricDebugPoint[] {
+  if (incoming.length === 0) return prev;
+  const map = new Map<string, UnscopedMetricDebugPoint>();
+  const sig = (p: UnscopedMetricDebugPoint) =>
+    `${p.source}|${p.metric}|${p.timestamp}|${p.value}|${JSON.stringify(p.labels ?? {})}|${JSON.stringify(p.tags ?? {})}|${p.service_id ?? ""}|${p.instance_id ?? ""}|${p.host_id ?? ""}|${p.node_id ?? ""}`;
+  for (const p of prev) {
+    map.set(sig(p), p);
+  }
+  for (const p of incoming) {
+    map.set(sig(p), p);
+  }
+  return Array.from(map.values()).slice(-250);
 }
 
 export interface SsePanelHandle {
@@ -340,9 +453,314 @@ const EVENT_TYPE_STYLES: Record<string, string> = {
   update:                "bg-indigo-500/20 text-indigo-300",
   optimization_progress: "bg-amber-500/20 text-amber-300",
   optimization_step:     "bg-orange-500/20 text-orange-300",
+  drain_sweep:           "bg-violet-500/20 text-violet-300",
 };
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "stopped"]);
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function num(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" && v.trim() !== "" ? v : undefined;
+}
+
+function normalizeClusterResources(input: unknown): ClusterPlacementResources | null {
+  const root = asRecord(input);
+  if (!root) return null;
+
+  const rawHosts = Array.isArray(root.hosts) ? root.hosts : [];
+  const rawServices = Array.isArray(root.services) ? root.services : [];
+  const rawPlacements = Array.isArray(root.placements) ? root.placements : [];
+
+  const hosts: ClusterPlacementHostResource[] = [];
+  for (const h of rawHosts) {
+    const r = asRecord(h);
+    if (!r) continue;
+    const host_id = str(r.host_id) ?? str(r.id);
+    if (!host_id) continue;
+    hosts.push({
+      host_id,
+      cpu_cores: num(r.cpu_cores) ?? num(r.cores),
+      memory_gb: num(r.memory_gb),
+    });
+  }
+
+  const services: ClusterPlacementServiceResource[] = [];
+  for (const s of rawServices) {
+    const r = asRecord(s);
+    if (!r) continue;
+    const service_id = str(r.service_id) ?? str(r.id);
+    if (!service_id) continue;
+    services.push({
+      service_id,
+      replicas: num(r.replicas),
+      cpu_cores: num(r.cpu_cores),
+      memory_mb: num(r.memory_mb),
+    });
+  }
+
+  const placements: ClusterPlacementInstance[] = [];
+  for (const p of rawPlacements) {
+    const r = asRecord(p);
+    if (!r) continue;
+    const service_id = str(r.service_id) ?? str(r.service) ?? "unknown-service";
+    placements.push({
+      service_id,
+      instance_id: str(r.instance_id) ?? str(r.instance),
+      host_id: str(r.host_id) ?? str(r.host),
+      lifecycle: str(r.lifecycle) ?? str(r.state),
+      cpu_utilization: num(r.cpu_utilization),
+      memory_utilization: num(r.memory_utilization),
+    });
+  }
+
+  return { hosts, services, placements };
+}
+
+function isBatchOptimizationMeta(m?: RunInfo["metadata"]): boolean {
+  if (!m) return false;
+  if (m.objective === "recommended_config") return true;
+  const mode = m.mode;
+  if (mode === "batch" || mode === "batch_optimization" || mode === "batch_recommendation") return true;
+  return (
+    m.batch_efficiency_score != null ||
+    m.batch_violation_score != null ||
+    typeof m.batch_recommendation_feasible === "boolean" ||
+    (typeof m.batch_recommendation_summary === "string" && m.batch_recommendation_summary.length > 0) ||
+    (m.batch_score_breakdown != null && typeof m.batch_score_breakdown === "object")
+  );
+}
+
+const CANDIDATES_TABLE_COL_COUNT = 16;
+
+const BEST_CANDIDATE_WHY_TOOLTIP =
+  "Selected because it met performance guardrails and had the lowest efficiency score among evaluated candidates.";
+
+function candidateAsRecord(c: Candidate): Record<string, unknown> {
+  return c as unknown as Record<string, unknown>;
+}
+
+function asHostArray(v: unknown): BestCandidateHost[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((x) => x && typeof x === "object") as BestCandidateHost[];
+}
+
+function asServiceArray(v: unknown): BestCandidateService[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((x) => x && typeof x === "object") as BestCandidateService[];
+}
+
+/** Hosts from topology, top-level, or nested spec (engine shapes vary). */
+function getCandidateHostsList(c: Candidate, bestTopology?: BestCandidateTopology | null): BestCandidateHost[] {
+  const r = candidateAsRecord(c);
+  const top = r.topology;
+  if (top && typeof top === "object") {
+    const h = asHostArray((top as BestCandidateTopology).hosts);
+    if (h?.length) return h;
+  }
+  const root = asHostArray(r.hosts);
+  if (root?.length) return root;
+  const spec = r.spec;
+  if (spec && typeof spec === "object") {
+    const sh = asHostArray((spec as Record<string, unknown>).hosts);
+    if (sh?.length) return sh;
+  }
+  if (bestTopology) {
+    const bh = asHostArray(bestTopology.hosts);
+    if (bh?.length) return bh;
+  }
+  return [];
+}
+
+function getCandidateServicesList(
+  c: Candidate,
+  bestTopology?: BestCandidateTopology | null,
+): BestCandidateService[] {
+  const r = candidateAsRecord(c);
+  const top = r.topology;
+  if (top && typeof top === "object") {
+    const s = asServiceArray((top as BestCandidateTopology).services);
+    if (s?.length) return s;
+  }
+  const root = asServiceArray(r.services);
+  if (root?.length) return root;
+  const spec = r.spec;
+  if (spec && typeof spec === "object") {
+    const ss = asServiceArray((spec as Record<string, unknown>).services);
+    if (ss?.length) return ss;
+  }
+  if (bestTopology) {
+    const bs = asServiceArray(bestTopology.services);
+    if (bs?.length) return bs;
+  }
+  return [];
+}
+
+function joinHostField(hosts: BestCandidateHost[], field: "cpu_cores" | "memory_gb"): string {
+  if (hosts.length === 0) return "—";
+  return hosts
+    .map((h) => {
+      const v = h[field];
+      return v != null && Number.isFinite(v) ? String(v) : "—";
+    })
+    .join(" / ");
+}
+
+function joinServiceField(
+  services: BestCandidateService[],
+  field: "replicas" | "cpu_cores" | "memory_mb",
+): string {
+  if (services.length === 0) return "—";
+  return services
+    .map((s) => {
+      const v = s[field];
+      return v != null && Number.isFinite(v) ? String(v) : "—";
+    })
+    .join(" / ");
+}
+
+function candidateHostResourceCells(
+  c: Candidate,
+  bestTopology?: BestCandidateTopology | null,
+): { cores: string; memGb: string } {
+  const hosts = getCandidateHostsList(c, bestTopology);
+  if (hosts.length > 0) {
+    return { cores: joinHostField(hosts, "cpu_cores"), memGb: joinHostField(hosts, "memory_gb") };
+  }
+  const vcpu = c.spec?.vcpu;
+  const mem = c.spec?.memory_gb;
+  return {
+    cores: vcpu != null && Number.isFinite(vcpu) ? String(vcpu) : "—",
+    memGb: mem != null && Number.isFinite(mem) ? String(mem) : "—",
+  };
+}
+
+function candidateMetricNumber(m: Candidate["metrics"], keys: string[]): number | undefined {
+  if (!m) return undefined;
+  const r = m as Record<string, unknown>;
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  return undefined;
+}
+
+const RUN_BATCH_SUMMARY_TOOLTIP =
+  "From this run’s batch recommendation summary (authoritative for the overall search). Per-candidate values appear when the API attaches them to each row.";
+
+const SVC_TOPOLOGY_ROW_TOOLTIP =
+  "Per-candidate service sizing when the API returns topology on each child run. If blank, expand the row or check the Best row / Optimization summary for the recommended layout.";
+
+function batchScoreBreakdownRecord(meta?: RunInfo["metadata"]): Record<string, unknown> | undefined {
+  const b = meta?.batch_score_breakdown;
+  if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
+  return undefined;
+}
+
+function metaBatchFeasible(meta?: RunInfo["metadata"]): boolean | undefined {
+  if (typeof meta?.batch_recommendation_feasible === "boolean") return meta.batch_recommendation_feasible;
+  const bd = batchScoreBreakdownRecord(meta);
+  const v = bd?.batch_recommendation_feasible ?? bd?.feasible ?? bd?.batch_feasible;
+  if (typeof v === "boolean") return v;
+  return undefined;
+}
+
+function metaBatchEfficiencyScore(meta?: RunInfo["metadata"]): number | undefined {
+  const direct = meta?.batch_efficiency_score;
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  const bd = batchScoreBreakdownRecord(meta);
+  const v = bd?.batch_efficiency_score ?? bd?.efficiency_score;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return undefined;
+}
+
+function formatErrorRateCell(m: Candidate["metrics"] | undefined): string {
+  const direct = candidateMetricNumber(m, ["error_rate", "errors_rate", "failure_rate"]);
+  if (direct != null) {
+    if (direct >= 0 && direct <= 1) return `${(direct * 100).toFixed(2)}%`;
+    return `${direct.toFixed(2)}%`;
+  }
+  const failed = candidateMetricNumber(m, [
+    "failed_requests",
+    "failed",
+    "total_errors",
+    "error_count",
+    "errors",
+  ]);
+  const total = candidateMetricNumber(m, [
+    "total_requests",
+    "requests_total",
+    "request_count",
+    "num_requests",
+  ]);
+  if (total !== undefined && total === 0) return "N/A";
+  const success = candidateMetricNumber(m, ["successful_requests", "success_requests", "succeeded_requests"]);
+  let denom = total;
+  if ((denom == null || !Number.isFinite(denom) || denom <= 0) && success != null && failed != null) {
+    denom = success + failed;
+  }
+  if (failed == null || !Number.isFinite(failed) || denom == null || !Number.isFinite(denom) || denom <= 0) {
+    return "—";
+  }
+  return `${((failed / denom) * 100).toFixed(2)}%`;
+}
+
+/** When the engine stores winner metrics only on run metadata, merge them into that candidate row. */
+function candidateMetricsForDisplay(
+  c: Candidate,
+  meta: RunInfo["metadata"] | undefined,
+): Candidate["metrics"] | undefined {
+  const base = c.metrics;
+  const bid = meta?.best_run_id;
+  const bcm = meta?.best_candidate_metrics;
+  if (typeof bid === "string" && c.id === bid && bcm && typeof bcm === "object" && !Array.isArray(bcm)) {
+    return { ...(base ?? {}), ...(bcm as Record<string, unknown>) } as Candidate["metrics"];
+  }
+  return base;
+}
+
+function formatBatchScoreNumber(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function candidateBatchFeasibleCell(
+  c: Candidate,
+  meta: RunInfo["metadata"] | undefined,
+): { text: string; fromRunSummary: boolean } {
+  const r = candidateAsRecord(c);
+  const row = r.batch_recommendation_feasible ?? r.batch_feasible;
+  if (typeof row === "boolean") return { text: row ? "Yes" : "No", fromRunSummary: false };
+  const run = metaBatchFeasible(meta);
+  if (typeof run === "boolean") return { text: run ? "Yes" : "No", fromRunSummary: true };
+  return { text: "—", fromRunSummary: false };
+}
+
+function candidateBatchEfficiencyCell(
+  c: Candidate,
+  meta: RunInfo["metadata"] | undefined,
+): { text: string; fromRunSummary: boolean } {
+  const r = candidateAsRecord(c);
+  for (const k of ["batch_efficiency_score", "efficiency_score"] as const) {
+    const v = r[k];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      return { text: formatBatchScoreNumber(v), fromRunSummary: false };
+    }
+  }
+  const bd = batchScoreBreakdownRecord(meta);
+  const nested = bd?.batch_efficiency_score ?? bd?.efficiency_score;
+  if (typeof nested === "number" && Number.isFinite(nested)) {
+    return { text: formatBatchScoreNumber(nested), fromRunSummary: true };
+  }
+  const run = metaBatchEfficiencyScore(meta);
+  if (typeof run === "number" && Number.isFinite(run)) return { text: formatBatchScoreNumber(run), fromRunSummary: true };
+  return { text: "—", fromRunSummary: false };
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -530,9 +948,11 @@ function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: Metric
         rows: (() => {
         const rowMap: Record<string, Record<string, number>> = {};
         for (const p of ts.points) {
-          const key = p.time;
-          if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-          rowMap[key][p.service_id ?? "global"] = p.value;
+          const n = normalizePersistedMetricPoint(p, ts.metric);
+          if (!n) continue;
+          const key = n.timestamp;
+          if (!rowMap[key]) rowMap[key] = { _t: new Date(n.timestamp).getTime() };
+          rowMap[key][extractSeriesScopeFromNormalized(n)] = n.value;
         }
           return Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
         })(),
@@ -548,13 +968,35 @@ function MetricsTimeseriesChart({ timeseries = [], timeseriesProcessed }: Metric
         const rows = item.rows;
         if (!rows.length) return null;
 
-        const services = useProcessed
+        const services = (useProcessed
           ? Array.from(new Set(rows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))))
-          : Array.from(new Set((timeseries!.find((ts) => ts.metric === item.metric)?.points ?? []).map((p) => p.service_id ?? "global")));
+          : Array.from(
+              new Set(
+                (timeseries!.find((ts) => ts.metric === item.metric)?.points ?? []).map((p) => {
+                  const n = normalizePersistedMetricPoint(p, item.metric);
+                  return n ? extractSeriesScopeFromNormalized(n) : "unscoped";
+                }),
+              ),
+            )).filter((svc) => !isUnscopedSeriesKey(svc));
+
+        if (services.length === 0) {
+          return (
+            <div key={item.metric}>
+              <p className="text-xs text-white/50 mb-1 font-mono">{item.metric}</p>
+              <p className="text-[11px] text-white/35 italic">
+                Only unscoped points reported. See the unscoped metrics debug panel.
+              </p>
+            </div>
+          );
+        }
 
         const tMin = rows[0]._t as number;
         const tMax = rows[rows.length - 1]._t as number;
-        const allVals = rows.flatMap((r) => Object.entries(r).filter(([k]) => k !== "_t").map(([, v]) => v as number));
+        const allVals = rows.flatMap((r) =>
+          Object.entries(r)
+            .filter(([k]) => k !== "_t" && !isUnscopedSeriesKey(k))
+            .map(([, v]) => v as number),
+        );
         const vMaxRaw = Math.max(...allVals, 0) * 1.2;
         const vMax = vMaxRaw > 0 ? vMaxRaw : 1;
         const xDomainMin = tMin < tMax ? tMin : tMax - 60_000;
@@ -948,8 +1390,11 @@ export default function SimulationRunPage() {
   // Host-level metrics (host-*): from metric_update labels.host or metrics_snapshot.host_metrics; gauges = latest value
   const [hostMetrics, setHostMetrics] = useState<Record<string, { cpu_utilization?: number; memory_utilization?: number }>>({});
   const [hostResources, setHostResources] = useState<Record<string, { cpu_cores?: number; memory_gb?: number }>>({});
+  const [clusterResources, setClusterResources] = useState<ClusterPlacementResources | null>(null);
+  const [livePlacementStatus, setLivePlacementStatus] = useState<PlacementStatus>("unavailable");
   // Timeseries from GET .../metrics/timeseries API (for line chart over time)
   const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
+  const [unscopedMetricDebug, setUnscopedMetricDebug] = useState<UnscopedMetricDebugPoint[]>([]);
   const [timeseriesApiMetric, setTimeseriesApiMetric] = useState<string>("request_latency_ms");
   const [timeseriesApiLoading, setTimeseriesApiLoading] = useState(false);
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
@@ -957,6 +1402,13 @@ export default function SimulationRunPage() {
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
   const [configUpdateLoading, setConfigUpdateLoading] = useState(false);
   const [configUpdateError, setConfigUpdateError] = useState<string | null>(null);
+  /** Latest optimization_progress SSE (objective / unit clarify best_score in that stream). */
+  const [optProgressHint, setOptProgressHint] = useState<{
+    objective?: string;
+    unit?: string;
+    best_score?: number;
+  } | null>(null);
+  const [leaseRenewError, setLeaseRenewError] = useState<string | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -1014,6 +1466,24 @@ export default function SimulationRunPage() {
 
   // Handle individual SSE events that need page-level processing
   const handleSseEvent = useCallback((type: string, data: string) => {
+    if (type === "optimization_progress") {
+      try {
+        const parsed = JSON.parse(data) as { data?: Record<string, unknown> } & Record<string, unknown>;
+        const inner = (parsed?.data ?? parsed) as Record<string, unknown>;
+        const objective = inner.objective != null ? String(inner.objective) : undefined;
+        const unit = inner.unit != null ? String(inner.unit) : undefined;
+        const best_score =
+          typeof inner.best_score === "number"
+            ? inner.best_score
+            : typeof inner.bestScore === "number"
+              ? inner.bestScore
+              : undefined;
+        setOptProgressHint({ objective, unit, best_score });
+      } catch {
+        /* ignore */
+      }
+    }
+
     if (type === "optimization_step") {
       try {
         const payload = JSON.parse(data) as { data?: OptimizationStep };
@@ -1111,13 +1581,25 @@ export default function SimulationRunPage() {
           data?: {
             metrics?: SnapshotMetrics;
             host_metrics?: HostMetricSnapshot[];
-            resources?: { hosts?: HostResource[] };
+            resources?: ClusterResources;
           };
           metrics?: SnapshotMetrics;
         };
         const dataPayload = parsed.data;
+        const normalizedResources = normalizeClusterResources(dataPayload?.resources);
+        const liveStatusNow = placementStatusFromFinalConfig(dataPayload?.resources);
+        setLivePlacementStatus(liveStatusNow);
+        if (normalizedResources) {
+          setClusterResources((prev) => ({
+            hosts: normalizedResources.hosts.length ? normalizedResources.hosts : prev?.hosts ?? [],
+            services: normalizedResources.services.length ? normalizedResources.services : prev?.services ?? [],
+            placements:
+              liveStatusNow === "unavailable"
+                ? prev?.placements ?? normalizedResources.placements
+                : normalizedResources.placements,
+          }));
+        }
         const metrics = dataPayload?.metrics ?? parsed.metrics;
-        if (!metrics || typeof metrics !== "object") return;
 
         // Host-level metrics and resources from snapshot
         const hostMetricsList = dataPayload?.host_metrics;
@@ -1137,7 +1619,7 @@ export default function SimulationRunPage() {
             setHostMetrics((prev) => ({ ...prev, ...byHost }));
           }
         }
-        const hostsResource = dataPayload?.resources?.hosts;
+        const hostsResource = normalizedResources?.hosts;
         if (Array.isArray(hostsResource) && hostsResource.length > 0) {
           const byHost: Record<string, { cpu_cores?: number; memory_gb?: number }> = {};
           for (const h of hostsResource) {
@@ -1151,6 +1633,8 @@ export default function SimulationRunPage() {
             setHostResources((prev) => ({ ...prev, ...byHost }));
           }
         }
+
+        if (!metrics || typeof metrics !== "object") return;
 
         const list = metrics.service_metrics;
         if (Array.isArray(list) && list.length > 0) {
@@ -1193,6 +1677,59 @@ export default function SimulationRunPage() {
       } catch { /* malformed — ignore */ }
     }
   }, [runId]);
+
+  const finalPlacementResources = useMemo<ClusterPlacementResources | null>(() => {
+    const resolved = resolveFinalConfigForPlacement(
+      metricsData?.summary as { final_config?: unknown } | undefined,
+      runInfo?.metadata?.final_config,
+    );
+    const root = asRecord(resolved);
+    if (!root) return null;
+    const candidate = root.resources ?? root.cluster_resources ?? root;
+    return normalizeClusterResources(candidate);
+  }, [metricsData?.summary, runInfo?.metadata?.final_config]);
+
+  const finalPlacementStatus = useMemo<PlacementStatus>(() => {
+    const resolved = resolveFinalConfigForPlacement(
+      metricsData?.summary as { final_config?: unknown } | undefined,
+      runInfo?.metadata?.final_config,
+    );
+    const root = asRecord(resolved);
+    if (!root) return "unavailable";
+    const candidate = root.resources ?? root.cluster_resources ?? root;
+    return placementStatusFromFinalConfig(candidate);
+  }, [metricsData?.summary, runInfo?.metadata?.final_config]);
+
+  const placementSource = useMemo<
+    { sourceLabel: "live metrics_snapshot" | "final_config" | "unavailable"; mode: "live" | "final"; resources: ClusterPlacementResources | null; status: PlacementStatus }
+  >(() => {
+    const currentStatus = runInfo?.status ?? "pending";
+    if (currentStatus === "running") {
+      return {
+        sourceLabel: livePlacementStatus === "unavailable" ? "unavailable" : "live metrics_snapshot",
+        mode: "live",
+        resources: clusterResources,
+        status: livePlacementStatus,
+      };
+    }
+    if (finalPlacementStatus !== "unavailable") {
+      return {
+        sourceLabel: "final_config",
+        mode: "final",
+        resources: finalPlacementResources,
+        status: finalPlacementStatus,
+      };
+    }
+    if (livePlacementStatus !== "unavailable") {
+      return {
+        sourceLabel: "live metrics_snapshot",
+        mode: "final",
+        resources: clusterResources,
+        status: livePlacementStatus,
+      };
+    }
+    return { sourceLabel: "unavailable", mode: "final", resources: null, status: "unavailable" };
+  }, [runInfo?.status, livePlacementStatus, clusterResources, finalPlacementStatus, finalPlacementResources]);
 
   // Fallback: re-fetch from API (used on stream close / legacy terminal events)
   const refreshStatus = useCallback(() => { fetchRunInfoRef.current(); }, []);
@@ -1245,6 +1782,31 @@ export default function SimulationRunPage() {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as MetricsResponse & Record<string, unknown>;
+      if (Array.isArray(data.timeseries) && data.timeseries.length > 0) {
+        const samples: UnscopedMetricDebugPoint[] = [];
+        for (const ts of data.timeseries) {
+          for (const p of ts.points ?? []) {
+            const n = normalizePersistedMetricPoint(p, ts.metric);
+            if (n && extractSeriesScopeFromNormalized(n) === "unscoped") {
+              samples.push({
+                source: "metrics.timeseries",
+                metric: ts.metric,
+                timestamp: n.timestamp,
+                value: n.value,
+                labels: p.labels as Record<string, string | undefined> | undefined,
+                tags: p.tags,
+                service_id: p.service_id,
+                instance_id: p.instance_id,
+                host_id: p.host_id,
+                node_id: p.node_id,
+              });
+            }
+          }
+        }
+        if (samples.length > 0) {
+          setUnscopedMetricDebug((prev) => mergeUnscopedDebugPoints(prev, samples));
+        }
+      }
       // Normalize summary from multiple possible backend shapes so KPI cards always have values
       const raw = data.summary ?? {};
       const fromSummaryMetrics =
@@ -1429,8 +1991,29 @@ export default function SimulationRunPage() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { points?: TimeseriesPoint[] };
+      const data = (await res.json()) as { run_id?: string; points?: TimeseriesPoint[] };
       const points = data.points ?? [];
+      const unscoped = points
+        .map((p) => {
+          const n = normalizePersistedMetricPoint(p, timeseriesApiMetric);
+          return n ? { p, n } : null;
+        })
+        .filter((x): x is { p: TimeseriesPoint; n: NormalizedPersistedMetricPoint } => x != null && extractSeriesScopeFromNormalized(x.n) === "unscoped")
+        .map(({ p, n }) => ({
+          source: "metrics/timeseries" as const,
+          metric: n.metric ?? timeseriesApiMetric,
+          timestamp: n.timestamp,
+          value: n.value,
+          labels: p.labels,
+          tags: p.tags,
+          service_id: p.service_id,
+          instance_id: p.instance_id,
+          host_id: p.host_id,
+          node_id: p.node_id,
+        }));
+      if (unscoped.length > 0) {
+        setUnscopedMetricDebug((prev) => mergeUnscopedDebugPoints(prev, unscoped));
+      }
 
       if (points.length > TIMESERIES_WORKER_THRESHOLD && typeof Worker !== "undefined") {
         let worker: Worker | null = timeseriesWorkerRef.current;
@@ -1475,10 +2058,12 @@ export default function SimulationRunPage() {
 
       const rowMap: Record<number, Record<string, number>> = {};
       for (const p of points) {
-        const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
+        const n = normalizePersistedMetricPoint(p, timeseriesApiMetric);
+        if (!n) continue;
+        const t = new Date(n.timestamp).getTime();
+        if (!Number.isFinite(t)) continue;
         if (!rowMap[t]) rowMap[t] = { _t: t };
-        const service = p.labels?.service ?? "global";
-        rowMap[t][service] = p.value;
+        rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n, timeseriesApiMetric)] = n.value;
       }
       const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
       setTimeseriesApiRows(rows);
@@ -1651,9 +2236,39 @@ export default function SimulationRunPage() {
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+
+  useEffect(() => {
+    if (isTerminal) setOptProgressHint(null);
+  }, [isTerminal]);
+
   const isOnlineMode =
     status === "running" &&
     (runInfo?.metadata?.mode === "online" || runInfo?.metadata?.mode === "online_optimization");
+  const leaseTtlMs =
+    typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0
+      ? runInfo.metadata.lease_ttl_ms
+      : undefined;
+
+  useEffect(() => {
+    if (status !== "running" || !isOnlineMode || leaseTtlMs == null) {
+      return;
+    }
+    const period = Math.min(
+      Math.max(Math.floor(leaseTtlMs * 0.45), 5_000),
+      Math.max(leaseTtlMs - 2_000, 5_000),
+    );
+    const tick = () => {
+      renewOnlineLease(runId)
+        .then(() => setLeaseRenewError(null))
+        .catch((e: unknown) => {
+          setLeaseRenewError(e instanceof Error ? e.message : String(e));
+        });
+    };
+    tick();
+    const timer = window.setInterval(tick, period);
+    return () => window.clearInterval(timer);
+  }, [runId, status, isOnlineMode, leaseTtlMs]);
+
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
 
@@ -1769,6 +2384,11 @@ export default function SimulationRunPage() {
         {stopError && (
           <span className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
             Stop failed: {stopError}
+          </span>
+        )}
+        {leaseRenewError && isOnlineMode && (
+          <span className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+            Lease renewal: {leaseRenewError}
           </span>
         )}
         {status === "pending" && (
@@ -1890,68 +2510,269 @@ export default function SimulationRunPage() {
               )}
             </dl>
 
-            {/* Optimization summary (populated by engine callback) */}
-            {runInfo.metadata && (
-              runInfo.metadata.best_score != null ||
-              runInfo.metadata.iterations != null
-            ) && (
-              <div className="border-t border-border pt-4">
-                <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3">
-                  Optimization summary
-                </h3>
-                <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
-                  {runInfo.metadata.iterations != null && (
-                    <div>
-                      <dt className="text-white/40 mb-0.5">Iterations</dt>
-                      <dd className="text-white/80 font-mono">{String(runInfo.metadata.iterations)}</dd>
-                    </div>
-                  )}
-                  {runInfo.metadata.best_score != null && (
-                    <div>
-                      <dt className="text-white/40 mb-0.5">Best score</dt>
-                      <dd className="text-white/80 font-mono">
-                        {typeof runInfo.metadata.best_score === "number"
-                          ? (runInfo.metadata.objective === "cpu_utilization" ||
-                            runInfo.metadata.objective === "memory_utilization")
-                            ? `${(runInfo.metadata.best_score * 100).toFixed(2)}%`
-                            : runInfo.metadata.best_score.toFixed(4)
-                          : String(runInfo.metadata.best_score)}
-                      </dd>
-                    </div>
-                  )}
-                  {runInfo.metadata.objective && (
-                    <div>
-                      <dt className="text-white/40 mb-0.5">Objective</dt>
-                      <dd className="text-white/80">{String(runInfo.metadata.objective)}</dd>
-                    </div>
-                  )}
-                  {runInfo.metadata.best_run_id && (
-                    <div>
-                      <dt className="text-white/40 mb-0.5">Best run ID</dt>
-                      <dd className="font-mono text-white/70 break-all text-[10px]">
-                        {String(runInfo.metadata.best_run_id)}
-                      </dd>
-                    </div>
-                  )}
-                  {runInfo.metadata.top_candidates && Array.isArray(runInfo.metadata.top_candidates) && runInfo.metadata.top_candidates.length > 0 && (
-                    <div className="col-span-2 md:col-span-4">
-                      <dt className="text-white/40 mb-1">Top candidates</dt>
-                      <dd className="flex flex-wrap gap-1.5">
-                        {(runInfo.metadata.top_candidates as string[]).map((id, i) => (
-                          <span
-                            key={id}
-                            className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20"
-                            title={id}
-                          >
-                            #{i + 1} {id.slice(0, 8)}…
-                          </span>
-                        ))}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </div>
-            )}
+            {/* Optimization summary (engine callback merge on run.metadata) */}
+            {runInfo.metadata &&
+              (() => {
+                const m = runInfo.metadata;
+                const showSummary =
+                  m.best_score != null ||
+                  m.iterations != null ||
+                  m.best_run_id != null ||
+                  (Array.isArray(m.top_candidates) && m.top_candidates.length > 0) ||
+                  (Array.isArray(m.candidate_run_ids) && m.candidate_run_ids.length > 0) ||
+                  (m.best_candidate_metrics != null && typeof m.best_candidate_metrics === "object") ||
+                  m.configuration_before != null ||
+                  m.configuration_after != null ||
+                  m.online_completion_reason != null ||
+                  m.final_config != null ||
+                  isBatchOptimizationMeta(m);
+                if (!showSummary) return null;
+                const batchMode = isBatchOptimizationMeta(m);
+                const fmtScore = (v: unknown, objective?: string) => {
+                  if (typeof v !== "number") return String(v);
+                  return objective === "cpu_utilization" || objective === "memory_utilization"
+                    ? `${(v * 100).toFixed(2)}%`
+                    : v.toFixed(4);
+                };
+                return (
+                  <div className="border-t border-border pt-4">
+                    <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3">
+                      Optimization summary
+                    </h3>
+                    {batchMode ? (
+                      <div className="space-y-3 text-xs">
+                        <p className="text-white/45">
+                          Batch search: interpret feasibility, violation, and efficiency —{" "}
+                          <span className="text-amber-200/90">best_score</span> is a legacy efficiency-only field, not the full winner score.
+                        </p>
+                        <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3">
+                          {typeof m.batch_recommendation_feasible === "boolean" && (
+                            <div>
+                              <dt className="text-white/40 mb-0.5">Feasible</dt>
+                              <dd className="text-white/80">{m.batch_recommendation_feasible ? "Yes" : "No"}</dd>
+                            </div>
+                          )}
+                          {m.batch_violation_score != null && (
+                            <div>
+                              <dt className="text-white/40 mb-0.5">Violation score</dt>
+                              <dd className="font-mono text-white/80">{String(m.batch_violation_score)}</dd>
+                            </div>
+                          )}
+                          {m.batch_efficiency_score != null && (
+                            <div>
+                              <dt className="text-white/40 mb-0.5">Efficiency score</dt>
+                              <dd className="font-mono text-white/80">{String(m.batch_efficiency_score)}</dd>
+                            </div>
+                          )}
+                          {m.best_score != null && (
+                            <div>
+                              <dt className="text-white/40 mb-0.5">best_score (legacy)</dt>
+                              <dd className="font-mono text-white/70">{fmtScore(m.best_score, m.objective)}</dd>
+                            </div>
+                          )}
+                          {m.iterations != null && (
+                            <div>
+                              <dt className="text-white/40 mb-0.5">Evaluations / iterations</dt>
+                              <dd className="font-mono text-white/80">{String(m.iterations)}</dd>
+                            </div>
+                          )}
+                          {m.objective && (
+                            <div>
+                              <dt className="text-white/40 mb-0.5">Objective</dt>
+                              <dd className="text-white/80">{String(m.objective)}</dd>
+                            </div>
+                          )}
+                          {m.best_run_id && (
+                            <div className="md:col-span-2">
+                              <dt className="text-white/40 mb-0.5">Best run ID</dt>
+                              <dd className="font-mono text-white/70 break-all text-[10px]">{String(m.best_run_id)}</dd>
+                            </div>
+                          )}
+                          {Array.isArray(m.candidate_run_ids) && m.candidate_run_ids.length > 0 && (
+                            <div className="col-span-2 md:col-span-4">
+                              <dt className="text-white/40 mb-1">Candidate run IDs</dt>
+                              <dd className="flex flex-wrap gap-1.5">
+                                {(m.candidate_run_ids as string[]).map((id) => (
+                                  <span
+                                    key={id}
+                                    className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-200 border border-slate-500/25"
+                                    title={id}
+                                  >
+                                    {id}
+                                  </span>
+                                ))}
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+                        {(() => {
+                          const bestCand = candidates?.find((c) => m.best_run_id && c.id === m.best_run_id);
+                          const fromMeta =
+                            m.best_candidate_metrics && typeof m.best_candidate_metrics === "object"
+                              ? (m.best_candidate_metrics as Record<string, unknown>)
+                              : null;
+                          const fromBreakdown =
+                            m.batch_score_breakdown &&
+                            typeof m.batch_score_breakdown === "object" &&
+                            (m.batch_score_breakdown as Record<string, unknown>).best_candidate_metrics != null
+                              ? ((m.batch_score_breakdown as Record<string, unknown>).best_candidate_metrics as Record<
+                                  string,
+                                  unknown
+                                >)
+                              : null;
+                          const fromCandidate = bestCand?.metrics as Record<string, unknown> | undefined;
+                          const merged = { ...fromCandidate, ...fromBreakdown, ...fromMeta };
+                          const keys = Object.keys(merged).filter((k) => merged[k] != null);
+                          if (keys.length === 0) return null;
+                          const label = (k: string) =>
+                            k
+                              .replace(/_/g, " ")
+                              .replace(/\b\w/g, (c) => c.toUpperCase());
+                          return (
+                            <div>
+                              <h4 className="text-[11px] font-semibold text-white/50 uppercase tracking-wide mb-2">
+                                Best candidate metrics
+                              </h4>
+                              <dl className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                                {keys.map((k) => (
+                                  <div key={k}>
+                                    <dt className="text-white/35 mb-0.5">{label(k)}</dt>
+                                    <dd className="font-mono text-white/85">
+                                      {typeof merged[k] === "number" ? String(merged[k]) : JSON.stringify(merged[k])}
+                                    </dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            </div>
+                          );
+                        })()}
+                        {(() => {
+                          const bd = m.batch_score_breakdown as Record<string, unknown> | undefined;
+                          const b =
+                            m.configuration_before ??
+                            (bd && typeof bd.configuration_before !== "undefined" ? bd.configuration_before : undefined);
+                          const a =
+                            m.configuration_after ??
+                            (bd && typeof bd.configuration_after !== "undefined" ? bd.configuration_after : undefined);
+                          if (b == null && a == null) return null;
+                          const fmt = (v: unknown) =>
+                            typeof v === "string" ? v : JSON.stringify(v, null, 2);
+                          return (
+                            <div>
+                              <h4 className="text-[11px] font-semibold text-white/50 uppercase tracking-wide mb-2">
+                                Configuration before / after
+                              </h4>
+                              <div className="grid md:grid-cols-2 gap-2 text-[10px]">
+                                <div>
+                                  <div className="text-white/40 mb-1">Before</div>
+                                  <pre className="p-2 rounded border border-border bg-black/30 overflow-x-auto max-h-56 text-white/70">
+                                    {b != null ? fmt(b) : "—"}
+                                  </pre>
+                                </div>
+                                <div>
+                                  <div className="text-white/40 mb-1">After (recommended)</div>
+                                  <pre className="p-2 rounded border border-emerald-500/20 bg-emerald-500/5 overflow-x-auto max-h-56 text-white/80">
+                                    {a != null ? fmt(a) : "—"}
+                                  </pre>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        {typeof m.batch_recommendation_summary === "string" && m.batch_recommendation_summary.trim() !== "" && (
+                          <div>
+                            <dt className="text-white/40 mb-1">Summary</dt>
+                            <dd className="text-white/80 whitespace-pre-wrap">{m.batch_recommendation_summary}</dd>
+                          </div>
+                        )}
+                        {m.batch_score_breakdown != null && typeof m.batch_score_breakdown === "object" && (
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-white/50 hover:text-white/70">Score breakdown (JSON)</summary>
+                            <pre className="mt-2 p-2 rounded border border-border bg-black/30 text-[10px] overflow-x-auto">
+                              {JSON.stringify(m.batch_score_breakdown, null, 2)}
+                            </pre>
+                          </details>
+                        )}
+                        {m.top_candidates && Array.isArray(m.top_candidates) && m.top_candidates.length > 0 && (
+                          <div>
+                            <dt className="text-white/40 mb-1">Top candidates (score-ordered)</dt>
+                            <dd className="flex flex-wrap gap-1.5">
+                              {(m.top_candidates as string[]).map((id, i) => (
+                                <span
+                                  key={id}
+                                  className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                                  title={id}
+                                >
+                                  #{i + 1} {id.slice(0, 8)}…
+                                </span>
+                              ))}
+                            </dd>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+                        {m.iterations != null && (
+                          <div>
+                            <dt className="text-white/40 mb-0.5">Iterations</dt>
+                            <dd className="text-white/80 font-mono">{String(m.iterations)}</dd>
+                          </div>
+                        )}
+                        {m.best_score != null && (
+                          <div>
+                            <dt className="text-white/40 mb-0.5">Best score</dt>
+                            <dd className="text-white/80 font-mono">{fmtScore(m.best_score, m.objective)}</dd>
+                          </div>
+                        )}
+                        {m.objective && (
+                          <div>
+                            <dt className="text-white/40 mb-0.5">Objective</dt>
+                            <dd className="text-white/80">{String(m.objective)}</dd>
+                          </div>
+                        )}
+                        {m.online_completion_reason && (
+                          <div className="md:col-span-2">
+                            <dt className="text-white/40 mb-0.5">Online completion reason</dt>
+                            <dd className="text-white/80">{String(m.online_completion_reason)}</dd>
+                          </div>
+                        )}
+                        {m.final_config != null && (
+                          <div className="col-span-2 md:col-span-4">
+                            <dt className="text-white/40 mb-1">Final config</dt>
+                            <pre className="text-[10px] font-mono text-white/70 bg-black/30 border border-border rounded p-2 overflow-x-auto max-h-48">
+                              {typeof m.final_config === "string"
+                                ? m.final_config
+                                : JSON.stringify(m.final_config, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                        {m.best_run_id && (
+                          <div>
+                            <dt className="text-white/40 mb-0.5">Best run ID</dt>
+                            <dd className="font-mono text-white/70 break-all text-[10px]">{String(m.best_run_id)}</dd>
+                          </div>
+                        )}
+                        {m.top_candidates && Array.isArray(m.top_candidates) && m.top_candidates.length > 0 && (
+                          <div className="col-span-2 md:col-span-4">
+                            <dt className="text-white/40 mb-1">Top candidates</dt>
+                            <dd className="flex flex-wrap gap-1.5">
+                              {(m.top_candidates as string[]).map((id, i) => (
+                                <span
+                                  key={id}
+                                  className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                                  title={id}
+                                >
+                                  #{i + 1} {id.slice(0, 8)}…
+                                </span>
+                              ))}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    )}
+                  </div>
+                );
+              })()}
           </>
         ) : null}
       </div>
@@ -2509,7 +3330,9 @@ export default function SimulationRunPage() {
 
       {/* Host-level metrics (host-*) from stream — CPU / memory utilization */}
       {(() => {
-        const hostIds = Object.keys(hostMetrics).filter((id) => id.startsWith("host-"));
+        const hostIds = Array.from(
+          new Set([...Object.keys(hostMetrics), ...Object.keys(hostResources)]),
+        );
         if (hostIds.length === 0) return null;
         const toPct = (v: number) => (v <= 1 ? v * 100 : v);
         return (
@@ -2580,8 +3403,31 @@ export default function SimulationRunPage() {
         );
       })()}
 
+      <ClusterPlacementView
+        resources={placementSource.resources}
+        hostMetrics={hostMetrics}
+        mode={placementSource.mode}
+        sourceLabel={placementSource.sourceLabel}
+        placementsStatus={placementSource.status}
+      />
+
       {/* Request count chart */}
       <RequestCountChart series={chartSeries} onClear={clearChart} />
+
+      {optProgressHint && status === "running" && (
+        <div className="text-xs text-amber-100/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
+          <span className="text-white/45">Latest optimization progress</span>
+          {optProgressHint.objective != null && optProgressHint.objective !== "" && (
+            <span className="ml-2 font-mono">
+              objective={optProgressHint.objective}
+              {optProgressHint.unit ? ` unit=${optProgressHint.unit}` : ""}
+            </span>
+          )}
+          {optProgressHint.best_score != null && (
+            <span className="ml-2 font-mono">best_score={optProgressHint.best_score}</span>
+          )}
+        </div>
+      )}
 
       {/* Optimization timeline — online optimization runs only */}
       {optSteps.length > 0 && (
@@ -2691,7 +3537,7 @@ export default function SimulationRunPage() {
 
         {candidates === null && !candidatesLoading && !candidatesError && (
           <p className="text-xs text-white/30 italic">
-            Click "Fetch candidates" to load candidates for this run.
+            Click Fetch candidates to load candidates for this run.
           </p>
         )}
 
@@ -2709,60 +3555,181 @@ export default function SimulationRunPage() {
 
         {candidates !== null && candidates.length > 0 && (
           <div className="overflow-x-auto rounded-lg border border-border">
+            <p className="text-[10px] text-white/35 px-1 pb-2 max-w-3xl leading-relaxed">
+              <span className="text-white/45">Feasible</span> and <span className="text-white/45">Eff. score</span> use
+              each candidate row when present; otherwise the parent run’s batch summary (
+              <code className="text-white/45">batch_recommendation_feasible</code>,{" "}
+              <code className="text-white/45">batch_efficiency_score</code>, or{" "}
+              <code className="text-white/45">batch_score_breakdown</code>) — shown with a †.{" "}
+              <span className="text-white/45">Error %</span> uses <code className="text-white/45">error_rate</code> or{" "}
+              <code className="text-white/45">failed_requests / total_requests</code> (N/A if total_requests is 0).{" "}
+              <span className="text-white/45">Svc *</span> columns need per-candidate topology; often only the winning row
+              is filled. Hover <span className="text-amber-200/70">Best</span> for why the winner was chosen.
+            </p>
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="border-b border-border bg-white/5 text-white/40 text-left">
-                  <th className="px-3 py-2 font-medium">ID</th>
-                  <th className="px-3 py-2 font-medium">vCPU</th>
-                  <th className="px-3 py-2 font-medium">Mem (GB)</th>
-                  <th className="px-3 py-2 font-medium">CPU util %</th>
-                  <th className="px-3 py-2 font-medium">Mem util %</th>
-                  <th className="px-3 py-2 font-medium">Conc. users</th>
-                  <th className="px-3 py-2 font-medium">Source</th>
-                  <th className="px-3 py-2 font-medium">YAML</th>
-                  <th className="px-3 py-2 font-medium"></th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">ID</th>
+                  <th
+                    className="px-2 py-2 font-medium whitespace-nowrap"
+                    title="Per-row when API provides it; otherwise this run’s batch summary (see †)."
+                  >
+                    Feasible
+                  </th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">P95 ms</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">RPS</th>
+                  <th
+                    className="px-2 py-2 font-medium whitespace-nowrap"
+                    title="error_rate, or failed_requests ÷ total_requests (N/A if total_requests = 0)"
+                  >
+                    Error %
+                  </th>
+                  <th
+                    className="px-2 py-2 font-medium whitespace-nowrap"
+                    title={`${SVC_TOPOLOGY_ROW_TOOLTIP} Slash-separated if multiple services.`}
+                  >
+                    Svc rep
+                  </th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap" title={SVC_TOPOLOGY_ROW_TOOLTIP}>
+                    Svc CPU
+                  </th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap" title={SVC_TOPOLOGY_ROW_TOOLTIP}>
+                    Svc MB
+                  </th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">Host cores</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">Host GB</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">CPU util</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">Mem util</th>
+                  <th
+                    className="px-2 py-2 font-medium whitespace-nowrap"
+                    title="Per-row when API provides it; otherwise this run’s batch summary (see †)."
+                  >
+                    Eff. score
+                  </th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">Source</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">YAML</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap"></th>
                 </tr>
               </thead>
               <tbody>
                 {candidates.map((c) => {
                   const isExpanded = expandedCandidate === c.id;
+                  const meta = runInfo?.metadata;
                   const isBest = bestCandidate?.best_candidate_id && c.id === bestCandidate.best_candidate_id;
+                  const winnerByMeta =
+                    typeof meta?.best_run_id === "string" && meta.best_run_id === c.id;
+                  const winnerRow = isBest || winnerByMeta;
+                  const bestTopo =
+                    winnerRow && bestCandidate?.best_candidate ? bestCandidate.best_candidate : null;
+                  const services = getCandidateServicesList(c, bestTopo);
+                  const hostCells = candidateHostResourceCells(c, bestTopo);
+                  const svcRep = joinServiceField(services, "replicas");
+                  const svcCpu = joinServiceField(services, "cpu_cores");
+                  const svcMb = joinServiceField(services, "memory_mb");
+                  const metricsDisplay = candidateMetricsForDisplay(c, meta);
+                  const feasCell = candidateBatchFeasibleCell(c, meta);
+                  const effCell = candidateBatchEfficiencyCell(c, meta);
+                  const p95Disp =
+                    candidateMetricNumber(metricsDisplay, [
+                      "latency_p95_ms",
+                      "p95_latency_ms",
+                      "p95_ms",
+                      "p95LatencyMs",
+                    ]) ?? undefined;
+                  const rpsDisp =
+                    candidateMetricNumber(metricsDisplay, ["throughput_rps", "rps", "throughput", "requests_per_s"]) ??
+                    undefined;
                   return (
                     <React.Fragment key={c.id}>
                       <tr
                         className={`border-b border-border/50 hover:bg-white/5 transition-colors ${isBest ? "bg-amber-500/5" : ""}`}
                       >
-                        <td className="px-3 py-2 text-white/80">
+                        <td className="px-2 py-2 text-white/80 whitespace-nowrap max-w-[200px] truncate" title={c.id}>
                           {c.id}
                           {isBest && (
-                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300">
+                            <span
+                              className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 cursor-help border border-amber-500/25"
+                              title={BEST_CANDIDATE_WHY_TOOLTIP}
+                            >
                               Best
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-white/70">{c.spec?.vcpu ?? "—"}</td>
-                        <td className="px-3 py-2 text-white/70">{c.spec?.memory_gb ?? "—"}</td>
-                        <td className="px-3 py-2">
-                          {c.metrics?.cpu_util_pct != null ? (
-                            <span className={c.metrics.cpu_util_pct > 80 ? "text-red-400" : "text-white/70"}>
-                              {c.metrics.cpu_util_pct}%
+                        <td
+                          className="px-2 py-2 text-white/70 whitespace-nowrap"
+                          title={feasCell.fromRunSummary ? RUN_BATCH_SUMMARY_TOOLTIP : undefined}
+                        >
+                          {feasCell.text}
+                          {feasCell.fromRunSummary ? (
+                            <span className="text-white/35 ml-0.5" aria-hidden>
+                              †
                             </span>
-                          ) : "—"}
+                          ) : null}
                         </td>
-                        <td className="px-3 py-2">
-                          {c.metrics?.mem_util_pct != null ? (
-                            <span className={c.metrics.mem_util_pct > 80 ? "text-red-400" : "text-white/70"}>
-                              {c.metrics.mem_util_pct}%
+                        <td className="px-2 py-2 text-white/70 whitespace-nowrap">
+                          {p95Disp != null ? p95Disp.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
+                        </td>
+                        <td className="px-2 py-2 text-white/70 whitespace-nowrap">
+                          {rpsDisp != null ? rpsDisp.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
+                        </td>
+                        <td className="px-2 py-2 text-white/70 whitespace-nowrap">{formatErrorRateCell(metricsDisplay)}</td>
+                        <td
+                          className="px-2 py-2 text-white/70 whitespace-nowrap"
+                          title={
+                            svcRep === "—"
+                              ? SVC_TOPOLOGY_ROW_TOOLTIP
+                              : services.map((s) => s.service_id).filter(Boolean).join(", ")
+                          }
+                        >
+                          {svcRep}
+                        </td>
+                        <td
+                          className="px-2 py-2 text-white/70 whitespace-nowrap"
+                          title={svcCpu === "—" ? SVC_TOPOLOGY_ROW_TOOLTIP : undefined}
+                        >
+                          {svcCpu}
+                        </td>
+                        <td
+                          className="px-2 py-2 text-white/70 whitespace-nowrap"
+                          title={svcMb === "—" ? SVC_TOPOLOGY_ROW_TOOLTIP : undefined}
+                        >
+                          {svcMb}
+                        </td>
+                        <td className="px-2 py-2 text-white/70 whitespace-nowrap">{hostCells.cores}</td>
+                        <td className="px-2 py-2 text-white/70 whitespace-nowrap">{hostCells.memGb}</td>
+                        <td className="px-2 py-2 whitespace-nowrap">
+                          {metricsDisplay?.cpu_util_pct != null ? (
+                            <span className={metricsDisplay.cpu_util_pct > 80 ? "text-red-400" : "text-white/70"}>
+                              {metricsDisplay.cpu_util_pct}%
                             </span>
-                          ) : "—"}
+                          ) : (
+                            "—"
+                          )}
                         </td>
-                        <td className="px-3 py-2 text-white/70">
-                          {c.sim_workload?.concurrent_users ?? "—"}
+                        <td className="px-2 py-2 whitespace-nowrap">
+                          {metricsDisplay?.mem_util_pct != null ? (
+                            <span className={metricsDisplay.mem_util_pct > 80 ? "text-red-400" : "text-white/70"}>
+                              {metricsDisplay.mem_util_pct}%
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </td>
-                        <td className="px-3 py-2 text-white/40 truncate max-w-[140px]" title={c.source}>
+                        <td
+                          className="px-2 py-2 text-white/70 whitespace-nowrap"
+                          title={effCell.fromRunSummary ? RUN_BATCH_SUMMARY_TOOLTIP : undefined}
+                        >
+                          {effCell.text}
+                          {effCell.fromRunSummary ? (
+                            <span className="text-white/35 ml-0.5" aria-hidden>
+                              †
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="px-2 py-2 text-white/40 truncate max-w-[120px]" title={c.source}>
                           {c.source ?? "—"}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-2 py-2 whitespace-nowrap">
                           {c.s3_path ? (
                             <a
                               href={`${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(c.id)}/yaml`}
@@ -2777,7 +3744,7 @@ export default function SimulationRunPage() {
                             <span className="text-white/20">—</span>
                           )}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-2 py-2 whitespace-nowrap">
                           <button
                             onClick={() => setExpandedCandidate(isExpanded ? null : c.id)}
                             className="text-white/30 hover:text-white/70 transition-colors"
@@ -2790,8 +3757,8 @@ export default function SimulationRunPage() {
 
                       {isExpanded && (
                         <tr className="border-b border-border/50 bg-black/20">
-                          <td colSpan={9} className="px-4 py-3">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <td colSpan={CANDIDATES_TABLE_COL_COUNT} className="px-4 py-3">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                               <div>
                                 <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Spec</p>
                                 <pre className="text-[11px] text-white/60 whitespace-pre-wrap break-all leading-relaxed">
@@ -2799,9 +3766,22 @@ export default function SimulationRunPage() {
                                 </pre>
                               </div>
                               <div>
+                                <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Topology (derived)</p>
+                                <pre className="text-[11px] text-white/60 whitespace-pre-wrap break-all leading-relaxed">
+                                  {JSON.stringify(
+                                    {
+                                      hosts: getCandidateHostsList(c, bestTopo),
+                                      services: getCandidateServicesList(c, bestTopo),
+                                    },
+                                    null,
+                                    2,
+                                  )}
+                                </pre>
+                              </div>
+                              <div>
                                 <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">Metrics</p>
                                 <pre className="text-[11px] text-white/60 whitespace-pre-wrap break-all leading-relaxed">
-                                  {JSON.stringify(c.metrics ?? {}, null, 2)}
+                                  {JSON.stringify(metricsDisplay ?? {}, null, 2)}
                                 </pre>
                               </div>
                               <div>
@@ -3193,11 +4173,20 @@ export default function SimulationRunPage() {
                   <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">{timeseriesApiError}</p>
                 )}
                 {timeseriesApiRows.length > 0 && (() => {
-                  const services = Array.from(new Set(timeseriesApiRows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))));
+                  const services = Array.from(
+                    new Set(timeseriesApiRows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))),
+                  ).filter((s) => !isUnscopedSeriesKey(s));
                   const tMin = timeseriesApiRows[0]?._t as number | undefined;
                   const tMax = timeseriesApiRows[timeseriesApiRows.length - 1]?._t as number | undefined;
                   const allVals = timeseriesApiRows.flatMap((r) => services.map((s) => r[s]).filter((v): v is number => typeof v === "number"));
                   const vMax = Math.max(...allVals, 0) * 1.2 || 1;
+                  if (services.length === 0) {
+                    return (
+                      <p className="text-[11px] text-white/35 italic">
+                        Loaded points are unscoped only. See the unscoped metrics debug panel.
+                      </p>
+                    );
+                  }
                   return (
                     <div className="rounded-lg border border-border bg-black/20 p-3">
                       <ResponsiveContainer width="100%" height={220}>
@@ -3226,6 +4215,7 @@ export default function SimulationRunPage() {
                             <Line
                               key={svc}
                               dataKey={svc}
+                              name={flatTimeseriesLegendLabel(svc, timeseriesApiMetric)}
                               dot={false}
                               stroke={LINE_COLORS[i % LINE_COLORS.length]}
                               strokeWidth={1.5}
@@ -3238,6 +4228,54 @@ export default function SimulationRunPage() {
                     </div>
                   );
                 })()}
+                {unscopedMetricDebug.length > 0 && (
+                  <details className="rounded-lg border border-white/10 bg-black/20 p-2">
+                    <summary className="cursor-pointer text-[11px] text-white/55">
+                      Unscoped metrics debug ({unscopedMetricDebug.length})
+                    </summary>
+                    <div className="mt-2 max-h-48 overflow-auto rounded border border-white/10">
+                      <table className="w-full text-[10px] font-mono">
+                        <thead className="sticky top-0 bg-black/80 text-white/45">
+                          <tr>
+                            <th className="text-left px-2 py-1">source</th>
+                            <th className="text-left px-2 py-1">metric</th>
+                            <th className="text-left px-2 py-1">time</th>
+                            <th className="text-left px-2 py-1">value</th>
+                            <th className="text-left px-2 py-1">ids/labels</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {unscopedMetricDebug.slice().reverse().map((p, i) => (
+                            <tr key={`${p.source}-${p.metric}-${p.timestamp}-${p.value}-${i}`} className="border-t border-white/5">
+                              <td className="px-2 py-1 text-white/65">{p.source}</td>
+                              <td className="px-2 py-1 text-white/65">{p.metric}</td>
+                              <td className="px-2 py-1 text-white/50">{p.timestamp}</td>
+                              <td className="px-2 py-1 text-white/75">{p.value}</td>
+                              <td className="px-2 py-1 text-white/45 break-all">
+                                {[
+                                  [
+                                    p.service_id && `svc=${p.service_id}`,
+                                    p.instance_id && `inst=${p.instance_id}`,
+                                    p.host_id && `host=${p.host_id}`,
+                                    p.node_id && `node=${p.node_id}`,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" "),
+                                  p.labels && Object.keys(p.labels).length > 0
+                                    ? `labels=${JSON.stringify(p.labels)}`
+                                    : "",
+                                  p.tags && Object.keys(p.tags).length > 0 ? `tags=${JSON.stringify(p.tags)}` : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ") || "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                )}
               </div>
             </>
           )}

@@ -3,13 +3,17 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { isAmgApdScrollWithContentPath } from "@/app/features/amg-apd/utils/amgApdDashboardRoutes";
 import { LogOut, User, FileText } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 export default function Topbar() {
+  const pathname = usePathname();
+  const scrollTopbarWithContent = isAmgApdScrollWithContentPath(pathname);
+
   const router = useRouter();
   const { signOut, userProfile, user } = useAuth();
 

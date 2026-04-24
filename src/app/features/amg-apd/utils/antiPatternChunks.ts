@@ -48,7 +48,7 @@ function edge(
       opacity: 1,
       "line-opacity": 1,
       "target-arrow-opacity": 1,
-      "curve-style": "bezier",
+      "curve-style": "straight",
       "target-arrow-shape": "triangle",
       "line-color": "#475569",
       "target-arrow-color": "#475569",
