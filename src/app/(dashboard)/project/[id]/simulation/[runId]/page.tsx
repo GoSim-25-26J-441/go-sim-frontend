@@ -93,6 +93,15 @@ interface LiveConfig {
   policies?: PatchRunConfigurationPolicies;
 }
 
+interface ObservedServiceRuntime {
+  id: string;
+  replicas?: number;
+  cpu_cores?: number;
+  memory_mb?: number;
+  cpu_utilization?: number;
+  memory_utilization?: number;
+}
+
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
   services: [],
   workload: [],
@@ -1743,6 +1752,10 @@ export default function SimulationRunPage() {
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
   // Live config (online mode) — editable form state; synced from optimization_step
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
+  const [serviceMixerDrafts, setServiceMixerDrafts] = useState<Record<string, RuntimeServiceDraft>>({});
+  const [pendingServiceObservationById, setPendingServiceObservationById] = useState<
+    Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number; updatedAt: number }>
+  >({});
   const [controlRoomTab, setControlRoomTab] = useState<
     "services" | "traffic" | "autoscaling" | "lease" | "locked" | "change_log"
   >("services");
@@ -2689,10 +2702,15 @@ export default function SimulationRunPage() {
 
   // ── Live config apply (online mode) ─────────────────────────────────────────
 
-  const applyServices = useCallback(async () => {
+  const applyServices = useCallback(async (
+    serviceRows?: RuntimeServiceDraft[],
+    replicasHint?: Record<string, number | undefined>,
+    pendingTargets?: Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number }>
+  ): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-    if (!config.services.length) return;
-    const replicasByServiceId: Record<string, number | undefined> = {};
+    const rows = serviceRows ?? config.services;
+    if (!rows.length) return false;
+    const replicasByServiceId: Record<string, number | undefined> = { ...(replicasHint ?? {}) };
     for (const step of [...optSteps].reverse()) {
       const services = step.current_config?.services ?? [];
       for (const svc of services) {
@@ -2710,19 +2728,38 @@ export default function SimulationRunPage() {
     const model = onlineConfigModelRef.current;
     if (!model) {
       setConfigUpdateError("Online config model is not ready yet. Please retry.");
-      return;
+      return false;
     }
-    const payload = buildServicePatchPayloadFromModel(model, config.services, replicasByServiceId);
+    const payload = buildServicePatchPayloadFromModel(model, rows, replicasByServiceId);
     if (!payload.ok) {
       setConfigUpdateError(payload.error);
-      return;
+      return false;
     }
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
       await patchRunConfiguration(runId, { services: payload.value });
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingServiceObservationById((prev) => {
+          const next = { ...prev };
+          const now = Date.now();
+          for (const [id, target] of Object.entries(pendingTargets)) {
+            next[id] = { ...target, updatedAt: now };
+          }
+          return next;
+        });
+      }
+      return true;
     } catch (e) {
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingServiceObservationById((prev) => {
+          const next = { ...prev };
+          for (const id of Object.keys(pendingTargets)) delete next[id];
+          return next;
+        });
+      }
       setConfigUpdateError((e as Error).message);
+      return false;
     } finally {
       setConfigUpdateLoading(false);
     }
@@ -2891,6 +2928,8 @@ export default function SimulationRunPage() {
   }, [isOnlineMode]);
   useEffect(() => {
     setLiveConfig(null);
+    setServiceMixerDrafts({});
+    setPendingServiceObservationById({});
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
@@ -2990,6 +3029,73 @@ export default function SimulationRunPage() {
   useEffect(() => {
     onlineConfigModelRef.current = onlineConfigModel;
   }, [onlineConfigModel]);
+
+  const observedServicesById = useMemo<Record<string, ObservedServiceRuntime>>(() => {
+    const out: Record<string, ObservedServiceRuntime> = {};
+    const ensure = (id: string) => {
+      const key = id.trim();
+      if (!key) return;
+      if (!out[key]) out[key] = { id: key };
+    };
+    for (const id of runDerivedOptions.serviceIds) ensure(id);
+    for (const s of runInfo?.configuration?.services ?? []) {
+      if (typeof s.id === "string") ensure(s.id);
+    }
+    const latestStepServices =
+      [...optSteps].reverse().find((step) => Array.isArray(step.current_config?.services))?.current_config?.services ?? [];
+    for (const s of latestStepServices) {
+      if (typeof s.id !== "string") continue;
+      ensure(s.id);
+      if (typeof s.replicas === "number" && Number.isFinite(s.replicas)) out[s.id].replicas = s.replicas;
+      if (typeof s.cpu_cores === "number" && Number.isFinite(s.cpu_cores)) out[s.id].cpu_cores = s.cpu_cores;
+      if (typeof s.memory_mb === "number" && Number.isFinite(s.memory_mb)) out[s.id].memory_mb = s.memory_mb;
+    }
+    const resources = placementSource.resources;
+    const placementCounts: Record<string, number> = {};
+    for (const p of resources?.placements ?? []) {
+      if (!p.service_id) continue;
+      ensure(p.service_id);
+      placementCounts[p.service_id] = (placementCounts[p.service_id] ?? 0) + 1;
+    }
+    for (const s of resources?.services ?? []) {
+      ensure(s.service_id);
+      if (typeof s.replicas === "number" && Number.isFinite(s.replicas)) out[s.service_id].replicas = s.replicas;
+      if (typeof s.cpu_cores === "number" && Number.isFinite(s.cpu_cores)) out[s.service_id].cpu_cores = s.cpu_cores;
+      if (typeof s.memory_mb === "number" && Number.isFinite(s.memory_mb)) out[s.service_id].memory_mb = s.memory_mb;
+    }
+    for (const [id, count] of Object.entries(placementCounts)) {
+      if (out[id] && out[id].replicas == null) out[id].replicas = count;
+    }
+    for (const sm of displayMetrics?.metrics?.service_metrics ?? []) {
+      if (!sm.service_name) continue;
+      ensure(sm.service_name);
+      if (typeof sm.active_replicas === "number" && Number.isFinite(sm.active_replicas) && out[sm.service_name].replicas == null) {
+        out[sm.service_name].replicas = sm.active_replicas;
+      }
+      if (typeof sm.cpu_utilization === "number" && Number.isFinite(sm.cpu_utilization)) {
+        out[sm.service_name].cpu_utilization = sm.cpu_utilization;
+      }
+      if (typeof sm.memory_utilization === "number" && Number.isFinite(sm.memory_utilization)) {
+        out[sm.service_name].memory_utilization = sm.memory_utilization;
+      }
+    }
+    return out;
+  }, [runDerivedOptions.serviceIds, runInfo?.configuration?.services, optSteps, placementSource.resources, displayMetrics?.metrics?.service_metrics]);
+
+  useEffect(() => {
+    setPendingServiceObservationById((prev) => {
+      const next = { ...prev };
+      for (const [id, target] of Object.entries(prev)) {
+        const observed = observedServicesById[id];
+        if (!observed) continue;
+        const replicasMatch = observed.replicas === target.replicas;
+        const cpuMatch = target.cpu_cores == null || observed.cpu_cores === target.cpu_cores;
+        const memMatch = target.memory_mb == null || observed.memory_mb === target.memory_mb;
+        if (replicasMatch && cpuMatch && memMatch) delete next[id];
+      }
+      return next;
+    });
+  }, [observedServicesById]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -3485,15 +3591,6 @@ export default function SimulationRunPage() {
               new Set([...patternKeysFromRun, ...patternKeysFromSteps, ...patternKeysFromConfig])
             ).sort();
 
-            const servicesValid =
-              config.services.length > 0 &&
-              config.services.every(
-                (s) =>
-                  (s.id ?? "").toString().trim() !== "" &&
-                  (s.replicas == null || s.replicas >= 1) &&
-                  (s.cpu_cores == null || s.cpu_cores > 0) &&
-                  (s.memory_mb == null || s.memory_mb > 0)
-              );
             const workloadValid =
               config.workload.length > 0 &&
               config.workload.every((w) => (w.pattern_key ?? "").toString().trim() !== "" && (w.rate_rps ?? 0) > 0);
@@ -3514,6 +3611,35 @@ export default function SimulationRunPage() {
             const recentSteps = [...optSteps]
               .sort((a, b) => (a.iteration_index ?? Number.MAX_SAFE_INTEGER) - (b.iteration_index ?? Number.MAX_SAFE_INTEGER))
               .slice(-8);
+            const observedAndDraftServiceIds = Array.from(
+              new Set([...Object.keys(observedServicesById), ...Object.keys(serviceMixerDrafts)])
+            ).sort((a, b) => a.localeCompare(b));
+            const serviceReplicaHints = Object.fromEntries(
+              Object.values(observedServicesById).map((s) => [s.id, s.replicas])
+            );
+            const dirtyInvalidServiceIds = observedAndDraftServiceIds.filter((serviceId) => {
+              const observed = observedServicesById[serviceId] ?? { id: serviceId };
+              const draft = serviceMixerDrafts[serviceId] ?? {};
+              const draftId = (draft.id ?? observed.id).toString().trim();
+              const effectiveReplicas = draft.replicas ?? observed.replicas;
+              const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+              const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+              const dirty =
+                (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+              if (!dirty) return false;
+              const rowDraft: RuntimeServiceDraft = {
+                id: draftId || observed.id,
+                replicas: effectiveReplicas,
+                cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+              };
+              const rowValidation = buildServicePatchPayloadFromModel(onlineConfigModel, [rowDraft], serviceReplicaHints);
+              return !rowValidation.ok;
+            });
+            const dirtyInvalidCount = dirtyInvalidServiceIds.length;
 
             return (
               <>
@@ -3525,152 +3651,269 @@ export default function SimulationRunPage() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setLiveConfig((prev) => {
-                            const c = prev ?? DEFAULT_LIVE_CONFIG;
-                            const firstId = knownServiceIds[0] ?? "";
-                            return { ...c, services: [...c.services, { id: firstId, replicas: 1 }] };
-                          })}
+                          onClick={() => {
+                            const candidate =
+                              knownServiceIds.find((id): id is string => typeof id === "string" && !serviceMixerDrafts[id]) ??
+                              (typeof knownServiceIds[0] === "string" ? knownServiceIds[0] : undefined);
+                            if (!candidate) return;
+                            setServiceMixerDrafts((prev) => ({ ...prev, [candidate]: { id: candidate, replicas: 1 } }));
+                          }}
                           className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
                         >
                           <Plus className="w-3.5 h-3.5" /> Add service
                         </button>
                         <button
                           type="button"
-                          onClick={applyServices}
-                          disabled={configUpdateLoading || !servicesValid}
+                          onClick={async () => {
+                            const observedServices = observedAndDraftServiceIds.map((serviceId) => observedServicesById[serviceId] ?? { id: serviceId });
+                            const replicasById: Record<string, number | undefined> = {};
+                            for (const svc of observedServices) replicasById[svc.id] = svc.replicas;
+                            const changedRows: RuntimeServiceDraft[] = [];
+                            const pendingTargets: Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number }> = {};
+                            const invalidDirtyRows: string[] = [];
+                            for (const observed of observedServices) {
+                              const draft = serviceMixerDrafts[observed.id] ?? {};
+                              const draftId = (draft.id ?? observed.id ?? "").toString().trim();
+                              const effectiveReplicas = draft.replicas ?? observed.replicas;
+                              const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+                              const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+                              const dirty =
+                                (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                                draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                                draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                                draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                              if (!dirty) continue;
+                              const row: RuntimeServiceDraft = {
+                                id: draftId || observed.id,
+                                replicas: effectiveReplicas,
+                                cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                                memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+                              };
+                              const rowValidation = buildServicePatchPayloadFromModel(onlineConfigModel, [row], replicasById);
+                              if (!rowValidation.ok) {
+                                invalidDirtyRows.push(observed.id);
+                                continue;
+                              }
+                              changedRows.push(row);
+                              if (typeof row.id === "string" && row.id.trim() !== "" && typeof row.replicas === "number") {
+                                pendingTargets[row.id] = {
+                                  replicas: row.replicas,
+                                  cpu_cores: row.cpu_cores,
+                                  memory_mb: row.memory_mb,
+                                };
+                              }
+                            }
+                            if (invalidDirtyRows.length > 0) return;
+                            if (changedRows.length === 0) return;
+                            const ok = await applyServices(changedRows, replicasById, pendingTargets);
+                            if (ok) {
+                              setServiceMixerDrafts((prev) => {
+                                const next = { ...prev };
+                                for (const observed of observedServices) {
+                                  const draft = prev[observed.id];
+                                  if (!draft) continue;
+                                  const draftId = (draft.id ?? observed.id ?? "").toString().trim();
+                                  const dirty =
+                                    (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                                    draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                                    draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                                    draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                                  if (dirty) delete next[observed.id];
+                                }
+                                return next;
+                              });
+                            }
+                          }}
+                          disabled={configUpdateLoading || dirtyInvalidCount > 0}
+                          title={dirtyInvalidCount > 0 ? "Fix invalid dirty service rows before bulk apply." : undefined}
                           className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
-                          {configUpdateLoading ? "Applying…" : "Apply services"}
+                          {configUpdateLoading ? "Applying…" : "Apply changed services"}
                         </button>
                       </div>
                     </div>
-                    {config.services.length === 0 ? (
-                      <p className="text-xs text-white/30 italic">No services. Add one to update via PATCH /configuration.</p>
+                    {dirtyInvalidCount > 0 && (
+                      <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                        Fix invalid dirty rows before bulk apply: {dirtyInvalidServiceIds.join(", ")}
+                      </p>
+                    )}
+                    {observedAndDraftServiceIds.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No services observed yet. Waiting for runtime state or scenario fallback.</p>
                     ) : (
-                      <div className="overflow-x-auto rounded-lg border border-border">
-                        <table className="w-full text-xs font-mono">
-                          <thead>
-                            <tr className="border-b border-border bg-white/5 text-white/40 text-left">
-                              <th className="px-3 py-2 font-medium">Service ID</th>
-                              <th className="px-3 py-2 font-medium">Replicas</th>
-                              <th className="px-3 py-2 font-medium">CPU cores</th>
-                              <th className="px-3 py-2 font-medium">Mem (MB)</th>
-                              <th className="px-3 py-2 w-8" />
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {config.services.map((s, i) => {
-                              const options = [...knownServiceIds];
-                              if (s.id && !options.includes(s.id)) options.push(s.id);
-                              options.sort();
-                              return (
-                                <tr key={`${s.id}-${i}`} className="border-b border-border/50">
-                                  <td className="px-3 py-2">
-                                    <select
-                                      value={s.id ?? ""}
-                                      onChange={(e) =>
-                                        setLiveConfig((prev) => {
-                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                          return {
-                                            ...c,
-                                            services: c.services.map((svc, j) =>
-                                              j === i ? { ...svc, id: e.target.value } : svc
-                                            ),
-                                          };
+                      <div className="space-y-2">
+                        {observedAndDraftServiceIds.map((serviceId) => {
+                            const observed = observedServicesById[serviceId] ?? { id: serviceId };
+                            const draft = serviceMixerDrafts[observed.id] ?? {};
+                            const draftId = (draft.id ?? observed.id).toString().trim();
+                            const effectiveReplicas = draft.replicas ?? observed.replicas;
+                            const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+                            const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+                            const dirty =
+                              (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                              draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                              draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                              draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                            const rowDraft: RuntimeServiceDraft = {
+                              id: draftId || observed.id,
+                              replicas: effectiveReplicas,
+                              cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                              memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+                            };
+                            const rowValidation = buildServicePatchPayloadFromModel(
+                              onlineConfigModel,
+                              [rowDraft],
+                              serviceReplicaHints
+                            );
+                            const rowError = dirty && !rowValidation.ok ? rowValidation.error : undefined;
+                            const pending = pendingServiceObservationById[draftId] ?? pendingServiceObservationById[observed.id];
+                            const cpuUtilPct =
+                              typeof observed.cpu_utilization === "number"
+                                ? observed.cpu_utilization <= 1
+                                  ? observed.cpu_utilization * 100
+                                  : observed.cpu_utilization
+                                : undefined;
+                            const memUtilPct =
+                              typeof observed.memory_utilization === "number"
+                                ? observed.memory_utilization <= 1
+                                  ? observed.memory_utilization * 100
+                                  : observed.memory_utilization
+                                : undefined;
+                            return (
+                              <div key={observed.id} className="rounded border border-border bg-black/20 p-2 space-y-2">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-mono text-white">{observed.id}</span>
+                                    {dirty && (
+                                      <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                                        dirty
+                                      </span>
+                                    )}
+                                    {pending && (
+                                      <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                                        pending observation
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const ok = await applyServices(
+                                          [rowDraft],
+                                          { [observed.id]: observed.replicas },
+                                          typeof rowDraft.id === "string" && rowDraft.id.trim() && typeof rowDraft.replicas === "number"
+                                            ? {
+                                                [rowDraft.id]: {
+                                                  replicas: rowDraft.replicas,
+                                                  cpu_cores: rowDraft.cpu_cores,
+                                                  memory_mb: rowDraft.memory_mb,
+                                                },
+                                              }
+                                            : undefined
+                                        );
+                                        if (ok) {
+                                          setServiceMixerDrafts((prev) => {
+                                            const next = { ...prev };
+                                            delete next[observed.id];
+                                            return next;
+                                          });
+                                        }
+                                      }}
+                                      disabled={configUpdateLoading || Boolean(rowError) || !dirty}
+                                      className="px-2 py-1 text-xs rounded border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50"
+                                    >
+                                      Apply
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setServiceMixerDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[observed.id];
+                                          return next;
                                         })
                                       }
-                                      className="w-28 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                      className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors"
+                                      title="Reset draft"
                                     >
-                                      {options.length === 0 && <option value="">Select…</option>}
-                                      {options.map((id) => (
-                                        <option key={id} value={id}>
-                                          {id || "(empty)"}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="px-3 py-2">
+                                      <RefreshCw className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                  <label className="text-[11px] text-white/60">
+                                    Service ID
+                                    <input
+                                      value={draft.id ?? observed.id}
+                                      onChange={(e) =>
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), id: e.target.value },
+                                        }))
+                                      }
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </label>
+                                  <label className="text-[11px] text-white/60">
+                                    Replicas (obs: {observed.replicas ?? "—"})
                                     <input
                                       type="number"
                                       min={1}
                                       step={1}
-                                      value={s.replicas ?? ""}
+                                      value={draft.replicas ?? (observed.replicas ?? "")}
                                       onChange={(e) => {
                                         const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
-                                        setLiveConfig((prev) => {
-                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                          return {
-                                            ...c,
-                                            services: c.services.map((svc, j) =>
-                                              j === i ? { ...svc, replicas: Number.isFinite(v) ? v : undefined } : svc
-                                            ),
-                                          };
-                                        });
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), replicas: Number.isFinite(v) ? v : undefined },
+                                        }));
                                       }}
-                                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
                                     />
-                                  </td>
-                                  <td className="px-3 py-2">
+                                  </label>
+                                  <label className="text-[11px] text-white/60">
+                                    CPU cores (obs: {observed.cpu_cores ?? "—"})
                                     <input
                                       type="number"
                                       min={0.1}
                                       step={0.1}
-                                      value={s.cpu_cores ?? ""}
+                                      value={draft.cpu_cores ?? (observed.cpu_cores ?? "")}
                                       onChange={(e) => {
                                         const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
-                                        setLiveConfig((prev) => {
-                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                          return {
-                                            ...c,
-                                            services: c.services.map((svc, j) =>
-                                              j === i ? { ...svc, cpu_cores: Number.isFinite(v) ? v : undefined } : svc
-                                            ),
-                                          };
-                                        });
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), cpu_cores: Number.isFinite(v) ? v : undefined },
+                                        }));
                                       }}
-                                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
                                     />
-                                  </td>
-                                  <td className="px-3 py-2">
+                                  </label>
+                                  <label className="text-[11px] text-white/60">
+                                    Memory MB (obs: {observed.memory_mb ?? "—"})
                                     <input
                                       type="number"
                                       min={1}
                                       step={1}
-                                      value={s.memory_mb ?? ""}
+                                      value={draft.memory_mb ?? (observed.memory_mb ?? "")}
                                       onChange={(e) => {
                                         const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
-                                        setLiveConfig((prev) => {
-                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                          return {
-                                            ...c,
-                                            services: c.services.map((svc, j) =>
-                                              j === i ? { ...svc, memory_mb: Number.isFinite(v) ? v : undefined } : svc
-                                            ),
-                                          };
-                                        });
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), memory_mb: Number.isFinite(v) ? v : undefined },
+                                        }));
                                       }}
-                                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
                                     />
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setLiveConfig((prev) => {
-                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                          return { ...c, services: c.services.filter((_, j) => j !== i) };
-                                        })
-                                      }
-                                      className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                                  </label>
+                                </div>
+                                <div className="flex flex-wrap gap-3 text-[11px] text-white/50">
+                                  <span>CPU util: {cpuUtilPct != null ? `${cpuUtilPct.toFixed(1)}%` : "—"}</span>
+                                  <span>Mem util: {memUtilPct != null ? `${memUtilPct.toFixed(1)}%` : "—"}</span>
+                                </div>
+                                {rowError && <p className="text-[11px] text-red-300">{rowError}</p>}
+                              </div>
+                            );
+                          })}
                       </div>
                     )}
                   </div>
