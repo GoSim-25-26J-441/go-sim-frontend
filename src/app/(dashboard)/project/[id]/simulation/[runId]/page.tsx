@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BarChart2, Play, Plus, RefreshCw, Square, Trash2, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, BarChart2, Clock3, History, Lock, Play, Plus, RefreshCw, Route, Settings2, SlidersHorizontal, Square, Trash2, Wifi, WifiOff } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -1743,6 +1743,10 @@ export default function SimulationRunPage() {
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
   // Live config (online mode) — editable form state; synced from optimization_step
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
+  const [controlRoomTab, setControlRoomTab] = useState<
+    "services" | "traffic" | "autoscaling" | "lease" | "locked" | "change_log"
+  >("services");
+  const [manualLeaseRenewLoading, setManualLeaseRenewLoading] = useState(false);
   const [configUpdateLoading, setConfigUpdateLoading] = useState(false);
   const [configUpdateError, setConfigUpdateError] = useState<string | null>(null);
   /** Latest optimization_progress SSE (objective / unit clarify best_score in that stream). */
@@ -1752,6 +1756,7 @@ export default function SimulationRunPage() {
     best_score?: number;
   } | null>(null);
   const [leaseRenewError, setLeaseRenewError] = useState<string | null>(null);
+  const [leaseRenewStatus, setLeaseRenewStatus] = useState<"idle" | "ok" | "error">("idle");
   const nextLeaseRenewAtRef = useRef<number | null>(null);
   const onlineConfigModelRef = useRef<OnlineConfigModel | null>(null);
 
@@ -2777,6 +2782,31 @@ export default function SimulationRunPage() {
     }
   }, [runId, liveConfig]);
 
+  const handleManualLeaseRenew = useCallback(async () => {
+    setManualLeaseRenewLoading(true);
+    try {
+      await renewOnlineLease(runId);
+      setLeaseRenewError(null);
+      setLeaseRenewStatus("ok");
+      const currentLeaseTtlMs =
+        typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0
+          ? runInfo.metadata.lease_ttl_ms
+          : undefined;
+      if (currentLeaseTtlMs != null) {
+        const period = Math.min(
+          Math.max(Math.floor(currentLeaseTtlMs * 0.45), 5_000),
+          Math.max(currentLeaseTtlMs - 2_000, 5_000),
+        );
+        nextLeaseRenewAtRef.current = Date.now() + period;
+      }
+    } catch (e) {
+      setLeaseRenewError(e instanceof Error ? e.message : String(e));
+      setLeaseRenewStatus("error");
+    } finally {
+      setManualLeaseRenewLoading(false);
+    }
+  }, [runId, runInfo?.metadata]);
+
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   const status = runInfo?.status ?? "pending";
@@ -2817,9 +2847,13 @@ export default function SimulationRunPage() {
     const tick = () => {
       nextLeaseRenewAtRef.current = Date.now() + period;
       renewOnlineLease(runId)
-        .then(() => setLeaseRenewError(null))
+        .then(() => {
+          setLeaseRenewError(null);
+          setLeaseRenewStatus("ok");
+        })
         .catch((e: unknown) => {
           setLeaseRenewError(e instanceof Error ? e.message : String(e));
+          setLeaseRenewStatus("error");
         });
     };
     tick();
@@ -2853,8 +2887,13 @@ export default function SimulationRunPage() {
     if (!isOnlineMode) setLiveConfig(null);
   }, [isOnlineMode]);
   useEffect(() => {
+    if (!isOnlineMode) setControlRoomTab("services");
+  }, [isOnlineMode]);
+  useEffect(() => {
     setLiveConfig(null);
     setConfigUpdateError(null);
+    setLeaseRenewStatus("idle");
+    setControlRoomTab("services");
   }, [runId]);
 
   // In online mode, seed default config so user can add services/workload and apply even before first optimization step
@@ -2917,12 +2956,10 @@ export default function SimulationRunPage() {
     };
   }, [runInfo?.configuration, scenarioYaml]);
 
-  // Phase-2 wiring prep: compute online config field model from existing observable state only.
-  // Kept internal for now (no rendering/endpoints/behavior changes in this step).
-  useEffect(() => {
+  const onlineConfigModel: OnlineConfigModel = useMemo(() => {
     const latestStepConfig =
       [...optSteps].reverse().find((step) => step.current_config != null)?.current_config ?? null;
-    onlineConfigModelRef.current = buildOnlineConfigModel({
+    return buildOnlineConfigModel({
       runMetadata:
         runInfo?.metadata && typeof runInfo.metadata === "object"
           ? (runInfo.metadata as Record<string, unknown>)
@@ -2933,7 +2970,7 @@ export default function SimulationRunPage() {
       scenarioWorkloadPatternKeys: runDerivedOptions.patternKeys,
       leaseState: {
         autoRenewEnabled: status === "running" && isOnlineMode && leaseTtlMs != null,
-        lastRenewalStatus: leaseRenewError ? "error" : "ok",
+        lastRenewalStatus: leaseRenewStatus,
         lastRenewalError: leaseRenewError,
         nextRenewalAtMs: nextLeaseRenewAtRef.current,
       },
@@ -2947,8 +2984,12 @@ export default function SimulationRunPage() {
     status,
     isOnlineMode,
     leaseTtlMs,
+    leaseRenewStatus,
     leaseRenewError,
   ]);
+  useEffect(() => {
+    onlineConfigModelRef.current = onlineConfigModel;
+  }, [onlineConfigModel]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -3371,50 +3412,52 @@ export default function SimulationRunPage() {
         ) : null}
       </div>
 
-      {/* Dynamic updates — online mode only: PATCH configuration, PATCH workload, PUT run control */}
+      {/* Online Control Room — online mode only */}
       {isOnlineMode && (
         <div className="bg-card border border-border rounded-lg p-4 space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold text-white">Dynamic updates</h2>
-            <p className="text-xs text-white/40 mt-1">
-              Mid-run: PATCH configuration (services, workload, policies), PATCH workload (single rate), or end the run (PUT status).
-            </p>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Online Control Room</h2>
+              <p className="text-xs text-white/40 mt-1">Runtime controls, lease state, and locked creation settings.</p>
+            </div>
+            <div className="text-[10px] text-white/35 font-mono">run_id scoped · SSE-confirmed runtime state</div>
           </div>
           {configUpdateError && (
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
               {configUpdateError}
             </p>
           )}
-
-          {/* Run control — PUT /runs/:id (status) */}
-          <div className="rounded-lg border border-border bg-black/10 p-3 space-y-2">
-            <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Run control</h3>
-            <p className="text-xs text-white/50">End the online run. Status is sent via PUT /runs/:id.</p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => handleStop("completed")}
-                disabled={isStopping}
-                className="px-3 py-1.5 text-xs rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="End run and mark as successfully completed"
-              >
-                {isStopping ? "…" : "Complete run"}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleStop("cancelled")}
-                disabled={isStopping}
-                className="px-3 py-1.5 text-xs rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="Cancel / abort the run"
-              >
-                {isStopping ? "…" : "Cancel run"}
-              </button>
-            </div>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: "services", label: "Services", icon: Settings2 },
+              { id: "traffic", label: "Traffic", icon: Route },
+              { id: "autoscaling", label: "Autoscaling", icon: SlidersHorizontal },
+              { id: "lease", label: "Lease", icon: Clock3 },
+              { id: "locked", label: "Locked Settings", icon: Lock },
+              { id: "change_log", label: "Change Log", icon: History },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = controlRoomTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setControlRoomTab(tab.id as typeof controlRoomTab)}
+                  className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs transition-colors ${
+                    active
+                      ? "border-white/30 bg-white/10 text-white"
+                      : "border-white/15 bg-black/20 text-white/65 hover:bg-white/5"
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
           {(() => {
             const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-            // Known service IDs: from run (GET response), scenario YAML, optimization steps, current config, and metrics
             const serviceIdsFromRun = new Set(runDerivedOptions.serviceIds);
             const serviceIdsFromSteps = new Set(
               optSteps.flatMap((step) => (step.current_config?.services ?? []).map((svc) => svc.id).filter(Boolean))
@@ -3426,7 +3469,6 @@ export default function SimulationRunPage() {
             const knownServiceIds = Array.from(
               new Set([...serviceIdsFromRun, ...serviceIdsFromSteps, ...serviceIdsFromConfig, ...serviceIdsFromMetrics])
             ).sort();
-            // Known workload pattern keys: from run (GET response), scenario YAML, optimization steps, and current config
             const patternKeysFromRun = new Set(runDerivedOptions.patternKeys);
             const patternKeysFromSteps = new Set(
               optSteps.flatMap((step) => {
@@ -3456,306 +3498,294 @@ export default function SimulationRunPage() {
               config.workload.length > 0 &&
               config.workload.every((w) => (w.pattern_key ?? "").toString().trim() !== "" && (w.rate_rps ?? 0) > 0);
 
+            const autoscaling = config.policies?.autoscaling ?? {
+              enabled: false,
+              target_cpu_util: 70,
+              scale_step: 1,
+            };
+            const targetCpuPercent =
+              autoscaling.target_cpu_util == null
+                ? 70
+                : autoscaling.target_cpu_util <= 1
+                  ? autoscaling.target_cpu_util * 100
+                  : autoscaling.target_cpu_util;
+
+            const lockedFields = onlineConfigModel.byGroup.createTimeLocked.filter((f) => f.observedValue != null);
+            const recentSteps = [...optSteps]
+              .sort((a, b) => (a.iteration_index ?? Number.MAX_SAFE_INTEGER) - (b.iteration_index ?? Number.MAX_SAFE_INTEGER))
+              .slice(-8);
+
             return (
-            <>
-              {/* Services — PATCH /runs/:id/configuration */}
-              <div>
-                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
-                  <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setLiveConfig((prev) => {
-                        const c = prev ?? DEFAULT_LIVE_CONFIG;
-                        const firstId = knownServiceIds[0] ?? "";
-                        return { ...c, services: [...c.services, { id: firstId, replicas: 1 }] };
-                      })}
-                      className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add service
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyServices}
-                      disabled={configUpdateLoading || !servicesValid}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      title={!servicesValid && config.services.length > 0 ? "Set Service ID for every row" : undefined}
-                    >
-                      {configUpdateLoading ? "Applying…" : "Apply services"}
-                    </button>
+              <>
+                {controlRoomTab === "services" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
+                      <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setLiveConfig((prev) => {
+                            const c = prev ?? DEFAULT_LIVE_CONFIG;
+                            const firstId = knownServiceIds[0] ?? "";
+                            return { ...c, services: [...c.services, { id: firstId, replicas: 1 }] };
+                          })}
+                          className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add service
+                        </button>
+                        <button
+                          type="button"
+                          onClick={applyServices}
+                          disabled={configUpdateLoading || !servicesValid}
+                          className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {configUpdateLoading ? "Applying…" : "Apply services"}
+                        </button>
+                      </div>
+                    </div>
+                    {config.services.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No services. Add one to update via PATCH /configuration.</p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-lg border border-border">
+                        <table className="w-full text-xs font-mono">
+                          <thead>
+                            <tr className="border-b border-border bg-white/5 text-white/40 text-left">
+                              <th className="px-3 py-2 font-medium">Service ID</th>
+                              <th className="px-3 py-2 font-medium">Replicas</th>
+                              <th className="px-3 py-2 font-medium">CPU cores</th>
+                              <th className="px-3 py-2 font-medium">Mem (MB)</th>
+                              <th className="px-3 py-2 w-8" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {config.services.map((s, i) => {
+                              const options = [...knownServiceIds];
+                              if (s.id && !options.includes(s.id)) options.push(s.id);
+                              options.sort();
+                              return (
+                                <tr key={`${s.id}-${i}`} className="border-b border-border/50">
+                                  <td className="px-3 py-2">
+                                    <select
+                                      value={s.id ?? ""}
+                                      onChange={(e) =>
+                                        setLiveConfig((prev) => {
+                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
+                                          return {
+                                            ...c,
+                                            services: c.services.map((svc, j) =>
+                                              j === i ? { ...svc, id: e.target.value } : svc
+                                            ),
+                                          };
+                                        })
+                                      }
+                                      className="w-28 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    >
+                                      {options.length === 0 && <option value="">Select…</option>}
+                                      {options.map((id) => (
+                                        <option key={id} value={id}>
+                                          {id || "(empty)"}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      value={s.replicas ?? ""}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
+                                        setLiveConfig((prev) => {
+                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
+                                          return {
+                                            ...c,
+                                            services: c.services.map((svc, j) =>
+                                              j === i ? { ...svc, replicas: Number.isFinite(v) ? v : undefined } : svc
+                                            ),
+                                          };
+                                        });
+                                      }}
+                                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="number"
+                                      min={0.1}
+                                      step={0.1}
+                                      value={s.cpu_cores ?? ""}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                        setLiveConfig((prev) => {
+                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
+                                          return {
+                                            ...c,
+                                            services: c.services.map((svc, j) =>
+                                              j === i ? { ...svc, cpu_cores: Number.isFinite(v) ? v : undefined } : svc
+                                            ),
+                                          };
+                                        });
+                                      }}
+                                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      value={s.memory_mb ?? ""}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                        setLiveConfig((prev) => {
+                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
+                                          return {
+                                            ...c,
+                                            services: c.services.map((svc, j) =>
+                                              j === i ? { ...svc, memory_mb: Number.isFinite(v) ? v : undefined } : svc
+                                            ),
+                                          };
+                                        });
+                                      }}
+                                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setLiveConfig((prev) => {
+                                          const c = prev ?? DEFAULT_LIVE_CONFIG;
+                                          return { ...c, services: c.services.filter((_, j) => j !== i) };
+                                        })
+                                      }
+                                      className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                </div>
-                {config.services.length === 0 ? (
-                  <p className="text-xs text-white/30 italic">No services. Add one to update via PATCH /configuration.</p>
-                ) : (
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full text-xs font-mono">
-                      <thead>
-                        <tr className="border-b border-border bg-white/5 text-white/40 text-left">
-                          <th className="px-3 py-2 font-medium">Service ID</th>
-                          <th className="px-3 py-2 font-medium">Replicas</th>
-                          <th className="px-3 py-2 font-medium">CPU cores</th>
-                          <th className="px-3 py-2 font-medium">Mem (MB)</th>
-                          <th className="px-3 py-2 w-8" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {config.services.map((s, i) => {
-                          const options = [...knownServiceIds];
-                          if (s.id && !options.includes(s.id)) options.push(s.id);
-                          options.sort();
+                )}
+
+                {controlRoomTab === "traffic" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Traffic</h3>
+                      <span className="text-[10px] text-white/30 font-mono">PATCH /workload or /configuration</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setLiveConfig((prev) => {
+                            const c = prev ?? DEFAULT_LIVE_CONFIG;
+                            const firstKey = knownPatternKeys[0] ?? "";
+                            return { ...c, workload: [...c.workload, { pattern_key: firstKey, rate_rps: 1 }] };
+                          })}
+                          className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add pattern
+                        </button>
+                        <button
+                          type="button"
+                          onClick={applyWorkload}
+                          disabled={configUpdateLoading || !workloadValid}
+                          className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {configUpdateLoading ? "Applying…" : "Apply traffic"}
+                        </button>
+                      </div>
+                    </div>
+                    {config.workload.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No workload patterns. Add one to update traffic at runtime.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {config.workload.map((w, i) => {
+                          const patternOptions = [...knownPatternKeys];
+                          if (w.pattern_key && !patternOptions.includes(w.pattern_key)) patternOptions.push(w.pattern_key);
+                          patternOptions.sort();
                           return (
-                          <tr key={`${s.id}-${i}`} className="border-b border-border/50">
-                            <td className="px-3 py-2">
+                            <div key={`${w.pattern_key}-${i}`} className="flex items-center gap-3 flex-wrap">
                               <select
-                                value={s.id ?? ""}
+                                value={w.pattern_key}
                                 onChange={(e) =>
                                   setLiveConfig((prev) => {
                                     const c = prev ?? DEFAULT_LIVE_CONFIG;
                                     return {
                                       ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, id: e.target.value } : svc
+                                      workload: c.workload.map((item, j) =>
+                                        j === i ? { ...item, pattern_key: e.target.value } : item
                                       ),
                                     };
                                   })
                                 }
-                                className="w-28 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs focus:outline-none focus:ring-1 focus:ring-white/30"
+                                className="w-36 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
                               >
-                                {options.length === 0 && (
-                                  <option value="">Select…</option>
-                                )}
-                                {options.map((id) => (
-                                  <option key={id} value={id}>
-                                    {id || "(empty)"}
-                                  </option>
+                                {patternOptions.length === 0 && <option value="">Select…</option>}
+                                {patternOptions.map((key) => (
+                                  <option key={key} value={key}>{key || "(empty)"}</option>
                                 ))}
                               </select>
-                            </td>
-                            <td className="px-3 py-2">
                               <input
                                 type="number"
-                                min={1}
-                                step={1}
-                                value={s.replicas ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, replicas: Number.isFinite(v) ? v : undefined } : svc
-                                      ),
-                                    };
-                                  });
-                                }}
-                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                min={0.1}
+                                min={0.01}
                                 step={0.1}
-                                value={s.cpu_cores ?? ""}
+                                value={w.rate_rps}
                                 onChange={(e) => {
-                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                  const v = parseFloat(e.target.value);
                                   setLiveConfig((prev) => {
                                     const c = prev ?? DEFAULT_LIVE_CONFIG;
                                     return {
                                       ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, cpu_cores: Number.isFinite(v) ? v : undefined } : svc
+                                      workload: c.workload.map((item, j) =>
+                                        j === i ? { ...item, rate_rps: Number.isFinite(v) ? v : 0 } : item
                                       ),
                                     };
                                   });
                                 }}
-                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                className="w-24 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
                               />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={s.memory_mb ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, memory_mb: Number.isFinite(v) ? v : undefined } : svc
-                                      ),
-                                    };
-                                  });
-                                }}
-                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
+                              <span className="text-xs text-white/40">RPS</span>
                               <button
                                 type="button"
                                 onClick={() =>
                                   setLiveConfig((prev) => {
                                     const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.filter((_, j) => j !== i),
-                                    };
+                                    return { ...c, workload: c.workload.filter((_, j) => j !== i) };
                                   })
                                 }
                                 className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                                title="Remove row"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
-                            </td>
-                          </tr>
+                            </div>
                           );
                         })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Workload — PATCH /configuration or PATCH /workload (single pattern) */}
-              <div>
-                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Workload</h3>
-                  <span className="text-[10px] text-white/30 font-mono">PATCH /workload or /configuration</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setLiveConfig((prev) => {
-                        const c = prev ?? DEFAULT_LIVE_CONFIG;
-                        const firstKey = knownPatternKeys[0] ?? "";
-                        return { ...c, workload: [...c.workload, { pattern_key: firstKey, rate_rps: 1 }] };
-                      })}
-                      className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add pattern
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyWorkload}
-                      disabled={configUpdateLoading || !workloadValid}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      title={!workloadValid && config.workload.length > 0 ? "Set pattern and rate > 0 for every row" : undefined}
-                    >
-                      {configUpdateLoading ? "Applying…" : "Apply workload"}
-                    </button>
-                  </div>
-                </div>
-                {config.workload.length === 0 ? (
-                  <p className="text-xs text-white/30 italic">No workload patterns. Add one to update via PATCH /workload or /configuration.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {config.workload.map((w, i) => {
-                      const patternOptions = [...knownPatternKeys];
-                      if (w.pattern_key && !patternOptions.includes(w.pattern_key)) patternOptions.push(w.pattern_key);
-                      patternOptions.sort();
-                      return (
-                      <div key={`${w.pattern_key}-${i}`} className="flex items-center gap-3 flex-wrap">
-                        <select
-                          value={w.pattern_key}
-                          onChange={(e) =>
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                workload: c.workload.map((item, j) =>
-                                  j === i ? { ...item, pattern_key: e.target.value } : item
-                                ),
-                              };
-                            })
-                          }
-                          className="w-36 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs focus:outline-none focus:ring-1 focus:ring-white/30"
-                        >
-                          {patternOptions.length === 0 && (
-                            <option value="">Select…</option>
-                          )}
-                          {patternOptions.map((key) => (
-                            <option key={key} value={key}>
-                              {key || "(empty)"}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          min={0.01}
-                          step={0.1}
-                          value={w.rate_rps}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value);
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                workload: c.workload.map((item, j) =>
-                                  j === i ? { ...item, rate_rps: Number.isFinite(v) ? v : 0 } : item
-                                ),
-                              };
-                            });
-                          }}
-                          className="w-24 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                          placeholder="RPS"
-                        />
-                        <span className="text-xs text-white/40">RPS</span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                workload: c.workload.filter((_, j) => j !== i),
-                              };
-                            })
-                          }
-                          className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                          title="Remove pattern"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </div>
-                      );
-                    })}
+                    )}
                   </div>
                 )}
-              </div>
 
-              {/* Policies — PATCH /configuration */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Policies</h3>
-                  <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
-                  <button
-                    type="button"
-                    onClick={applyPolicies}
-                    disabled={configUpdateLoading}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {configUpdateLoading ? "Applying…" : "Apply policies"}
-                  </button>
-                </div>
-                {(() => {
-                  const autoscaling = config.policies?.autoscaling ?? {
-                    enabled: false,
-                    target_cpu_util: 70,
-                    scale_step: 1,
-                  };
-                  const targetCpuPercent =
-                    autoscaling.target_cpu_util == null
-                      ? 70
-                      : autoscaling.target_cpu_util <= 1
-                        ? autoscaling.target_cpu_util * 100
-                        : autoscaling.target_cpu_util;
-                  return (
+                {controlRoomTab === "autoscaling" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Autoscaling</h3>
+                      <button
+                        type="button"
+                        onClick={applyPolicies}
+                        disabled={configUpdateLoading}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {configUpdateLoading ? "Applying…" : "Apply autoscaling"}
+                      </button>
+                    </div>
                     <div className="flex flex-wrap items-center gap-4">
                       <label className="flex items-center gap-2 text-xs text-white/70">
                         <input
@@ -3768,11 +3798,7 @@ export default function SimulationRunPage() {
                                 ...c,
                                 policies: {
                                   autoscaling: {
-                                    ...(c.policies?.autoscaling ?? {
-                                      enabled: false,
-                                      target_cpu_util: 70,
-                                      scale_step: 1,
-                                    }),
+                                    ...(c.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 }),
                                     enabled: e.target.checked,
                                   },
                                 },
@@ -3799,11 +3825,7 @@ export default function SimulationRunPage() {
                                 ...c,
                                 policies: {
                                   autoscaling: {
-                                    ...(c.policies?.autoscaling ?? {
-                                      enabled: false,
-                                      target_cpu_util: 70,
-                                      scale_step: 1,
-                                    }),
+                                    ...(c.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 }),
                                     target_cpu_util: Number.isFinite(v) ? v : 70,
                                   },
                                 },
@@ -3828,11 +3850,7 @@ export default function SimulationRunPage() {
                                 ...c,
                                 policies: {
                                   autoscaling: {
-                                    ...(c.policies?.autoscaling ?? {
-                                      enabled: false,
-                                      target_cpu_util: 70,
-                                      scale_step: 1,
-                                    }),
+                                    ...(c.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 }),
                                     scale_step: Number.isFinite(v) && v >= 1 ? v : 1,
                                   },
                                 },
@@ -3843,10 +3861,111 @@ export default function SimulationRunPage() {
                         />
                       </label>
                     </div>
-                  );
-                })()}
-              </div>
-            </>
+                  </div>
+                )}
+
+                {controlRoomTab === "lease" && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">lease_ttl_ms</p>
+                        <p className="text-white/80 font-mono">{leaseTtlMs ?? "—"}</p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Auto renew</p>
+                        <p className="text-white/80 font-mono">{leaseTtlMs != null ? "enabled" : "disabled"}</p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Last renewal</p>
+                        <p className="text-white/80 font-mono">{leaseRenewStatus}</p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Next renewal</p>
+                        <p className="text-white/80 font-mono">
+                          {nextLeaseRenewAtRef.current ? new Date(nextLeaseRenewAtRef.current).toISOString().substring(11, 19) : "—"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleManualLeaseRenew}
+                        disabled={manualLeaseRenewLoading}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {manualLeaseRenewLoading ? "Renewing…" : "Renew lease"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStop("completed")}
+                        disabled={isStopping}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                      >
+                        {isStopping ? "…" : "Complete run"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStop("cancelled")}
+                        disabled={isStopping}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        {isStopping ? "…" : "Cancel run"}
+                      </button>
+                    </div>
+                    {leaseRenewError && (
+                      <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                        Lease renewal: {leaseRenewError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {controlRoomTab === "locked" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-white/45">Create-time settings (read-only; create a new run to change).</p>
+                    {lockedFields.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No locked online settings observed for this run.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {lockedFields.map((f) => (
+                          <span key={f.key} className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/70">
+                            <span className="text-white/45">{f.key}</span>:{" "}
+                            <span className="font-mono">
+                              {typeof f.observedValue === "object"
+                                ? JSON.stringify(f.observedValue)
+                                : String(f.observedValue)}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {controlRoomTab === "change_log" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-white/45">Runtime change history placeholder (optimizer-step derived for now).</p>
+                    {recentSteps.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No runtime changes observed yet.</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {recentSteps.map((step, idx) => (
+                          <div
+                            key={`${step.iteration_index ?? "na"}-${idx}-${step.reason ?? ""}`}
+                            className="rounded border border-border bg-black/20 px-2 py-1 text-[11px] text-white/70"
+                          >
+                            <span className="font-mono text-white/50">#{step.iteration_index ?? "—"}</span>{" "}
+                            <span>{step.reason ?? "optimizer_step"}</span>
+                            {typeof step.score_p95_ms === "number" && (
+                              <span className="text-white/45"> · score p95: {step.score_p95_ms.toFixed(1)} ms</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             );
           })()}
         </div>
