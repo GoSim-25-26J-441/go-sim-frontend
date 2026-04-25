@@ -142,6 +142,7 @@ export type SimulationMetricLabelKey =
   | "endpoint"
   | "instance"
   | "host"
+  | "broker"
   | "origin"
   | "traffic_class"
   | "source_kind"

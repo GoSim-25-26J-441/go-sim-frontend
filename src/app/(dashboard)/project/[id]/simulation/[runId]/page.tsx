@@ -30,6 +30,7 @@ import {
 import { env } from "@/lib/env";
 import {
   extractSeriesScopeFromNormalized,
+  extractSeriesScopeByLabelFromNormalized,
   flatTimeseriesLegendLabel,
   flatTimeseriesSeriesKeyFromNormalized,
   isUnscopedSeriesKey,
@@ -247,6 +248,85 @@ const LINE_COLORS  = [
   "#38bdf8", "#fb923c", "#a78bfa", "#34d399",
   "#f472b6", "#facc15", "#60a5fa", "#f87171",
 ];
+
+type TimeseriesMetricBehavior = "cumulative_counter" | "gauge" | "observation";
+type TimeseriesMetricUnit = "count" | "ms" | "percent" | "ratio" | "rps" | "raw";
+type TimeseriesMetricOption = {
+  value: string;
+  label: string;
+  unit: TimeseriesMetricUnit;
+  behavior: TimeseriesMetricBehavior;
+  description: string;
+};
+
+const TIMESERIES_METRIC_OPTIONS: TimeseriesMetricOption[] = [
+  { value: "request_count", label: "Request count", unit: "count", behavior: "cumulative_counter", description: "Cumulative requests per label set." },
+  { value: "request_error_count", label: "Request error count", unit: "count", behavior: "cumulative_counter", description: "Cumulative request errors per label set." },
+  { value: "request_latency_ms", label: "Request latency", unit: "ms", behavior: "observation", description: "Observed request latency." },
+  { value: "root_request_latency_ms", label: "Root request latency", unit: "ms", behavior: "observation", description: "End-to-end root request latency." },
+  { value: "service_request_latency_ms", label: "Service request latency", unit: "ms", behavior: "observation", description: "Per-service hop latency." },
+  { value: "queue_wait_ms", label: "Queue wait", unit: "ms", behavior: "observation", description: "Queueing wait before processing." },
+  { value: "service_processing_latency_ms", label: "Service processing latency", unit: "ms", behavior: "observation", description: "In-service processing latency." },
+  { value: "cpu_utilization", label: "CPU utilization", unit: "percent", behavior: "gauge", description: "Latest CPU utilization." },
+  { value: "memory_utilization", label: "Memory utilization", unit: "percent", behavior: "gauge", description: "Latest memory utilization." },
+  { value: "queue_length", label: "Queue length", unit: "count", behavior: "gauge", description: "Current queue length." },
+  { value: "concurrent_requests", label: "Concurrent requests", unit: "count", behavior: "gauge", description: "Current in-flight requests." },
+  { value: "active_connections", label: "Active connections", unit: "count", behavior: "gauge", description: "Current open connections." },
+  { value: "route_selection_count", label: "Route selection count", unit: "count", behavior: "cumulative_counter", description: "Cumulative route selections." },
+  { value: "route_rejection_count", label: "Route rejection count", unit: "count", behavior: "cumulative_counter", description: "Cumulative route rejections." },
+  { value: "locality_route_hit_count", label: "Locality route hit count", unit: "count", behavior: "cumulative_counter", description: "Cumulative locality route hits." },
+  { value: "locality_route_miss_count", label: "Locality route miss count", unit: "count", behavior: "cumulative_counter", description: "Cumulative locality route misses." },
+  { value: "same_zone_request_count", label: "Same-zone request count", unit: "count", behavior: "cumulative_counter", description: "Cumulative same-zone requests." },
+  { value: "cross_zone_request_count", label: "Cross-zone request count", unit: "count", behavior: "cumulative_counter", description: "Cumulative cross-zone requests." },
+  { value: "cross_zone_latency_penalty_ms", label: "Cross-zone latency penalty", unit: "ms", behavior: "observation", description: "Cross-zone latency penalty observation." },
+  { value: "same_zone_latency_penalty_ms", label: "Same-zone latency penalty", unit: "ms", behavior: "observation", description: "Same-zone latency penalty observation." },
+  { value: "external_latency_penalty_ms", label: "External latency penalty", unit: "ms", behavior: "observation", description: "External latency penalty observation." },
+  { value: "topology_latency_penalty_ms", label: "Topology latency penalty", unit: "ms", behavior: "observation", description: "Topology latency penalty observation." },
+  { value: "ingress_logical_failure_count", label: "Ingress logical failure count", unit: "count", behavior: "cumulative_counter", description: "Cumulative ingress logical failures." },
+  { value: "retry_attempts", label: "Retry attempts", unit: "count", behavior: "cumulative_counter", description: "Cumulative retry attempts." },
+  { value: "db_wait_ms", label: "DB wait", unit: "ms", behavior: "observation", description: "Database wait latency observation." },
+  { value: "cache_hit_count", label: "Cache hit count", unit: "count", behavior: "cumulative_counter", description: "Cumulative cache hits." },
+  { value: "cache_miss_count", label: "Cache miss count", unit: "count", behavior: "cumulative_counter", description: "Cumulative cache misses." },
+  { value: "downstream_caller_cpu_ms", label: "Downstream caller CPU", unit: "ms", behavior: "observation", description: "Caller CPU time in downstream calls." },
+  { value: "queue_depth", label: "Queue depth", unit: "count", behavior: "gauge", description: "Current queue depth." },
+  { value: "queue_publish_attempt_count", label: "Queue publish attempt count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue publish attempts." },
+  { value: "queue_enqueue_count", label: "Queue enqueue count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue enqueues." },
+  { value: "queue_dequeue_count", label: "Queue dequeue count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue dequeues." },
+  { value: "queue_drop_count", label: "Queue drop count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue drops." },
+  { value: "queue_redelivery_count", label: "Queue redelivery count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue redeliveries." },
+  { value: "queue_dlq_count", label: "Queue DLQ count", unit: "count", behavior: "cumulative_counter", description: "Cumulative dead-letter events." },
+  { value: "message_age_ms", label: "Message age", unit: "ms", behavior: "gauge", description: "Latest message age." },
+  { value: "queue_publish_latency_ms", label: "Queue publish latency", unit: "ms", behavior: "observation", description: "Queue publish latency observation." },
+  { value: "topic_publish_count", label: "Topic publish count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic publishes." },
+  { value: "topic_deliver_count", label: "Topic deliver count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic deliveries." },
+  { value: "topic_drop_count", label: "Topic drop count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic drops." },
+  { value: "topic_redelivery_count", label: "Topic redelivery count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic redeliveries." },
+  { value: "topic_dlq_count", label: "Topic DLQ count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic dead-letter events." },
+  { value: "topic_backlog_depth", label: "Topic backlog depth", unit: "count", behavior: "gauge", description: "Current topic backlog depth." },
+  { value: "topic_message_age_ms", label: "Topic message age", unit: "ms", behavior: "gauge", description: "Latest topic message age." },
+  { value: "topic_publish_latency_ms", label: "Topic publish latency", unit: "ms", behavior: "observation", description: "Topic publish latency observation." },
+  { value: "topic_consumer_lag", label: "Topic consumer lag", unit: "count", behavior: "gauge", description: "Current topic consumer lag." },
+];
+
+const TIMESERIES_GROUP_BY_OPTIONS = [
+  { value: "auto", label: "Auto (legacy scope)" },
+  { value: "service", label: "Service" },
+  { value: "host", label: "Host" },
+  { value: "instance", label: "Instance" },
+  { value: "node", label: "Node" },
+  { value: "endpoint", label: "Endpoint" },
+  { value: "origin", label: "Origin" },
+  { value: "reason", label: "Reason" },
+  { value: "traffic_class", label: "Traffic class" },
+  { value: "source_kind", label: "Source kind" },
+  { value: "topic", label: "Topic" },
+  { value: "consumer_group", label: "Consumer group" },
+  { value: "broker", label: "Broker" },
+  { value: "subscriber", label: "Subscriber" },
+  { value: "strategy", label: "Strategy" },
+  { value: "host_zone", label: "Host zone" },
+  { value: "requested_zone", label: "Requested zone" },
+] as const;
 
 /** Sort by timestamp and keep one point per t (latest value wins). Used so we don't mix or duplicate. */
 function sortAndDedupePoints(pts: TimePoint[]): TimePoint[] {
@@ -1642,6 +1722,7 @@ export default function SimulationRunPage() {
   const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
   const [unscopedMetricDebug, setUnscopedMetricDebug] = useState<UnscopedMetricDebugPoint[]>([]);
   const [timeseriesApiMetric, setTimeseriesApiMetric] = useState<string>("request_latency_ms");
+  const [timeseriesGroupBy, setTimeseriesGroupBy] = useState<string>("auto");
   const [timeseriesApiLoading, setTimeseriesApiLoading] = useState(false);
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
   // Live config (online mode) — editable form state; synced from optimization_step
@@ -2451,7 +2532,12 @@ export default function SimulationRunPage() {
               };
               worker.addEventListener("message", onMsg);
               worker.addEventListener("error", onErr);
-              worker.postMessage({ type: "processTimeseriesPoints", points });
+              worker.postMessage({
+                type: "processTimeseriesPoints",
+                points,
+                groupingLabel: timeseriesGroupBy,
+                metric: timeseriesApiMetric,
+              });
             });
             setTimeseriesApiRows(rows);
             setTimeseriesApiLoading(false);
@@ -2469,7 +2555,14 @@ export default function SimulationRunPage() {
         const t = new Date(n.timestamp).getTime();
         if (!Number.isFinite(t)) continue;
         if (!rowMap[t]) rowMap[t] = { _t: t };
-        rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n, timeseriesApiMetric)] = n.value;
+        if (timeseriesGroupBy !== "auto") {
+          const scope = extractSeriesScopeByLabelFromNormalized(n, timeseriesGroupBy);
+          const metric = n.metric ?? timeseriesApiMetric;
+          const key = metric ? `${metric}:${scope}` : scope;
+          rowMap[t][key] = n.value;
+        } else {
+          rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n, timeseriesApiMetric)] = n.value;
+        }
       }
       const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
       setTimeseriesApiRows(rows);
@@ -2479,7 +2572,7 @@ export default function SimulationRunPage() {
     } finally {
       setTimeseriesApiLoading(false);
     }
-  }, [runId, timeseriesApiMetric]);
+  }, [runId, timeseriesApiMetric, timeseriesGroupBy]);
 
   // Clear chart data, concurrent-requests, and host metrics state
   const clearChart = useCallback(() => {
@@ -2642,6 +2735,15 @@ export default function SimulationRunPage() {
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+  const selectedTimeseriesMetricMeta =
+    TIMESERIES_METRIC_OPTIONS.find((m) => m.value === timeseriesApiMetric) ??
+    {
+      value: timeseriesApiMetric,
+      label: timeseriesApiMetric,
+      unit: "raw" as TimeseriesMetricUnit,
+      behavior: "observation" as TimeseriesMetricBehavior,
+      description: "No metadata available for this metric.",
+    };
 
   useEffect(() => {
     if (isTerminal) setOptProgressHint(null);
@@ -5056,8 +5158,22 @@ export default function SimulationRunPage() {
                     onChange={(e) => setTimeseriesApiMetric(e.target.value)}
                     className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
                   >
-                    <option value="request_latency_ms">Request latency (ms)</option>
-                    <option value="request_count">Request count</option>
+                    {TIMESERIES_METRIC_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={timeseriesGroupBy}
+                    onChange={(e) => setTimeseriesGroupBy(e.target.value)}
+                    className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
+                  >
+                    {TIMESERIES_GROUP_BY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        Group by {opt.label}
+                      </option>
+                    ))}
                   </select>
                   <button
                     type="button"
@@ -5069,24 +5185,41 @@ export default function SimulationRunPage() {
                     {timeseriesApiRows.length ? "Refresh" : "Load timeseries"}
                   </button>
                 </div>
+                <p className="text-[11px] text-white/45">
+                  <span className="text-white/60 font-medium">{selectedTimeseriesMetricMeta.label}</span>
+                  {` · ${selectedTimeseriesMetricMeta.unit} · ${selectedTimeseriesMetricMeta.behavior.replace("_", " ")}`}
+                  {selectedTimeseriesMetricMeta.behavior === "cumulative_counter" ? " (cumulative)" : ""}
+                  {selectedTimeseriesMetricMeta.description ? ` — ${selectedTimeseriesMetricMeta.description}` : ""}
+                </p>
                 {timeseriesApiError && (
                   <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">{timeseriesApiError}</p>
                 )}
                 {timeseriesApiRows.length > 0 && (() => {
-                  const services = Array.from(
+                  const seriesKeys = Array.from(
                     new Set(timeseriesApiRows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))),
                   ).filter((s) => !isUnscopedSeriesKey(s));
                   const tMin = timeseriesApiRows[0]?._t as number | undefined;
                   const tMax = timeseriesApiRows[timeseriesApiRows.length - 1]?._t as number | undefined;
-                  const allVals = timeseriesApiRows.flatMap((r) => services.map((s) => r[s]).filter((v): v is number => typeof v === "number"));
+                  const allVals = timeseriesApiRows.flatMap((r) => seriesKeys.map((s) => r[s]).filter((v): v is number => typeof v === "number"));
                   const vMax = Math.max(...allVals, 0) * 1.2 || 1;
-                  if (services.length === 0) {
+                  if (seriesKeys.length === 0) {
                     return (
                       <p className="text-[11px] text-white/35 italic">
-                        Loaded points are unscoped only. See the unscoped metrics debug panel.
+                        No series found for grouping <span className="font-mono">{timeseriesGroupBy}</span>. Try Auto or another label.
                       </p>
                     );
                   }
+                  const yFmt = (value: number) => {
+                    if (!Number.isFinite(value)) return "—";
+                    if (selectedTimeseriesMetricMeta.unit === "ms") return `${value.toFixed(0)} ms`;
+                    if (selectedTimeseriesMetricMeta.unit === "percent") {
+                      const pct = value <= 1 ? value * 100 : value;
+                      return `${pct.toFixed(1)}%`;
+                    }
+                    if (selectedTimeseriesMetricMeta.unit === "count") return value.toLocaleString();
+                    if (selectedTimeseriesMetricMeta.unit === "rps") return `${value.toFixed(2)} rps`;
+                    return value.toFixed(2);
+                  };
                   return (
                     <div className="rounded-lg border border-border bg-black/20 p-3">
                       <ResponsiveContainer width="100%" height={220}>
@@ -5104,14 +5237,20 @@ export default function SimulationRunPage() {
                             scale="time"
                             tickCount={6}
                           />
-                          <YAxis domain={[0, vMax]} tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }} width={45} tickCount={5} />
+                          <YAxis
+                            domain={[0, vMax]}
+                            tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
+                            width={60}
+                            tickCount={5}
+                            tickFormatter={yFmt}
+                          />
                           <Tooltip
                             contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)" }}
                             labelFormatter={(label) => typeof label === "number" ? new Date(label).toISOString() : String(label ?? "")}
-                            formatter={(v, name) => [typeof v === "number" ? v.toFixed(2) : String(v ?? ""), String(name ?? "")]}
+                            formatter={(v, name) => [typeof v === "number" ? yFmt(v) : String(v ?? ""), String(name ?? "")]}
                           />
                           <Legend wrapperStyle={{ fontSize: 11 }} />
-                          {services.map((svc, i) => (
+                          {seriesKeys.map((svc, i) => (
                             <Line
                               key={svc}
                               dataKey={svc}
