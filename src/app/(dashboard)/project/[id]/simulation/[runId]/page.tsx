@@ -687,6 +687,17 @@ type BottleneckTag =
   | "underutilized"
   | "healthy";
 
+const TOPOLOGY_HEALTH_THRESHOLDS = {
+  localityWatchMin: 0.8,
+  localityDegradedMin: 0.6,
+  crossZoneWatch: 0.25,
+  crossZoneDegraded: 0.5,
+  topologyPenaltyWatchMs: 10,
+  topologyPenaltyDegradedMs: 50,
+} as const;
+
+type TopologyHealth = "healthy" | "watch" | "degraded";
+
 function toPercent(v: number | undefined): number | undefined {
   if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
   return v <= 1 ? v * 100 : v;
@@ -711,6 +722,47 @@ function formatCount(v?: number): string {
 
 function formatPair(left?: number, right?: number): string {
   return `${formatCount(left)} / ${formatCount(right)}`;
+}
+
+function normalizeFraction(v: number | undefined): number | undefined {
+  if (!hasNumber(v)) return undefined;
+  if (v < 0) return undefined;
+  if (v <= 1) return v;
+  if (v <= 100) return v / 100;
+  return undefined;
+}
+
+function classifyTopologyHealth(
+  localityHitRate: number | undefined,
+  crossZoneFraction: number | undefined,
+  topologyPenaltyMeanMs: number | undefined,
+): TopologyHealth {
+  if (
+    (hasNumber(localityHitRate) && localityHitRate < TOPOLOGY_HEALTH_THRESHOLDS.localityDegradedMin) ||
+    (hasNumber(crossZoneFraction) && crossZoneFraction > TOPOLOGY_HEALTH_THRESHOLDS.crossZoneDegraded) ||
+    (hasNumber(topologyPenaltyMeanMs) && topologyPenaltyMeanMs > TOPOLOGY_HEALTH_THRESHOLDS.topologyPenaltyDegradedMs)
+  ) {
+    return "degraded";
+  }
+  if (
+    (hasNumber(localityHitRate) && localityHitRate < TOPOLOGY_HEALTH_THRESHOLDS.localityWatchMin) ||
+    (hasNumber(crossZoneFraction) && crossZoneFraction > TOPOLOGY_HEALTH_THRESHOLDS.crossZoneWatch) ||
+    (hasNumber(topologyPenaltyMeanMs) && topologyPenaltyMeanMs > TOPOLOGY_HEALTH_THRESHOLDS.topologyPenaltyWatchMs)
+  ) {
+    return "watch";
+  }
+  return "healthy";
+}
+
+function topologyHealthClasses(health: TopologyHealth): string {
+  switch (health) {
+    case "degraded":
+      return "border-red-500/30 bg-red-500/10 text-red-200";
+    case "watch":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
 }
 
 function classifyServiceBottleneck(sm: ServiceMetricSnapshot): BottleneckTag {
@@ -2003,6 +2055,66 @@ export default function SimulationRunPage() {
           num(raw.topic_drop_rate) ??
           num(fromSummaryData.topic_drop_rate) ??
           num(fromTopLevel.topic_drop_rate),
+        locality_hit_rate:
+          num(fromSummaryMetrics.locality_hit_rate) ??
+          num(raw.locality_hit_rate) ??
+          num(fromSummaryData.locality_hit_rate) ??
+          num(fromTopLevel.locality_hit_rate),
+        same_zone_request_count_total:
+          num(fromSummaryMetrics.same_zone_request_count_total) ??
+          num(raw.same_zone_request_count_total) ??
+          num(fromSummaryData.same_zone_request_count_total) ??
+          num(fromTopLevel.same_zone_request_count_total),
+        cross_zone_request_count_total:
+          num(fromSummaryMetrics.cross_zone_request_count_total) ??
+          num(raw.cross_zone_request_count_total) ??
+          num(fromSummaryData.cross_zone_request_count_total) ??
+          num(fromTopLevel.cross_zone_request_count_total),
+        cross_zone_request_fraction:
+          num(fromSummaryMetrics.cross_zone_request_fraction) ??
+          num(raw.cross_zone_request_fraction) ??
+          num(fromSummaryData.cross_zone_request_fraction) ??
+          num(fromTopLevel.cross_zone_request_fraction),
+        cross_zone_latency_penalty_ms_total:
+          num(fromSummaryMetrics.cross_zone_latency_penalty_ms_total) ??
+          num(raw.cross_zone_latency_penalty_ms_total) ??
+          num(fromSummaryData.cross_zone_latency_penalty_ms_total) ??
+          num(fromTopLevel.cross_zone_latency_penalty_ms_total),
+        cross_zone_latency_penalty_ms_mean:
+          num(fromSummaryMetrics.cross_zone_latency_penalty_ms_mean) ??
+          num(raw.cross_zone_latency_penalty_ms_mean) ??
+          num(fromSummaryData.cross_zone_latency_penalty_ms_mean) ??
+          num(fromTopLevel.cross_zone_latency_penalty_ms_mean),
+        same_zone_latency_penalty_ms_total:
+          num(fromSummaryMetrics.same_zone_latency_penalty_ms_total) ??
+          num(raw.same_zone_latency_penalty_ms_total) ??
+          num(fromSummaryData.same_zone_latency_penalty_ms_total) ??
+          num(fromTopLevel.same_zone_latency_penalty_ms_total),
+        same_zone_latency_penalty_ms_mean:
+          num(fromSummaryMetrics.same_zone_latency_penalty_ms_mean) ??
+          num(raw.same_zone_latency_penalty_ms_mean) ??
+          num(fromSummaryData.same_zone_latency_penalty_ms_mean) ??
+          num(fromTopLevel.same_zone_latency_penalty_ms_mean),
+        external_latency_ms_total:
+          num(fromSummaryMetrics.external_latency_ms_total) ??
+          num(raw.external_latency_ms_total) ??
+          num(fromSummaryData.external_latency_ms_total) ??
+          num(fromTopLevel.external_latency_ms_total),
+        external_latency_ms_mean:
+          num(fromSummaryMetrics.external_latency_ms_mean) ??
+          num(raw.external_latency_ms_mean) ??
+          num(fromSummaryData.external_latency_ms_mean) ??
+          num(fromTopLevel.external_latency_ms_mean),
+        topology_latency_penalty_ms_total:
+          num(fromSummaryMetrics.topology_latency_penalty_ms_total) ??
+          num(raw.topology_latency_penalty_ms_total) ??
+          num(fromSummaryData.topology_latency_penalty_ms_total) ??
+          num(fromTopLevel.topology_latency_penalty_ms_total),
+        topology_latency_penalty_ms_mean:
+          num(fromSummaryMetrics.topology_latency_penalty_ms_mean) ??
+          num(raw.topology_latency_penalty_ms_mean) ??
+          num(fromSummaryData.topology_latency_penalty_ms_mean) ??
+          num(fromTopLevel.topology_latency_penalty_ms_mean),
       };
       const serviceMetrics =
         data.metrics?.service_metrics ??
@@ -4357,6 +4469,148 @@ export default function SimulationRunPage() {
                         </table>
                       </div>
                     )}
+                  </div>
+                );
+              })()}
+
+              {/* Topology / locality */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const sameZoneCount = hasNumber(s.same_zone_request_count_total) ? s.same_zone_request_count_total : undefined;
+                const crossZoneCount = hasNumber(s.cross_zone_request_count_total) ? s.cross_zone_request_count_total : undefined;
+                const totalCount =
+                  hasNumber(sameZoneCount) && hasNumber(crossZoneCount)
+                    ? sameZoneCount + crossZoneCount
+                    : undefined;
+                const directFraction = normalizeFraction(s.cross_zone_request_fraction);
+                const derivedFraction =
+                  directFraction ??
+                  (hasNumber(totalCount) && totalCount > 0 && hasNumber(crossZoneCount)
+                    ? crossZoneCount / totalCount
+                    : undefined);
+                const localityHitRate = normalizeFraction(s.locality_hit_rate);
+                const sameZoneShare =
+                  hasNumber(totalCount) && totalCount > 0 && hasNumber(sameZoneCount)
+                    ? sameZoneCount / totalCount
+                    : hasNumber(derivedFraction)
+                      ? 1 - derivedFraction
+                      : undefined;
+                const crossZoneShare =
+                  hasNumber(totalCount) && totalCount > 0 && hasNumber(crossZoneCount)
+                    ? crossZoneCount / totalCount
+                    : derivedFraction;
+                const topologyHealth = classifyTopologyHealth(
+                  localityHitRate,
+                  derivedFraction,
+                  s.topology_latency_penalty_ms_mean,
+                );
+                const hasTopologyData = [
+                  localityHitRate,
+                  sameZoneCount,
+                  crossZoneCount,
+                  derivedFraction,
+                  s.cross_zone_latency_penalty_ms_mean,
+                  s.same_zone_latency_penalty_ms_mean,
+                  s.external_latency_ms_mean,
+                  s.topology_latency_penalty_ms_mean,
+                  s.cross_zone_latency_penalty_ms_total,
+                  s.same_zone_latency_penalty_ms_total,
+                  s.external_latency_ms_total,
+                  s.topology_latency_penalty_ms_total,
+                ].some((v) => hasNumber(v));
+                if (!hasTopologyData) {
+                  return (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Topology / locality</h3>
+                      <p className="text-xs text-white/35 italic">
+                        No topology/locality metrics reported for this run.
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Topology / locality</h3>
+                      <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-medium ${topologyHealthClasses(topologyHealth)}`}>
+                        {topologyHealth}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Locality hit rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(localityHitRate, 2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Cross-zone fraction</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(derivedFraction, 2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Same-zone requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatCount(sameZoneCount)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Cross-zone requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatCount(crossZoneCount)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Cross-zone penalty (mean)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.cross_zone_latency_penalty_ms_mean)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Topology penalty (mean)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.topology_latency_penalty_ms_mean)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">External penalty (mean)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.external_latency_ms_mean)}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-white/55">Zone flow summary</p>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-36 shrink-0 text-[11px] text-white/60">Same-zone requests</span>
+                          <div className="h-2 flex-1 rounded bg-white/10 overflow-hidden">
+                            <div
+                              className="h-2 bg-emerald-400/80"
+                              style={{ width: `${Math.max(0, Math.min(100, (sameZoneShare ?? 0) * 100))}%` }}
+                            />
+                          </div>
+                          <span className="w-20 text-right text-[11px] font-mono text-white/70">
+                            {formatPercent(sameZoneShare, 1)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-36 shrink-0 text-[11px] text-white/60">Cross-zone requests</span>
+                          <div className="h-2 flex-1 rounded bg-white/10 overflow-hidden">
+                            <div
+                              className="h-2 bg-amber-400/80"
+                              style={{ width: `${Math.max(0, Math.min(100, (crossZoneShare ?? 0) * 100))}%` }}
+                            />
+                          </div>
+                          <span className="w-20 text-right text-[11px] font-mono text-white/70">
+                            {formatPercent(crossZoneShare, 1)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          topology total: {formatMs(s.topology_latency_penalty_ms_total)}
+                        </span>
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          external total: {formatMs(s.external_latency_ms_total)}
+                        </span>
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          cross-zone total: {formatMs(s.cross_zone_latency_penalty_ms_total)}
+                        </span>
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          same-zone total: {formatMs(s.same_zone_latency_penalty_ms_total)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
