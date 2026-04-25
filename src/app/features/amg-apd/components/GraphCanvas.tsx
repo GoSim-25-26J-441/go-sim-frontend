@@ -323,6 +323,7 @@ function isTypingTarget(t: EventTarget | null) {
   return false;
 }
 
+<<<<<<< HEAD
 export default function GraphCanvas({
   data,
   readOnly = false,
@@ -340,6 +341,9 @@ export default function GraphCanvas({
   designerTourWorkspaceNonce = 0,
   designerTourExpandDetailsNonce = 0,
 }: {
+=======
+type GraphCanvasProps = {
+>>>>>>> 70cd164 (feat(simulation): scenario behavior editor, CI gates, GraphCanvas hooks fix)
   data?: AnalysisResult;
   readOnly?: boolean;
   isGenerating?: boolean;
@@ -368,16 +372,22 @@ export default function GraphCanvas({
   onExportGraphJsonReady?: (getGraph: () => Graph | null) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
   onDuplicateName?: (name: string) => void;
-}) {
-  if (!data?.graph) {
-    return (
-      <div className="border rounded bg-white p-4 text-sm text-slate-600 shadow-sm">
-        No graph to display yet. Upload a YAML and run analysis.
-      </div>
-    );
-  }
+};
 
-  const analysis = data as AnalysisResult;
+function GraphCanvasInner({
+  data,
+  readOnly = false,
+  isGenerating = false,
+  showRegeneratingOverlay = false,
+  layoutMode = "default",
+  onGenerateGraph,
+  onExportImageReady,
+  onExportGraphJsonReady,
+  onDuplicateName,
+  onResetCanvas,
+  fullscreenButton,
+}: GraphCanvasProps & { data: AnalysisResult }) {
+  const analysis = data;
   /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
   const workAreaHeightClass =
     layoutMode === "fullscreen"
@@ -1753,4 +1763,15 @@ function computeStatsFromData(data: AnalysisResult): GraphStats {
     edges,
     detections,
   };
+}
+
+export default function GraphCanvas(props: GraphCanvasProps) {
+  if (!props.data?.graph) {
+    return (
+      <div className="border rounded bg-white p-4 text-sm text-slate-600 shadow-sm">
+        No graph to display yet. Upload a YAML and run analysis.
+      </div>
+    );
+  }
+  return <GraphCanvasInner {...props} data={props.data} />;
 }

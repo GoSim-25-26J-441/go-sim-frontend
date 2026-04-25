@@ -4,6 +4,10 @@ const Env = z.object({
   NEXT_PUBLIC_APP_NAME: z.string().default("GO-SIM"),
   /** When `recommended_config`, batch create-run uses that objective if your backend supports it; else omit or use default. */
   NEXT_PUBLIC_BATCH_OPTIMIZATION_OBJECTIVE: z.enum(["cpu_utilization", "recommended_config"]).optional(),
+  /**
+   * Browser-accessible API base (simulation, projects, etc.). Must match the backend origin users can reach.
+   * Server-only Route Handlers should use `getServerBackendBase()` from `@/lib/server-backend-base` (prefers `BACKEND_BASE`).
+   */
   BACKEND_BASE: z.string().url().default("http://localhost:8080"),
   NEXT_PUBLIC_FIREBASE_API_KEY: z.string().optional(),
   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: z.string().optional(),
