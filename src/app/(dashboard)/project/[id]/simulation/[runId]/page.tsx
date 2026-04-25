@@ -671,6 +671,101 @@ function formatBatchScoreNumber(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+const BOTTLENECK_THRESHOLDS = {
+  queueShare: 0.25,
+  highUtilPct: 75,
+  lowUtilPct: 25,
+  highLatencyMs: 250,
+  unexplainedLatencyShare: 0.5,
+} as const;
+
+type BottleneckTag =
+  | "queue-bound"
+  | "CPU-bound"
+  | "memory-bound"
+  | "downstream/topology-bound"
+  | "underutilized"
+  | "healthy";
+
+function toPercent(v: number | undefined): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  return v <= 1 ? v * 100 : v;
+}
+
+function formatPercent(v: number | undefined, digits = 1): string {
+  const pct = toPercent(v);
+  return pct != null ? `${pct.toFixed(digits)}%` : "—";
+}
+
+function formatMs(v: number | undefined): string {
+  return typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(0)} ms` : "—";
+}
+
+function hasNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function formatCount(v?: number): string {
+  return hasNumber(v) ? v.toLocaleString() : "—";
+}
+
+function formatPair(left?: number, right?: number): string {
+  return `${formatCount(left)} / ${formatCount(right)}`;
+}
+
+function classifyServiceBottleneck(sm: ServiceMetricSnapshot): BottleneckTag {
+  const latency = typeof sm.latency_p95_ms === "number" ? sm.latency_p95_ms : undefined;
+  const queueWait = typeof sm.queue_wait_p95_ms === "number" ? sm.queue_wait_p95_ms : undefined;
+  const processing = typeof sm.processing_latency_p95_ms === "number" ? sm.processing_latency_p95_ms : undefined;
+  const queueLength = typeof sm.queue_length === "number" ? sm.queue_length : undefined;
+  const cpu = toPercent(sm.cpu_utilization);
+  const mem = toPercent(sm.memory_utilization);
+  const replicas = typeof sm.active_replicas === "number" ? sm.active_replicas : undefined;
+
+  if (
+    (latency != null && queueWait != null && latency > 0 && queueWait / latency >= BOTTLENECK_THRESHOLDS.queueShare) ||
+    (queueLength != null && queueLength > 0)
+  ) {
+    return "queue-bound";
+  }
+  if (cpu != null && cpu > BOTTLENECK_THRESHOLDS.highUtilPct) return "CPU-bound";
+  if (mem != null && mem > BOTTLENECK_THRESHOLDS.highUtilPct) return "memory-bound";
+  if (
+    cpu != null &&
+    mem != null &&
+    cpu < BOTTLENECK_THRESHOLDS.lowUtilPct &&
+    mem < BOTTLENECK_THRESHOLDS.lowUtilPct &&
+    replicas != null &&
+    replicas > 1
+  ) {
+    return "underutilized";
+  }
+  if (latency != null && latency >= BOTTLENECK_THRESHOLDS.highLatencyMs) {
+    const explained = (queueWait ?? 0) + (processing ?? 0);
+    if (explained / latency < BOTTLENECK_THRESHOLDS.unexplainedLatencyShare) {
+      return "downstream/topology-bound";
+    }
+  }
+  return "healthy";
+}
+
+function bottleneckTagClasses(tag: BottleneckTag): string {
+  switch (tag) {
+    case "queue-bound":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    case "CPU-bound":
+      return "border-red-500/30 bg-red-500/10 text-red-200";
+    case "memory-bound":
+      return "border-orange-500/30 bg-orange-500/10 text-orange-200";
+    case "downstream/topology-bound":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+    case "underutilized":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
+}
+
 function candidateBatchFeasibleCell(
   c: Candidate,
   meta: RunInfo["metadata"] | undefined,
@@ -1779,6 +1874,31 @@ export default function SimulationRunPage() {
           num(raw.total_requests) ??
           num(fromSummaryData.total_requests) ??
           num(fromTopLevel.total_requests),
+        ingress_requests:
+          num(fromSummaryMetrics.ingress_requests) ??
+          num(raw.ingress_requests) ??
+          num(fromSummaryData.ingress_requests) ??
+          num(fromTopLevel.ingress_requests),
+        internal_requests:
+          num(fromSummaryMetrics.internal_requests) ??
+          num(raw.internal_requests) ??
+          num(fromSummaryData.internal_requests) ??
+          num(fromTopLevel.internal_requests),
+        retry_attempts:
+          num(fromSummaryMetrics.retry_attempts) ??
+          num(raw.retry_attempts) ??
+          num(fromSummaryData.retry_attempts) ??
+          num(fromTopLevel.retry_attempts),
+        attempt_error_rate:
+          num(fromSummaryMetrics.attempt_error_rate) ??
+          num(raw.attempt_error_rate) ??
+          num(fromSummaryData.attempt_error_rate) ??
+          num(fromTopLevel.attempt_error_rate),
+        ingress_error_rate:
+          num(fromSummaryMetrics.ingress_error_rate) ??
+          num(raw.ingress_error_rate) ??
+          num(fromSummaryData.ingress_error_rate) ??
+          num(fromTopLevel.ingress_error_rate),
         total_errors:
           num(fromSummaryMetrics.total_errors) ??
           num(fromSummaryMetrics.failed_requests) ??
@@ -1833,6 +1953,56 @@ export default function SimulationRunPage() {
           num(fromSummaryData.avg_latency_ms) ??
           num(fromTopLevel.latency_mean_ms) ??
           num(fromTopLevel.avg_latency_ms),
+        queue_depth_sum:
+          num(fromSummaryMetrics.queue_depth_sum) ??
+          num(raw.queue_depth_sum) ??
+          num(fromSummaryData.queue_depth_sum) ??
+          num(fromTopLevel.queue_depth_sum),
+        max_queue_depth:
+          num(fromSummaryMetrics.max_queue_depth) ??
+          num(raw.max_queue_depth) ??
+          num(fromSummaryData.max_queue_depth) ??
+          num(fromTopLevel.max_queue_depth),
+        queue_oldest_message_age_ms:
+          num(fromSummaryMetrics.queue_oldest_message_age_ms) ??
+          num(raw.queue_oldest_message_age_ms) ??
+          num(fromSummaryData.queue_oldest_message_age_ms) ??
+          num(fromTopLevel.queue_oldest_message_age_ms),
+        queue_drop_rate:
+          num(fromSummaryMetrics.queue_drop_rate) ??
+          num(raw.queue_drop_rate) ??
+          num(fromSummaryData.queue_drop_rate) ??
+          num(fromTopLevel.queue_drop_rate),
+        queue_redelivery_count_total:
+          num(fromSummaryMetrics.queue_redelivery_count_total) ??
+          num(raw.queue_redelivery_count_total) ??
+          num(fromSummaryData.queue_redelivery_count_total) ??
+          num(fromTopLevel.queue_redelivery_count_total),
+        queue_dlq_count_total:
+          num(fromSummaryMetrics.queue_dlq_count_total) ??
+          num(raw.queue_dlq_count_total) ??
+          num(fromSummaryData.queue_dlq_count_total) ??
+          num(fromTopLevel.queue_dlq_count_total),
+        topic_backlog_depth_sum:
+          num(fromSummaryMetrics.topic_backlog_depth_sum) ??
+          num(raw.topic_backlog_depth_sum) ??
+          num(fromSummaryData.topic_backlog_depth_sum) ??
+          num(fromTopLevel.topic_backlog_depth_sum),
+        topic_consumer_lag_sum:
+          num(fromSummaryMetrics.topic_consumer_lag_sum) ??
+          num(raw.topic_consumer_lag_sum) ??
+          num(fromSummaryData.topic_consumer_lag_sum) ??
+          num(fromTopLevel.topic_consumer_lag_sum),
+        topic_oldest_message_age_ms:
+          num(fromSummaryMetrics.topic_oldest_message_age_ms) ??
+          num(raw.topic_oldest_message_age_ms) ??
+          num(fromSummaryData.topic_oldest_message_age_ms) ??
+          num(fromTopLevel.topic_oldest_message_age_ms),
+        topic_drop_rate:
+          num(fromSummaryMetrics.topic_drop_rate) ??
+          num(raw.topic_drop_rate) ??
+          num(fromSummaryData.topic_drop_rate) ??
+          num(fromTopLevel.topic_drop_rate),
       };
       const serviceMetrics =
         data.metrics?.service_metrics ??
@@ -2223,6 +2393,9 @@ export default function SimulationRunPage() {
 
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
+  const messagingResources = placementSource.resources;
+  const queueResources = messagingResources?.queues ?? [];
+  const topicResources = messagingResources?.topics ?? [];
 
   // Auto-fetch persisted metrics + candidates (includes best-candidate) once the run is terminal
   useEffect(() => {
@@ -3864,6 +4037,59 @@ export default function SimulationRunPage() {
                 </div>
               )}
 
+              {/* Work amplification KPI */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const ingress = s.ingress_requests;
+                const total = s.total_requests;
+                const amplification =
+                  typeof ingress === "number" && ingress > 0 && typeof total === "number"
+                    ? total / ingress
+                    : null;
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Work amplification</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Amplification</p>
+                        <p className={`text-lg font-mono font-semibold ${amplification != null ? "text-amber-300" : "text-white/50"}`}>
+                          {amplification != null ? `${amplification.toFixed(2)}x` : "—"}
+                        </p>
+                        {amplification == null && (
+                          <p className="text-[10px] text-white/35 mt-1">Requires ingress requests</p>
+                        )}
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Ingress requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {typeof ingress === "number" ? ingress.toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Internal requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {typeof s.internal_requests === "number" ? s.internal_requests.toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Retry attempts</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {typeof s.retry_attempts === "number" ? s.retry_attempts.toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Ingress error rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(s.ingress_error_rate, 2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Attempt error rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(s.attempt_error_rate, 2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Error rate / Success vs failure */}
               {displayMetrics.summary && (() => {
                 const s = displayMetrics.summary;
@@ -3929,7 +4155,7 @@ export default function SimulationRunPage() {
               {/* Per-service comparison table */}
               {displayMetrics.metrics?.service_metrics && displayMetrics.metrics.service_metrics.length > 0 && (
                 <div className="space-y-2">
-                  <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Per-service metrics</h3>
+                  <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Service bottleneck matrix</h3>
                   <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
@@ -3938,28 +4164,39 @@ export default function SimulationRunPage() {
                           <th className="px-3 py-2 font-medium text-right">Requests</th>
                           <th className="px-3 py-2 font-medium text-right">Errors</th>
                           <th className="px-3 py-2 font-medium text-right">Latency P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">Queue wait P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">Processing P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">Queue length</th>
                           <th className="px-3 py-2 font-medium text-right">CPU %</th>
                           <th className="px-3 py-2 font-medium text-right">Memory %</th>
                           <th className="px-3 py-2 font-medium text-right">Concurrent</th>
                           <th className="px-3 py-2 font-medium text-right">Replicas</th>
+                          <th className="px-3 py-2 font-medium text-right">Bottleneck</th>
                         </tr>
                       </thead>
                       <tbody>
                         {displayMetrics.metrics.service_metrics.map((sm) => {
-                          const cpu = sm.cpu_utilization;
-                          const mem = sm.memory_utilization;
-                          const cpuVal = typeof cpu === "number" ? (cpu <= 1 ? (cpu * 100).toFixed(1) : cpu.toFixed(1)) : "—";
-                          const memVal = typeof mem === "number" ? (mem <= 1 ? (mem * 100).toFixed(1) : mem.toFixed(1)) : "—";
+                          const bottleneck = classifyServiceBottleneck(sm);
+                          const cpuVal = formatPercent(sm.cpu_utilization).replace("%", "");
+                          const memVal = formatPercent(sm.memory_utilization).replace("%", "");
                           return (
                             <tr key={sm.service_name} className="border-b border-border/50 last:border-0">
                               <td className="px-3 py-2 text-white font-mono truncate max-w-[160px]" title={sm.service_name}>{sm.service_name}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.request_count != null ? sm.request_count.toLocaleString() : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.error_count != null ? sm.error_count.toLocaleString() : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.latency_p95_ms != null ? sm.latency_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.queue_wait_p95_ms != null ? sm.queue_wait_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.processing_latency_p95_ms != null ? sm.processing_latency_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.queue_length != null ? sm.queue_length.toLocaleString() : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{cpuVal}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{memVal}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.concurrent_requests != null ? sm.concurrent_requests : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.active_replicas != null ? sm.active_replicas : "—"}</td>
+                              <td className="px-3 py-2 text-right">
+                                <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-medium ${bottleneckTagClasses(bottleneck)}`}>
+                                  {bottleneck}
+                                </span>
+                              </td>
                             </tr>
                           );
                         })}
@@ -3968,6 +4205,161 @@ export default function SimulationRunPage() {
                   </div>
                 </div>
               )}
+
+              {/* Messaging pressure */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const queuePressure = (s.max_queue_depth ?? 0) + (s.queue_oldest_message_age_ms ?? 0) + (s.queue_dlq_count_total ?? 0);
+                const topicPressure = (s.topic_consumer_lag_sum ?? 0) + (s.topic_oldest_message_age_ms ?? 0);
+                const messagingAggregateValues = [
+                  s.queue_depth_sum,
+                  s.max_queue_depth,
+                  s.queue_oldest_message_age_ms,
+                  s.queue_drop_rate,
+                  s.queue_redelivery_count_total,
+                  s.queue_dlq_count_total,
+                  s.topic_backlog_depth_sum,
+                  s.topic_consumer_lag_sum,
+                  s.topic_oldest_message_age_ms,
+                  s.topic_drop_rate,
+                ];
+                const hasData =
+                  queueResources.length > 0 ||
+                  topicResources.length > 0 ||
+                  messagingAggregateValues.some((v) => hasNumber(v));
+                if (!hasData) {
+                  return (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Messaging pressure</h3>
+                      <p className="text-xs text-white/35 italic">
+                        No queue/topic pressure data reported for this run.
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Messaging pressure</h3>
+                      <span className="text-[10px] text-white/45">source: {placementSource.sourceLabel}</span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+                      <div className={`rounded-lg border p-3 ${queuePressure > 0 ? "border-amber-500/30 bg-amber-500/10" : "border-border bg-black/20"}`}>
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Queue depth (sum / max)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPair(s.queue_depth_sum, s.max_queue_depth)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Queue oldest age</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.queue_oldest_message_age_ms)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Queue drop / redelivery / DLQ</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {`${formatPercent(s.queue_drop_rate, 2)} · ${formatCount(s.queue_redelivery_count_total)} · ${formatCount(s.queue_dlq_count_total)}`}
+                        </p>
+                      </div>
+                      <div className={`rounded-lg border p-3 ${topicPressure > 0 ? "border-amber-500/30 bg-amber-500/10" : "border-border bg-black/20"}`}>
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Topic backlog / lag</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {formatPair(s.topic_backlog_depth_sum, s.topic_consumer_lag_sum)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Topic oldest age / drop rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {`${formatMs(s.topic_oldest_message_age_ms)} · ${formatPercent(s.topic_drop_rate, 2)}`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {queueResources.length > 0 && (
+                      <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-border text-white/50">
+                              <th className="px-3 py-2 font-medium">Queue</th>
+                              <th className="px-3 py-2 font-medium">Broker</th>
+                              <th className="px-3 py-2 font-medium text-right">Depth</th>
+                              <th className="px-3 py-2 font-medium text-right">In-flight</th>
+                              <th className="px-3 py-2 font-medium text-right">Max conc.</th>
+                              <th className="px-3 py-2 font-medium text-right">Consumer target</th>
+                              <th className="px-3 py-2 font-medium text-right">Oldest age</th>
+                              <th className="px-3 py-2 font-medium text-right">Drop</th>
+                              <th className="px-3 py-2 font-medium text-right">Redelivery</th>
+                              <th className="px-3 py-2 font-medium text-right">DLQ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {queueResources.map((q, idx) => {
+                              const broker = q.broker || q.broker_service || "—";
+                              return (
+                              <tr key={`${broker}-${q.topic}-${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="px-3 py-2 text-white/85 font-mono truncate max-w-[180px]" title={q.topic}>{q.topic}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{broker}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.depth != null ? q.depth.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.in_flight != null ? q.in_flight.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.max_concurrency != null ? q.max_concurrency : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.consumer_target != null ? q.consumer_target : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{formatMs(q.oldest_message_age_ms)}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.drop_count != null ? q.drop_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.redelivery_count != null ? q.redelivery_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.dlq_count != null ? q.dlq_count.toLocaleString() : "—"}</td>
+                              </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {topicResources.length > 0 && (
+                      <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-border text-white/50">
+                              <th className="px-3 py-2 font-medium">Topic</th>
+                              <th className="px-3 py-2 font-medium">Broker</th>
+                              <th className="px-3 py-2 font-medium">Partition</th>
+                              <th className="px-3 py-2 font-medium">Subscriber</th>
+                              <th className="px-3 py-2 font-medium">Consumer group</th>
+                              <th className="px-3 py-2 font-medium text-right">Depth</th>
+                              <th className="px-3 py-2 font-medium text-right">In-flight</th>
+                              <th className="px-3 py-2 font-medium text-right">Max conc.</th>
+                              <th className="px-3 py-2 font-medium text-right">Consumer target</th>
+                              <th className="px-3 py-2 font-medium text-right">Oldest age</th>
+                              <th className="px-3 py-2 font-medium text-right">Drop</th>
+                              <th className="px-3 py-2 font-medium text-right">Redelivery</th>
+                              <th className="px-3 py-2 font-medium text-right">DLQ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {topicResources.map((t, idx) => {
+                              const broker = t.broker || t.broker_service || "—";
+                              return (
+                              <tr key={`${broker}-${t.topic}-${t.partition ?? "na"}-${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="px-3 py-2 text-white/85 font-mono truncate max-w-[180px]" title={t.topic}>{t.topic}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{broker}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{t.partition ?? "—"}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{t.subscriber ?? "—"}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{t.consumer_group ?? "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.depth != null ? t.depth.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.in_flight != null ? t.in_flight.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.max_concurrency != null ? t.max_concurrency : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.consumer_target != null ? t.consumer_target : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{formatMs(t.oldest_message_age_ms)}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.drop_count != null ? t.drop_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.redelivery_count != null ? t.redelivery_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.dlq_count != null ? t.dlq_count.toLocaleString() : "—"}</td>
+                              </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Latency distribution (run-level) */}
               {displayMetrics.summary && (() => {

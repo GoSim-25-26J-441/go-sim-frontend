@@ -296,6 +296,11 @@ export interface ClusterPlacementResources {
 
 export interface SnapshotMetrics {
   total_requests?: number;
+  ingress_requests?: number;
+  internal_requests?: number;
+  retry_attempts?: number;
+  attempt_error_rate?: number;
+  ingress_error_rate?: number;
   total_errors?: number;
   total_duration_ms?: number;
   failed_requests?: number;
