@@ -1,32 +1,15 @@
 "use client";
 
-export interface ClusterPlacementHostResource {
-  host_id: string;
-  cpu_cores?: number;
-  memory_gb?: number;
-}
-
-export interface ClusterPlacementServiceResource {
-  service_id: string;
-  replicas?: number;
-  cpu_cores?: number;
-  memory_mb?: number;
-}
-
-export interface ClusterPlacementInstance {
-  service_id: string;
-  instance_id?: string;
-  host_id?: string;
-  lifecycle?: string;
-  cpu_utilization?: number;
-  memory_utilization?: number;
-}
-
-export interface ClusterPlacementResources {
-  hosts: ClusterPlacementHostResource[];
-  services: ClusterPlacementServiceResource[];
-  placements: ClusterPlacementInstance[];
-}
+import type {
+  ClusterPlacementInstance,
+  ClusterPlacementResources,
+} from "@/types/simulation";
+export type {
+  ClusterPlacementHostResource,
+  ClusterPlacementServiceResource,
+  ClusterPlacementInstance,
+  ClusterPlacementResources,
+} from "@/types/simulation";
 
 interface ClusterPlacementViewProps {
   resources?: ClusterPlacementResources | null;

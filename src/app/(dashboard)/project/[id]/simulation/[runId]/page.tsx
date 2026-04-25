@@ -57,25 +57,25 @@ import {
 } from "@/lib/api-client/simulation";
 import YAML from "yaml";
 import ClusterPlacementView, {
-  type ClusterPlacementResources,
-  type ClusterPlacementHostResource,
-  type ClusterPlacementServiceResource,
-  type ClusterPlacementInstance,
 } from "@/components/simulation/ClusterPlacementView";
+import type {
+  ClusterPlacementResources,
+  ClusterPlacementHostResource,
+  ClusterPlacementServiceResource,
+  ClusterPlacementInstance,
+  MetricPoint,
+  MetricTimeseries,
+  MetricsResponse,
+  MetricsSummary,
+  ServiceMetricSnapshot,
+  SnapshotMetrics,
+  HostMetricSnapshot,
+  MetricUpdatePayload,
+  OptimizationStepConfig,
+  OptimizationStepEvent,
+} from "@/types/simulation";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-interface ServiceConfig {
-  id: string;
-  replicas?: number;
-  [key: string]: unknown;
-}
-
-interface OptimizationStepConfig {
-  services?: ServiceConfig[];
-  workload?: unknown[];
-  hosts?: unknown[];
-}
 
 /** Editable config for Live config panel; matches PATCH shape. */
 interface LiveConfig {
@@ -100,21 +100,21 @@ function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | n
   }));
   const workload: PatchRunConfigurationWorkloadItem[] = Array.isArray(cfg.workload)
     ? cfg.workload
-        .filter((w): w is PatchRunConfigurationWorkloadItem => typeof w === "object" && w !== null && "pattern_key" in w && "rate_rps" in w)
-        .map((w) => ({ pattern_key: w.pattern_key, rate_rps: Number(w.rate_rps) }))
+        .map((w) => {
+          const r = asRecord(w);
+          if (!r) return null;
+          const pattern_key = str(r.pattern_key);
+          const rate_rps = num(r.rate_rps);
+          if (!pattern_key || rate_rps == null) return null;
+          return { pattern_key, rate_rps };
+        })
+        .filter((w): w is PatchRunConfigurationWorkloadItem => w !== null)
     : [];
   if (services.length === 0 && workload.length === 0) return null;
   return { services, workload, policies: DEFAULT_LIVE_CONFIG.policies };
 }
 
-interface OptimizationStep {
-  iteration_index: number;
-  target_p95_ms: number;
-  score_p95_ms: number;
-  reason: string;
-  previous_config?: OptimizationStepConfig;
-  current_config?: OptimizationStepConfig;
-}
+type OptimizationStep = OptimizationStepEvent;
 
 interface Candidate {
   id: string;
@@ -256,138 +256,25 @@ function sortAndDedupePoints(pts: TimePoint[]): TimePoint[] {
 }
 
 // ── Persisted metrics types ───────────────────────────────────────────────────
-
-interface MetricPoint {
-  time: string;
-  value: number;
-  labels?: Record<string, string | undefined>;
-  tags?: Record<string, unknown>;
-  service_id?: string;
-  instance_id?: string;
-  host_id?: string;
-  node_id?: string;
-}
-
-interface MetricTimeseries {
-  metric: string;
-  points: MetricPoint[];
-}
-
-/** Point from GET /runs/{id}/metrics/timeseries (flat series; optional metric per point when unfiltered). */
-interface TimeseriesPoint {
-  timestamp?: string;
-  time?: string;
-  metric?: string;
-  value: number;
-  labels?: Record<string, string | undefined>;
-  tags?: Record<string, unknown>;
-  service_id?: string;
-  host_id?: string;
-  instance_id?: string;
-  node_id?: string;
-}
-
-interface MetricsSummary {
-  /** Backend-owned final topology/placement (optional on older persisted runs). */
-  final_config?: Record<string, unknown>;
-  metrics?: Record<string, unknown>;
-  summary_data?: Record<string, unknown>;
-  total_requests?: number;
-  total_errors?: number;
-  total_duration_ms?: number;
-  successful_requests?: number;
-  failed_requests?: number;
-  throughput_rps?: number;
-  latency_p50_ms?: number;
-  latency_p95_ms?: number;
-  latency_p99_ms?: number;
-  latency_mean_ms?: number;
-}
-
-/** Per-service metrics from metrics_snapshot or GET /runs/{id}/metrics */
-interface ServiceMetricSnapshot {
-  service_name: string;
-  request_count?: number;
-  error_count?: number;
-  concurrent_requests?: number;
-  latency_p95_ms?: number;
-  cpu_utilization?: number;   // 0–1 or 0–100
-  memory_utilization?: number; // 0–1 or 0–100
-  active_replicas?: number;
-  [key: string]: unknown;
-}
-
-/** Run-level + service_metrics from SSE metrics_snapshot.data.metrics */
-interface SnapshotMetrics {
-  total_requests?: number;
-  total_errors?: number;
-  total_duration_ms?: number;
-  failed_requests?: number;
-  successful_requests?: number;
-  throughput_rps?: number;
-  latency_p50_ms?: number;
-  latency_p95_ms?: number;
-  latency_p99_ms?: number;
-  latency_mean_ms?: number;
-  service_metrics?: ServiceMetricSnapshot[];
-}
-
-/** Host-level metrics from metric_update (labels.host) or metrics_snapshot.data.host_metrics */
-interface HostMetricSnapshot {
-  host_id: string;
-  cpu_utilization?: number;   // 0–1
-  memory_utilization?: number; // 0–1
-}
-
-/** Host resources from metrics_snapshot.data.resources.hosts */
-interface HostResource {
-  host_id: string;
-  cpu_cores?: number;
-  memory_gb?: number;
-}
-
-interface ServiceResource {
-  service_id: string;
-  replicas?: number;
-  cpu_cores?: number;
-  memory_mb?: number;
-}
-
-interface InstancePlacement {
-  service_id: string;
-  instance_id?: string;
-  host_id?: string;
-  lifecycle?: string;
-  cpu_utilization?: number;
-  memory_utilization?: number;
-}
-
-interface ClusterResources {
-  hosts?: HostResource[];
-  services?: ServiceResource[];
-  placements?: InstancePlacement[];
-}
+type TimeseriesPoint = MetricPoint;
 
 type PlacementStatus = PlacementPersistenceStatus;
 
 /** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
 export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
 
-interface MetricsResponse {
-  run_id: string;
-  summary?: MetricsSummary;
-  timeseries?: MetricTimeseries[];
+type DashboardMetricsResponse = MetricsResponse & {
   /** When set, chart uses this instead of building rows from timeseries */
   timeseriesProcessed?: TimeseriesProcessedItem[];
-  metrics?: { service_metrics?: ServiceMetricSnapshot[] };
-}
+  metrics?: SnapshotMetrics;
+};
 
 interface UnscopedMetricDebugPoint {
   source: "metrics.timeseries" | "metrics/timeseries";
   metric: string;
   timestamp: string;
   value: number;
-  labels?: Record<string, string | undefined>;
+  labels?: Record<string, string | number | boolean | undefined>;
   tags?: Record<string, unknown>;
   service_id?: string;
   instance_id?: string;
@@ -515,12 +402,67 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
       instance_id: str(r.instance_id) ?? str(r.instance),
       host_id: str(r.host_id) ?? str(r.host),
       lifecycle: str(r.lifecycle) ?? str(r.state),
+      cpu_cores: num(r.cpu_cores),
+      memory_mb: num(r.memory_mb),
       cpu_utilization: num(r.cpu_utilization),
       memory_utilization: num(r.memory_utilization),
+      active_requests: num(r.active_requests),
+      queue_length: num(r.queue_length),
     });
   }
 
-  return { hosts, services, placements };
+  const rawQueues = Array.isArray(root.queues) ? root.queues : [];
+  const queues = rawQueues
+    .map((q) => {
+      const r = asRecord(q);
+      if (!r) return null;
+      const broker = str(r.broker) ?? str(r.broker_service);
+      const topic = str(r.topic);
+      if (!broker || !topic) return null;
+      return {
+        broker,
+        broker_service: broker,
+        topic,
+        depth: num(r.depth),
+        in_flight: num(r.in_flight),
+        max_concurrency: num(r.max_concurrency),
+        consumer_target: num(r.consumer_target),
+        oldest_message_age_ms: num(r.oldest_message_age_ms),
+        drop_count: num(r.drop_count),
+        redelivery_count: num(r.redelivery_count),
+        dlq_count: num(r.dlq_count),
+      };
+    })
+    .filter((q): q is NonNullable<typeof q> => q !== null);
+
+  const rawTopics = Array.isArray(root.topics) ? root.topics : [];
+  const topics = rawTopics
+    .map((t) => {
+      const r = asRecord(t);
+      if (!r) return null;
+      const broker = str(r.broker) ?? str(r.broker_service);
+      const topic = str(r.topic);
+      if (!broker || !topic) return null;
+      return {
+        broker,
+        broker_service: broker,
+        topic,
+        partition: str(r.partition),
+        subscriber: str(r.subscriber),
+        consumer_group: str(r.consumer_group),
+        depth: num(r.depth),
+        in_flight: num(r.in_flight),
+        max_concurrency: num(r.max_concurrency),
+        consumer_target: num(r.consumer_target),
+        oldest_message_age_ms: num(r.oldest_message_age_ms),
+        drop_count: num(r.drop_count),
+        redelivery_count: num(r.redelivery_count),
+        dlq_count: num(r.dlq_count),
+      };
+    })
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+
+  return { hosts, services, placements, queues, topics };
 }
 
 function isBatchOptimizationMeta(m?: RunInfo["metadata"]): boolean {
@@ -1371,11 +1313,11 @@ export default function SimulationRunPage() {
   const [scenarioYaml, setScenarioYaml] = useState<string | null>(null);
   const [scenarioOpen, setScenarioOpen] = useState(false);
   // Persisted metrics (fetched when run reaches terminal state)
-  const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null);
+  const [metricsData, setMetricsData] = useState<DashboardMetricsResponse | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   // Live metrics from SSE metrics_snapshot (used while run is running)
-  const [liveMetricsData, setLiveMetricsData] = useState<MetricsResponse | null>(null);
+  const [liveMetricsData, setLiveMetricsData] = useState<DashboardMetricsResponse | null>(null);
   // Best-candidate topology (from same candidates API response)
   const [bestCandidate, setBestCandidate] = useState<{ best_candidate_id: string; best_candidate?: BestCandidateTopology } | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
@@ -1501,18 +1443,10 @@ export default function SimulationRunPage() {
 
     if (type === "metric_update") {
       try {
-        interface MetricPayload {
-          metric?: string;
-          value?: number;
-          timestamp?: string;
-          labels?: { service?: string; instance?: string; host?: string; endpoint?: string; [key: string]: unknown };
-          service_id?: string;
-          service_name?: string;
-        }
-        const outer = JSON.parse(data) as MetricPayload & { data?: MetricPayload };
+        const outer = JSON.parse(data) as MetricUpdatePayload & { data?: MetricUpdatePayload };
         // Backend wraps the metric inside a "data" field: { data: {...}, event, run_id }
         // Fall back to flat format for older/direct payloads.
-        const m: MetricPayload = outer.data ?? outer;
+        const m: MetricUpdatePayload = outer.data ?? outer;
         const svc = (m.labels?.service ?? m.service_id ?? m.service_name) as string | undefined;
         if (svc) knownServicesRef.current.add(svc);
 
@@ -1581,13 +1515,16 @@ export default function SimulationRunPage() {
           data?: {
             metrics?: SnapshotMetrics;
             host_metrics?: HostMetricSnapshot[];
-            resources?: ClusterResources;
+            resources?: ClusterPlacementResources;
           };
           metrics?: SnapshotMetrics;
         };
         const dataPayload = parsed.data;
         const normalizedResources = normalizeClusterResources(dataPayload?.resources);
         const liveStatusNow = placementStatusFromFinalConfig(dataPayload?.resources);
+        const resourcePayload = asRecord(dataPayload?.resources);
+        const hasQueuesArray = !!resourcePayload && Object.prototype.hasOwnProperty.call(resourcePayload, "queues") && Array.isArray(resourcePayload.queues);
+        const hasTopicsArray = !!resourcePayload && Object.prototype.hasOwnProperty.call(resourcePayload, "topics") && Array.isArray(resourcePayload.topics);
         setLivePlacementStatus(liveStatusNow);
         if (normalizedResources) {
           setClusterResources((prev) => ({
@@ -1597,6 +1534,12 @@ export default function SimulationRunPage() {
               liveStatusNow === "unavailable"
                 ? prev?.placements ?? normalizedResources.placements
                 : normalizedResources.placements,
+            queues: hasQueuesArray
+              ? normalizedResources.queues
+              : prev?.queues ?? normalizedResources.queues,
+            topics: hasTopicsArray
+              ? normalizedResources.topics
+              : prev?.topics ?? normalizedResources.topics,
           }));
         }
         const metrics = dataPayload?.metrics ?? parsed.metrics;
@@ -1655,9 +1598,9 @@ export default function SimulationRunPage() {
         const num = (v: unknown): number | undefined =>
           typeof v === "number" && Number.isFinite(v) ? v : undefined;
         const totalRequests = num(metrics.total_requests);
-        if (totalRequests == null && !list?.length) return;
 
         const summary: MetricsSummary = {
+          ...(metrics as Record<string, unknown>),
           total_requests: totalRequests ?? undefined,
           total_errors: num(metrics.total_errors) ?? num(metrics.failed_requests),
           total_duration_ms: num(metrics.total_duration_ms),
@@ -1672,7 +1615,10 @@ export default function SimulationRunPage() {
         setLiveMetricsData({
           run_id: runId,
           summary,
-          metrics: Array.isArray(list) && list.length > 0 ? { service_metrics: list } : undefined,
+          metrics: {
+            ...(metrics as Record<string, unknown>),
+            service_metrics: Array.isArray(list) ? list : undefined,
+          },
         });
       } catch { /* malformed — ignore */ }
     }
@@ -1781,7 +1727,7 @@ export default function SimulationRunPage() {
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as MetricsResponse & Record<string, unknown>;
+      const data = (await res.json()) as DashboardMetricsResponse & Record<string, unknown>;
       if (Array.isArray(data.timeseries) && data.timeseries.length > 0) {
         const samples: UnscopedMetricDebugPoint[] = [];
         for (const ts of data.timeseries) {

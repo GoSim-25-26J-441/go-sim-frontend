@@ -6,7 +6,7 @@
 import type { NormalizedPersistedMetricPoint } from "./normalize-persisted-metric-point";
 
 export type SeriesScopeInput = {
-  labels?: Record<string, string | undefined>;
+  labels?: Record<string, string | number | boolean | undefined>;
   tags?: Record<string, unknown>;
   service_id?: string;
   host_id?: string;
@@ -22,26 +22,31 @@ export type SeriesScopeInput = {
 };
 
 export function extractSeriesScope(p: SeriesScopeInput): string {
+  const id = (v: unknown): string | undefined => {
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    return undefined;
+  };
   const tag = (key: string) => {
     const v = p.tags?.[key];
-    return typeof v === "string" ? v : undefined;
+    return id(v);
   };
 
   return (
-    p.serviceId ??
-    p.labels?.service ??
-    p.labels?.service_id ??
-    p.labels?.host ??
-    p.labels?.host_id ??
-    p.labels?.instance ??
-    p.labels?.instance_id ??
-    p.service_id ??
-    p.hostId ??
-    p.host_id ??
-    p.instanceId ??
-    p.instance_id ??
-    p.nodeId ??
-    p.node_id ??
+    id(p.serviceId) ??
+    id(p.labels?.service) ??
+    id(p.labels?.service_id) ??
+    id(p.labels?.host) ??
+    id(p.labels?.host_id) ??
+    id(p.labels?.instance) ??
+    id(p.labels?.instance_id) ??
+    id(p.service_id) ??
+    id(p.hostId) ??
+    id(p.host_id) ??
+    id(p.instanceId) ??
+    id(p.instance_id) ??
+    id(p.nodeId) ??
+    id(p.node_id) ??
     tag("service") ??
     tag("service_id") ??
     tag("host") ??
