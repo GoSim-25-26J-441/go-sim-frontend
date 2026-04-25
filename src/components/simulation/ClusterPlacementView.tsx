@@ -34,6 +34,10 @@ function resourceChip(label: string, value: string) {
   );
 }
 
+function num(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
 export default function ClusterPlacementView({
   resources,
   hostMetrics = {},
@@ -70,6 +74,20 @@ export default function ClusterPlacementView({
     else current.active += 1;
     serviceSummary.set(key, current);
   }
+
+  const placementUtilByHost = new Map<string, { cpuVals: number[]; memVals: number[] }>();
+  for (const p of placements) {
+    const hostId = p.host_id && p.host_id.trim() ? p.host_id : "__unknown__";
+    const rec = placementUtilByHost.get(hostId) ?? { cpuVals: [], memVals: [] };
+    const cpu = num(p.cpu_utilization);
+    const mem = num(p.memory_utilization);
+    if (cpu != null) rec.cpuVals.push(cpu);
+    if (mem != null) rec.memVals.push(mem);
+    placementUtilByHost.set(hostId, rec);
+  }
+
+  const avg = (vals: number[]): number | undefined =>
+    vals.length > 0 ? vals.reduce((sum, v) => sum + v, 0) / vals.length : undefined;
 
   return (
     <div className="bg-card border border-border rounded-lg p-4 space-y-3">
@@ -123,7 +141,21 @@ export default function ClusterPlacementView({
         {orderedHostIds.map((hostId) => {
           const hostPlacements = grouped.get(hostId) ?? [];
           const host = hostMap.get(hostId);
-          const hm = hostId === "__unknown__" ? undefined : hostMetrics[hostId];
+          const explicitHm = hostId === "__unknown__" ? undefined : hostMetrics[hostId];
+          const placementUtil = placementUtilByHost.get(hostId);
+          const hm =
+            hostId === "__unknown__"
+              ? undefined
+              : {
+                  cpu_utilization:
+                    explicitHm?.cpu_utilization ??
+                    num(host?.cpu_utilization) ??
+                    avg(placementUtil?.cpuVals ?? []),
+                  memory_utilization:
+                    explicitHm?.memory_utilization ??
+                    num(host?.memory_utilization) ??
+                    avg(placementUtil?.memVals ?? []),
+                };
           const title = hostId === "__unknown__" ? "Unknown host" : hostId;
           return (
             <div key={hostId} className="rounded-lg border border-white/10 bg-black/20 p-3 space-y-2">
@@ -135,10 +167,10 @@ export default function ClusterPlacementView({
               </div>
 
               <div className="flex flex-wrap gap-1.5">
-                {host && resourceChip("cores", host.cpu_cores != null ? String(host.cpu_cores) : "—")}
-                {host && resourceChip("mem", host.memory_gb != null ? `${host.memory_gb} GB` : "—")}
-                {hm && resourceChip("cpu util", toPct(hm.cpu_utilization))}
-                {hm && resourceChip("mem util", toPct(hm.memory_utilization))}
+                {resourceChip("cores", host?.cpu_cores != null ? String(host.cpu_cores) : "—")}
+                {resourceChip("mem", host?.memory_gb != null ? `${host.memory_gb} GB` : "—")}
+                {resourceChip("cpu util", toPct(hm?.cpu_utilization))}
+                {resourceChip("mem util", toPct(hm?.memory_utilization))}
               </div>
 
               {hostPlacements.length === 0 ? (
@@ -163,6 +195,14 @@ export default function ClusterPlacementView({
                         </div>
                         <div className="text-[10px] opacity-80">
                           {lifecycle} · CPU {toPct(p.cpu_utilization)} · Mem {toPct(p.memory_utilization)}
+                        </div>
+                        <div className="text-[10px] opacity-80">
+                          req {p.active_requests != null ? p.active_requests.toLocaleString() : "—"} · queue{" "}
+                          {p.queue_length != null ? p.queue_length.toLocaleString() : "—"}
+                        </div>
+                        <div className="text-[10px] opacity-80">
+                          alloc {p.cpu_cores != null ? p.cpu_cores : "—"} cores ·{" "}
+                          {p.memory_mb != null ? `${p.memory_mb} MB` : "—"}
                         </div>
                       </div>
                     );

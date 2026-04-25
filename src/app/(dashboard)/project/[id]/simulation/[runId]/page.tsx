@@ -375,6 +375,8 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
       host_id,
       cpu_cores: num(r.cpu_cores) ?? num(r.cores),
       memory_gb: num(r.memory_gb),
+      cpu_utilization: num(r.cpu_utilization),
+      memory_utilization: num(r.memory_utilization),
     });
   }
 
