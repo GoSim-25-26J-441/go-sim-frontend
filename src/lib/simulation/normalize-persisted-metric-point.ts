@@ -2,6 +2,7 @@
  * Normalize persisted metric points from GET /runs/:id/metrics (nested) and
  * GET /runs/:id/metrics/timeseries (flat) for consistent chart grouping and UI.
  */
+import type { SimulationMetricLabels } from "@/types/simulation";
 
 export type PersistedLabelValue = string | number | boolean;
 
@@ -9,7 +10,7 @@ export interface NormalizedPersistedMetricPoint {
   metric?: string;
   timestamp: string;
   value: number;
-  labels: Record<string, PersistedLabelValue>;
+  labels: SimulationMetricLabels;
   hostId?: string;
   instanceId?: string;
   serviceId?: string;
@@ -52,7 +53,7 @@ function idString(v: unknown): string | undefined {
 function buildLabels(
   rawLabels: unknown,
   tags: Record<string, unknown>
-): Record<string, PersistedLabelValue> {
+): SimulationMetricLabels {
   let labels = asLabelRecord(rawLabels);
   if (Object.keys(labels).length === 0) {
     labels = asLabelRecord(tags);

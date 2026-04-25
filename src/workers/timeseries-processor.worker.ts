@@ -8,44 +8,13 @@ import {
   flatTimeseriesSeriesKeyFromNormalized,
 } from "../lib/simulation/metrics-series-scope";
 import { normalizePersistedMetricPoint } from "../lib/simulation/normalize-persisted-metric-point";
+import type { MetricPoint, MetricTimeseries, MetricsResponse } from "../types/simulation";
 
 const MAX_POINTS = 1000;
 
 type ChartRow = Record<string, number>;
 
-interface MetricPoint {
-  time: string;
-  value: number;
-  labels?: Record<string, string | undefined>;
-  tags?: Record<string, unknown>;
-  service_id?: string;
-  instance_id?: string;
-  host_id?: string;
-  node_id?: string;
-}
-
-interface MetricTimeseries {
-  metric: string;
-  points: MetricPoint[];
-}
-
-interface MetricsResponse {
-  run_id: string;
-  timeseries?: MetricTimeseries[];
-  [key: string]: unknown;
-}
-
-interface TimeseriesPoint {
-  timestamp: string;
-  value: number;
-  metric?: string;
-  labels?: Record<string, string | undefined>;
-  tags?: Record<string, unknown>;
-  service_id?: string;
-  instance_id?: string;
-  host_id?: string;
-  node_id?: string;
-}
+type TimeseriesPoint = MetricPoint;
 
 function downsampleRows(rows: ChartRow[]): ChartRow[] {
   if (rows.length <= MAX_POINTS) return rows;
