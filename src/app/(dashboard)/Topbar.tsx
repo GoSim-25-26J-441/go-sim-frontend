@@ -113,9 +113,9 @@ export default function Topbar() {
             {isDropdownOpen && (
               <div
                 role="menu"
-                className="absolute right-0 top-full mt-3 w-56 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                className="absolute right-0 top-full mt-3 w-56 bg-[#1F1F1F] border border-gray-700 rounded-md shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
               >
-                <div className="px-4 py-3 border-b border-gray-700 bg-gray-800/50">
+                <div className="px-4 py-3 border-b border-gray-700">
                   <p className="text-sm font-semibold text-white truncate">
                     {displayName}
                   </p>
