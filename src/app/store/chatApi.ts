@@ -46,6 +46,45 @@ export interface ChatResponse {
   [key: string]: unknown;
 }
 
+function extractErrorMessage(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as Record<string, unknown>;
+  if (typeof payload.error === "string") return payload.error;
+  if (
+    payload.error &&
+    typeof payload.error === "object" &&
+    typeof (payload.error as Record<string, unknown>).message === "string"
+  ) {
+    return (payload.error as Record<string, string>).message;
+  }
+  if (typeof payload.message === "string") return payload.message;
+  return null;
+}
+
+function normalizeChatErrorMessage(raw: string, status: number): string {
+  const msg = raw.trim();
+  const lower = msg.toLowerCase();
+  const isTimeout =
+    status === 504 ||
+    lower.includes("context deadline exceeded") ||
+    lower.includes("timed out") ||
+    lower.includes("client.timeout exceeded");
+
+  if (isTimeout) {
+    return "The AI model timed out while generating a response. Please try again or shorten your request.";
+  }
+
+  if (status >= 500) {
+    return "Chat service is temporarily unavailable. Please try again shortly.";
+  }
+
+  if (msg.length > 300 || msg.includes("{\"ok\"")) {
+    return "Failed to send message. Please try again.";
+  }
+
+  return msg;
+}
+
 export const chatApi = createApi({
   reducerPath: "chatApi",
   baseQuery: fetchBaseQuery({
@@ -158,12 +197,9 @@ export const chatApi = createApi({
       }),
       transformResponse: (res: unknown) => res as ChatResponse,
       transformErrorResponse: (res: { data?: unknown; status: number }) => {
-        const data = res.data as any;
-        const msg =
-          typeof data?.error === "string"
-            ? data.error
-            : `Failed to send message: ${res.status}`;
-        return new Error(msg);
+        const raw =
+          extractErrorMessage(res.data) ?? `Failed to send message: ${res.status}`;
+        return new Error(normalizeChatErrorMessage(raw, res.status));
       },
       invalidatesTags: (_result, _err, arg) => [
         { type: "ChatMessages", id: `${arg.projectId}-${arg.threadId}` },
