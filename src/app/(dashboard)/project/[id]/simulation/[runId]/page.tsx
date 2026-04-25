@@ -44,6 +44,7 @@ import {
   resolveFinalConfigForPlacement,
   type PlacementPersistenceStatus,
 } from "@/lib/simulation/persisted-metrics-final-config";
+import { buildOnlineConfigModel, type OnlineConfigModel } from "@/lib/simulation/online-config-model";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
   patchRunConfiguration,
@@ -1745,6 +1746,8 @@ export default function SimulationRunPage() {
     best_score?: number;
   } | null>(null);
   const [leaseRenewError, setLeaseRenewError] = useState<string | null>(null);
+  const nextLeaseRenewAtRef = useRef<number | null>(null);
+  const onlineConfigModelRef = useRef<OnlineConfigModel | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
@@ -2768,6 +2771,7 @@ export default function SimulationRunPage() {
 
   useEffect(() => {
     if (status !== "running" || !isOnlineMode || leaseTtlMs == null) {
+      nextLeaseRenewAtRef.current = null;
       return;
     }
     const period = Math.min(
@@ -2775,6 +2779,7 @@ export default function SimulationRunPage() {
       Math.max(leaseTtlMs - 2_000, 5_000),
     );
     const tick = () => {
+      nextLeaseRenewAtRef.current = Date.now() + period;
       renewOnlineLease(runId)
         .then(() => setLeaseRenewError(null))
         .catch((e: unknown) => {
@@ -2875,6 +2880,39 @@ export default function SimulationRunPage() {
       serviceIds: Array.from(new Set(serviceIds)).sort(),
     };
   }, [runInfo?.configuration, scenarioYaml]);
+
+  // Phase-2 wiring prep: compute online config field model from existing observable state only.
+  // Kept internal for now (no rendering/endpoints/behavior changes in this step).
+  useEffect(() => {
+    const latestStepConfig =
+      [...optSteps].reverse().find((step) => step.current_config != null)?.current_config ?? null;
+    onlineConfigModelRef.current = buildOnlineConfigModel({
+      runMetadata:
+        runInfo?.metadata && typeof runInfo.metadata === "object"
+          ? (runInfo.metadata as Record<string, unknown>)
+          : null,
+      latestOptimizationConfig: latestStepConfig,
+      latestResources: placementSource.resources ?? null,
+      scenarioServiceIds: runDerivedOptions.serviceIds,
+      scenarioWorkloadPatternKeys: runDerivedOptions.patternKeys,
+      leaseState: {
+        autoRenewEnabled: status === "running" && isOnlineMode && leaseTtlMs != null,
+        lastRenewalStatus: leaseRenewError ? "error" : "ok",
+        lastRenewalError: leaseRenewError,
+        nextRenewalAtMs: nextLeaseRenewAtRef.current,
+      },
+    });
+  }, [
+    optSteps,
+    runInfo?.metadata,
+    placementSource.resources,
+    runDerivedOptions.serviceIds,
+    runDerivedOptions.patternKeys,
+    status,
+    isOnlineMode,
+    leaseTtlMs,
+    leaseRenewError,
+  ]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
