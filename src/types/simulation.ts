@@ -264,6 +264,8 @@ export interface ClusterPlacementHostResource {
   host_id: string;
   cpu_cores?: number;
   memory_gb?: number;
+  cpu_utilization?: number;
+  memory_utilization?: number;
 }
 
 export interface ClusterPlacementServiceResource {
