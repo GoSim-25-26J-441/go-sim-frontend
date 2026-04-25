@@ -67,6 +67,7 @@ import type {
   MetricTimeseries,
   MetricsResponse,
   MetricsSummary,
+  EndpointRequestStat,
   ServiceMetricSnapshot,
   SnapshotMetrics,
   HostMetricSnapshot,
@@ -689,6 +690,22 @@ type BottleneckTag =
   | "underutilized"
   | "healthy";
 
+const ENDPOINT_TRIAGE_THRESHOLDS = {
+  lowVolumeRequests: 10,
+  failingErrorRate: 0.05,
+  queueBoundShare: 0.25,
+  processingBoundShare: 0.5,
+  downstreamRootHopRatio: 1.5,
+} as const;
+
+type EndpointTriageTag =
+  | "failing"
+  | "queue-bound"
+  | "processing-bound"
+  | "downstream/topology-bound"
+  | "low-volume"
+  | "healthy";
+
 const TOPOLOGY_HEALTH_THRESHOLDS = {
   localityWatchMin: 0.8,
   localityDegradedMin: 0.6,
@@ -762,6 +779,56 @@ function topologyHealthClasses(health: TopologyHealth): string {
       return "border-red-500/30 bg-red-500/10 text-red-200";
     case "watch":
       return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
+}
+
+function endpointErrorRate(requestCount: number | undefined, errorCount: number | undefined): number | undefined {
+  if (!hasNumber(requestCount) || requestCount <= 0 || !hasNumber(errorCount)) return undefined;
+  return errorCount / requestCount;
+}
+
+function classifyEndpointTriage(sm: EndpointRequestStat): EndpointTriageTag {
+  const requests = hasNumber(sm.request_count) ? sm.request_count : undefined;
+  const errors = hasNumber(sm.error_count) ? sm.error_count : undefined;
+  const hopP95 = hasNumber(sm.latency_p95_ms) ? sm.latency_p95_ms : undefined;
+  const rootP95 = hasNumber(sm.root_latency_p95_ms) ? sm.root_latency_p95_ms : undefined;
+  const queueP95 = hasNumber(sm.queue_wait_p95_ms) ? sm.queue_wait_p95_ms : undefined;
+  const processingP95 = hasNumber(sm.processing_latency_p95_ms) ? sm.processing_latency_p95_ms : undefined;
+  const errRate = endpointErrorRate(requests, errors);
+
+  if (hasNumber(errRate) && errRate >= ENDPOINT_TRIAGE_THRESHOLDS.failingErrorRate) return "failing";
+  if (hasNumber(requests) && requests < ENDPOINT_TRIAGE_THRESHOLDS.lowVolumeRequests) return "low-volume";
+  if (hasNumber(hopP95) && hopP95 > 0 && hasNumber(queueP95) && queueP95 / hopP95 >= ENDPOINT_TRIAGE_THRESHOLDS.queueBoundShare) {
+    return "queue-bound";
+  }
+  if (
+    hasNumber(hopP95) &&
+    hopP95 > 0 &&
+    hasNumber(processingP95) &&
+    processingP95 / hopP95 >= ENDPOINT_TRIAGE_THRESHOLDS.processingBoundShare
+  ) {
+    return "processing-bound";
+  }
+  if (hasNumber(rootP95) && hasNumber(hopP95) && hopP95 > 0 && rootP95 > hopP95 * ENDPOINT_TRIAGE_THRESHOLDS.downstreamRootHopRatio) {
+    return "downstream/topology-bound";
+  }
+  return "healthy";
+}
+
+function endpointTriageTagClasses(tag: EndpointTriageTag): string {
+  switch (tag) {
+    case "failing":
+      return "border-red-500/30 bg-red-500/10 text-red-200";
+    case "queue-bound":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    case "processing-bound":
+      return "border-orange-500/30 bg-orange-500/10 text-orange-200";
+    case "downstream/topology-bound":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+    case "low-volume":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
     default:
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
   }
@@ -2121,8 +2188,17 @@ export default function SimulationRunPage() {
       const serviceMetrics =
         data.metrics?.service_metrics ??
         (Array.isArray(fromSummaryMetrics.service_metrics) ? fromSummaryMetrics.service_metrics : undefined);
+      const endpointRequestStats =
+        data.metrics?.endpoint_request_stats ??
+        (Array.isArray(fromSummaryMetrics.endpoint_request_stats) ? fromSummaryMetrics.endpoint_request_stats : undefined);
       const metricsPayload =
-        serviceMetrics != null ? { ...data.metrics, service_metrics: serviceMetrics } : data.metrics;
+        serviceMetrics != null || endpointRequestStats != null
+          ? {
+              ...data.metrics,
+              ...(serviceMetrics != null ? { service_metrics: serviceMetrics } : {}),
+              ...(endpointRequestStats != null ? { endpoint_request_stats: endpointRequestStats } : {}),
+            }
+          : data.metrics;
 
       if (data.timeseries && data.timeseries.length > 0 && typeof Worker !== "undefined") {
         let worker: Worker | null = timeseriesWorkerRef.current;
@@ -4319,6 +4395,86 @@ export default function SimulationRunPage() {
                   </div>
                 </div>
               )}
+
+              {/* Endpoint triage */}
+              {(() => {
+                const rows = displayMetrics.metrics?.endpoint_request_stats;
+                if (!Array.isArray(rows) || rows.length === 0) {
+                  return (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Endpoint triage</h3>
+                      <p className="text-xs text-white/35 italic">No endpoint request stats reported for this run.</p>
+                    </div>
+                  );
+                }
+
+                const sortedRows = [...rows].sort((a, b) => {
+                  const aErr = endpointErrorRate(a.request_count, a.error_count) ?? -1;
+                  const bErr = endpointErrorRate(b.request_count, b.error_count) ?? -1;
+                  if (bErr !== aErr) return bErr - aErr;
+                  const aRoot = hasNumber(a.root_latency_p95_ms) ? a.root_latency_p95_ms : -1;
+                  const bRoot = hasNumber(b.root_latency_p95_ms) ? b.root_latency_p95_ms : -1;
+                  if (bRoot !== aRoot) return bRoot - aRoot;
+                  const aReq = hasNumber(a.request_count) ? a.request_count : -1;
+                  const bReq = hasNumber(b.request_count) ? b.request_count : -1;
+                  if (bReq !== aReq) return bReq - aReq;
+                  const svcCmp = String(a.service_name ?? "").localeCompare(String(b.service_name ?? ""));
+                  if (svcCmp !== 0) return svcCmp;
+                  return String(a.endpoint_path ?? "").localeCompare(String(b.endpoint_path ?? ""));
+                });
+
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Endpoint triage</h3>
+                    <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-white/50">
+                            <th className="px-3 py-2 font-medium">Service</th>
+                            <th className="px-3 py-2 font-medium">Endpoint</th>
+                            <th className="px-3 py-2 font-medium text-right">Requests</th>
+                            <th className="px-3 py-2 font-medium text-right">Errors</th>
+                            <th className="px-3 py-2 font-medium text-right">Error rate</th>
+                            <th className="px-3 py-2 font-medium text-right">Root p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Hop p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Queue wait p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Processing p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Triage tag</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedRows.map((row, idx) => {
+                            const triage = classifyEndpointTriage(row);
+                            const errRate = endpointErrorRate(row.request_count, row.error_count);
+                            return (
+                              <tr key={`${row.service_name}:${row.endpoint_path}:${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="px-3 py-2 text-white font-mono truncate max-w-[140px]" title={row.service_name}>
+                                  {row.service_name}
+                                </td>
+                                <td className="px-3 py-2 text-white/85 font-mono truncate max-w-[220px]" title={row.endpoint_path}>
+                                  {row.endpoint_path}
+                                </td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatCount(row.request_count)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatCount(row.error_count)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatPercent(errRate, 2)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.root_latency_p95_ms)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.latency_p95_ms)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.queue_wait_p95_ms)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.processing_latency_p95_ms)}</td>
+                                <td className="px-3 py-2 text-right">
+                                  <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-medium ${endpointTriageTagClasses(triage)}`}>
+                                    {triage}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Messaging pressure */}
               {displayMetrics.summary && (() => {
