@@ -177,7 +177,7 @@ export interface CreateProjectRunResponse {
 
 export interface PatchRunConfigurationService {
   id: string;
-  replicas?: number;
+  replicas: number;
   cpu_cores?: number;
   memory_mb?: number;
 }
@@ -331,8 +331,6 @@ export async function renewOnlineLease(runId: string): Promise<{ ok?: boolean; m
   const url = `${BASE_URL}/runs/${encodeURIComponent(runId)}/online/renew-lease`;
   const response = await authenticatedFetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
   });
   if (!response.ok) {
     await throwSimulationHttpError(response, "Lease renewal failed");

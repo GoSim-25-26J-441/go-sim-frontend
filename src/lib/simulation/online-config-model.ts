@@ -4,6 +4,12 @@ import type {
   PatchRunConfigurationWorkloadItem,
 } from "@/lib/api-client/simulation";
 import type { ClusterPlacementResources, OptimizationStepConfig } from "@/types/simulation";
+import {
+  validateAndBuildServicePatchRows,
+  validateAndNormalizePoliciesForPatch,
+  validateWorkloadPatchRows,
+  type RuntimeServiceDraft,
+} from "./online-runtime-payload-validation";
 
 export type OnlineConfigFieldGroup = "runtimeEditable" | "leaseControl" | "createTimeLocked";
 export type OnlineConfigFieldMutability = "runtime_patchable" | "action_metadata" | "create_time_locked";
@@ -36,6 +42,10 @@ export interface OnlineConfigModel {
   fields: OnlineConfigFieldModel[];
   byGroup: Record<OnlineConfigFieldGroup, OnlineConfigFieldModel[]>;
 }
+
+type ValidationOk<T> = { ok: true; value: T };
+type ValidationErr = { ok: false; error: string };
+type ValidationResult<T> = ValidationOk<T> | ValidationErr;
 
 export interface OnlineConfigModelInputs {
   runMetadata?: Record<string, unknown> | null;
@@ -383,3 +393,60 @@ export function buildOnlineConfigModel(inputs: OnlineConfigModelInputs): OnlineC
 
 export type OnlineRuntimeEditableServiceField = keyof PatchRunConfigurationService;
 export type OnlineRuntimeEditableWorkloadField = keyof PatchRunConfigurationWorkloadItem;
+
+function runtimeEditableKeys(model: OnlineConfigModel): Set<string> {
+  return new Set(
+    model.byGroup.runtimeEditable
+      .filter((f) => f.mutability === "runtime_patchable")
+      .map((f) => f.key)
+  );
+}
+
+export function buildServicePatchPayloadFromModel(
+  model: OnlineConfigModel,
+  rows: RuntimeServiceDraft[],
+  replicasByServiceId: Record<string, number | undefined>
+): ValidationResult<PatchRunConfigurationService[]> {
+  const editable = runtimeEditableKeys(model);
+  const requiredKeys = [
+    "services[].id",
+    "services[].replicas",
+    "services[].cpu_cores",
+    "services[].memory_mb",
+  ];
+  for (const key of requiredKeys) {
+    if (!editable.has(key)) {
+      return { ok: false, error: `Field '${key}' is not runtime editable in current online config model.` };
+    }
+  }
+  return validateAndBuildServicePatchRows(rows, replicasByServiceId);
+}
+
+export function buildWorkloadPatchPayloadFromModel(
+  model: OnlineConfigModel,
+  rows: PatchRunConfigurationWorkloadItem[]
+): ValidationResult<PatchRunConfigurationWorkloadItem[]> {
+  const editable = runtimeEditableKeys(model);
+  if (!editable.has("workload[].pattern_key") || !editable.has("workload[].rate_rps")) {
+    return { ok: false, error: "Workload fields are not runtime editable in current online config model." };
+  }
+  return validateWorkloadPatchRows(rows);
+}
+
+export function buildPoliciesPatchPayloadFromModel(
+  model: OnlineConfigModel,
+  policies: PatchRunConfigurationPolicies
+): ValidationResult<PatchRunConfigurationPolicies> {
+  const editable = runtimeEditableKeys(model);
+  const requiredKeys = [
+    "policies.autoscaling.enabled",
+    "policies.autoscaling.target_cpu_util",
+    "policies.autoscaling.scale_step",
+  ];
+  for (const key of requiredKeys) {
+    if (!editable.has(key)) {
+      return { ok: false, error: `Field '${key}' is not runtime editable in current online config model.` };
+    }
+  }
+  return validateAndNormalizePoliciesForPatch(policies);
+}

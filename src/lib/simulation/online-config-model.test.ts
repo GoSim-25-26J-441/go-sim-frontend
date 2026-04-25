@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildOnlineConfigModel } from "./online-config-model";
+import {
+  buildOnlineConfigModel,
+  buildPoliciesPatchPayloadFromModel,
+  buildServicePatchPayloadFromModel,
+  buildWorkloadPatchPayloadFromModel,
+} from "./online-config-model";
 
 describe("buildOnlineConfigModel", () => {
   it("classifies runtime editable fields and exposes service/workload observed values", () => {
@@ -65,5 +70,29 @@ describe("buildOnlineConfigModel", () => {
     expect(locked.some((f) => f.key === "max_hosts")).toBe(true);
     expect(locked.some((f) => f.key === "min_locality_hit_rate")).toBe(true);
     expect(locked.some((f) => f.key === "topology_guardrail_enabled")).toBe(true);
+  });
+
+  it("builds service/workload/policy patch payloads from runtime editable model", () => {
+    const model = buildOnlineConfigModel({});
+    const servicePayload = buildServicePatchPayloadFromModel(
+      model,
+      [{ id: "checkout", cpu_cores: 1.5 }],
+      { checkout: 2 }
+    );
+    expect(servicePayload.ok).toBe(true);
+    if (servicePayload.ok) {
+      expect(servicePayload.value[0]).toMatchObject({ id: "checkout", replicas: 2, cpu_cores: 1.5 });
+    }
+
+    const workloadPayload = buildWorkloadPatchPayloadFromModel(model, [{ pattern_key: "steady", rate_rps: 10 }]);
+    expect(workloadPayload.ok).toBe(true);
+
+    const policyPayload = buildPoliciesPatchPayloadFromModel(model, {
+      autoscaling: { enabled: true, target_cpu_util: 70, scale_step: 2 },
+    });
+    expect(policyPayload.ok).toBe(true);
+    if (policyPayload.ok) {
+      expect(policyPayload.value.autoscaling?.target_cpu_util).toBeCloseTo(0.7);
+    }
   });
 });

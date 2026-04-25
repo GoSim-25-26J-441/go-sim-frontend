@@ -44,7 +44,14 @@ import {
   resolveFinalConfigForPlacement,
   type PlacementPersistenceStatus,
 } from "@/lib/simulation/persisted-metrics-final-config";
-import { buildOnlineConfigModel, type OnlineConfigModel } from "@/lib/simulation/online-config-model";
+import {
+  buildOnlineConfigModel,
+  buildPoliciesPatchPayloadFromModel,
+  buildServicePatchPayloadFromModel,
+  buildWorkloadPatchPayloadFromModel,
+  type OnlineConfigModel,
+} from "@/lib/simulation/online-config-model";
+import { type RuntimeServiceDraft } from "@/lib/simulation/online-runtime-payload-validation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
   patchRunConfiguration,
@@ -53,7 +60,6 @@ import {
   startSimulationRun,
   stopSimulationRun,
   type PatchRunConfigurationBody,
-  type PatchRunConfigurationService,
   type PatchRunConfigurationWorkloadItem,
   type PatchRunConfigurationPolicies,
 } from "@/lib/api-client/simulation";
@@ -82,7 +88,7 @@ import type {
 
 /** Editable config for Live config panel; matches PATCH shape. */
 interface LiveConfig {
-  services: PatchRunConfigurationService[];
+  services: RuntimeServiceDraft[];
   workload: PatchRunConfigurationWorkloadItem[];
   policies?: PatchRunConfigurationPolicies;
 }
@@ -95,11 +101,11 @@ const DEFAULT_LIVE_CONFIG: LiveConfig = {
 
 function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | null {
   if (!cfg) return null;
-  const services: PatchRunConfigurationService[] = (cfg.services ?? []).map((s) => ({
+  const services: RuntimeServiceDraft[] = (cfg.services ?? []).map((s) => ({
     id: s.id,
     replicas: s.replicas,
-    cpu_cores: typeof (s as PatchRunConfigurationService).cpu_cores === "number" ? (s as PatchRunConfigurationService).cpu_cores : undefined,
-    memory_mb: typeof (s as PatchRunConfigurationService).memory_mb === "number" ? (s as PatchRunConfigurationService).memory_mb : undefined,
+    cpu_cores: typeof (s as RuntimeServiceDraft).cpu_cores === "number" ? (s as RuntimeServiceDraft).cpu_cores : undefined,
+    memory_mb: typeof (s as RuntimeServiceDraft).memory_mb === "number" ? (s as RuntimeServiceDraft).memory_mb : undefined,
   }));
   const workload: PatchRunConfigurationWorkloadItem[] = Array.isArray(cfg.workload)
     ? cfg.workload
@@ -2681,43 +2687,63 @@ export default function SimulationRunPage() {
   const applyServices = useCallback(async () => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
     if (!config.services.length) return;
-    const validServices = config.services.filter((s) => (s.id ?? "").toString().trim() !== "");
-    if (validServices.length !== config.services.length) {
-      setConfigUpdateError("Service ID is required for every row. Remove empty rows or pick a service from the dropdown.");
+    const replicasByServiceId: Record<string, number | undefined> = {};
+    for (const step of [...optSteps].reverse()) {
+      const services = step.current_config?.services ?? [];
+      for (const svc of services) {
+        if (typeof svc.id === "string" && typeof svc.replicas === "number" && Number.isFinite(svc.replicas)) {
+          if (replicasByServiceId[svc.id] == null) replicasByServiceId[svc.id] = svc.replicas;
+        }
+      }
+    }
+    const metricsServiceSnapshots = (liveMetricsData ?? metricsData)?.metrics?.service_metrics ?? [];
+    for (const svc of metricsServiceSnapshots) {
+      if (svc.service_name && typeof svc.active_replicas === "number" && Number.isFinite(svc.active_replicas)) {
+        if (replicasByServiceId[svc.service_name] == null) replicasByServiceId[svc.service_name] = svc.active_replicas;
+      }
+    }
+    const model = onlineConfigModelRef.current;
+    if (!model) {
+      setConfigUpdateError("Online config model is not ready yet. Please retry.");
+      return;
+    }
+    const payload = buildServicePatchPayloadFromModel(model, config.services, replicasByServiceId);
+    if (!payload.ok) {
+      setConfigUpdateError(payload.error);
       return;
     }
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      await patchRunConfiguration(runId, { services: validServices });
+      await patchRunConfiguration(runId, { services: payload.value });
     } catch (e) {
       setConfigUpdateError((e as Error).message);
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.services]);
+  }, [runId, liveConfig?.services, optSteps, liveMetricsData, metricsData]);
 
   const applyWorkload = useCallback(async () => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
     if (!config.workload.length) return;
-    const emptyPattern = config.workload.find((w) => (w.pattern_key ?? "").toString().trim() === "");
-    if (emptyPattern) {
-      setConfigUpdateError("Workload pattern key is required for every row. Pick a pattern from the dropdown.");
+    const model = onlineConfigModelRef.current;
+    if (!model) {
+      setConfigUpdateError("Online config model is not ready yet. Please retry.");
       return;
     }
-    const invalidRate = config.workload.find((w) => (w.rate_rps ?? 0) <= 0);
-    if (invalidRate) {
-      setConfigUpdateError("rate_rps must be greater than 0 for all rows.");
+    const payload = buildWorkloadPatchPayloadFromModel(model, config.workload);
+    if (!payload.ok) {
+      setConfigUpdateError(payload.error);
       return;
     }
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      if (config.workload.length === 1) {
-        const { pattern_key, rate_rps } = config.workload[0];
+      if (payload.value.length === 1) {
+        const { pattern_key, rate_rps } = payload.value[0];
         await patchRunWorkload(runId, { pattern_key, rate_rps });
       } else {
-        await patchRunConfiguration(runId, { workload: config.workload });
+        await patchRunConfiguration(runId, { workload: payload.value });
       }
     } catch (e) {
       setConfigUpdateError((e as Error).message);
@@ -2730,10 +2756,20 @@ export default function SimulationRunPage() {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
     const policies = config.policies ?? { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } };
     if (!policies.autoscaling) return;
+    const model = onlineConfigModelRef.current;
+    if (!model) {
+      setConfigUpdateError("Online config model is not ready yet. Please retry.");
+      return;
+    }
+    const payload = buildPoliciesPatchPayloadFromModel(model, policies);
+    if (!payload.ok) {
+      setConfigUpdateError(payload.error);
+      return;
+    }
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      await patchRunConfiguration(runId, { policies });
+      await patchRunConfiguration(runId, { policies: payload.value });
     } catch (e) {
       setConfigUpdateError((e as Error).message);
     } finally {
@@ -3407,7 +3443,15 @@ export default function SimulationRunPage() {
               new Set([...patternKeysFromRun, ...patternKeysFromSteps, ...patternKeysFromConfig])
             ).sort();
 
-            const servicesValid = config.services.length > 0 && config.services.every((s) => (s.id ?? "").toString().trim() !== "");
+            const servicesValid =
+              config.services.length > 0 &&
+              config.services.every(
+                (s) =>
+                  (s.id ?? "").toString().trim() !== "" &&
+                  (s.replicas == null || s.replicas >= 1) &&
+                  (s.cpu_cores == null || s.cpu_cores > 0) &&
+                  (s.memory_mb == null || s.memory_mb > 0)
+              );
             const workloadValid =
               config.workload.length > 0 &&
               config.workload.every((w) => (w.pattern_key ?? "").toString().trim() !== "" && (w.rate_rps ?? 0) > 0);
@@ -3492,7 +3536,7 @@ export default function SimulationRunPage() {
                             <td className="px-3 py-2">
                               <input
                                 type="number"
-                                min={0}
+                                min={1}
                                 step={1}
                                 value={s.replicas ?? ""}
                                 onChange={(e) => {
@@ -3513,7 +3557,7 @@ export default function SimulationRunPage() {
                             <td className="px-3 py-2">
                               <input
                                 type="number"
-                                min={0}
+                                min={0.1}
                                 step={0.1}
                                 value={s.cpu_cores ?? ""}
                                 onChange={(e) => {
@@ -3534,7 +3578,7 @@ export default function SimulationRunPage() {
                             <td className="px-3 py-2">
                               <input
                                 type="number"
-                                min={0}
+                                min={1}
                                 step={1}
                                 value={s.memory_mb ?? ""}
                                 onChange={(e) => {
@@ -3705,6 +3749,12 @@ export default function SimulationRunPage() {
                     target_cpu_util: 70,
                     scale_step: 1,
                   };
+                  const targetCpuPercent =
+                    autoscaling.target_cpu_util == null
+                      ? 70
+                      : autoscaling.target_cpu_util <= 1
+                        ? autoscaling.target_cpu_util * 100
+                        : autoscaling.target_cpu_util;
                   return (
                     <div className="flex flex-wrap items-center gap-4">
                       <label className="flex items-center gap-2 text-xs text-white/70">
@@ -3740,7 +3790,7 @@ export default function SimulationRunPage() {
                           min={0}
                           max={100}
                           step={1}
-                          value={autoscaling.target_cpu_util ?? 70}
+                          value={targetCpuPercent}
                           onChange={(e) => {
                             const v = parseInt(e.target.value, 10);
                             setLiveConfig((prev) => {
