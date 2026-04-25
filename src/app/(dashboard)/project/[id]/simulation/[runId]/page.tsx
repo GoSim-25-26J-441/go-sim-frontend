@@ -1329,7 +1329,7 @@ export default function SimulationRunPage() {
   // Concurrent requests (gauge): per-instance ref, per-service state for "current load" display
   const concurrentByInstanceRef = useRef<Record<string, number>>({});
   const [concurrentRequestsByService, setConcurrentRequestsByService] = useState<Record<string, number>>({});
-  // Host-level metrics (host-*): from metric_update labels.host or metrics_snapshot.host_metrics; gauges = latest value
+  // Host-level metrics: from metric_update host labels/ids or metrics_snapshot host_metrics; gauges = latest value
   const [hostMetrics, setHostMetrics] = useState<Record<string, { cpu_utilization?: number; memory_utilization?: number }>>({});
   const [hostResources, setHostResources] = useState<Record<string, { cpu_cores?: number; memory_gb?: number }>>({});
   const [clusterResources, setClusterResources] = useState<ClusterPlacementResources | null>(null);
@@ -1450,9 +1450,10 @@ export default function SimulationRunPage() {
         const svc = (m.labels?.service ?? m.service_id ?? m.service_name) as string | undefined;
         if (svc) knownServicesRef.current.add(svc);
 
-        // Host-level metrics (host-*): gauges, use latest value
-        const hostId = m.labels?.host as string | undefined;
-        if (hostId && typeof hostId === "string" && hostId.startsWith("host-") && m.value != null) {
+        // Host-level metrics: gauges, use latest value for any non-empty host id
+        const rawHostId = m.labels?.host ?? m.labels?.host_id ?? m.host_id;
+        const hostId = typeof rawHostId === "string" && rawHostId.trim() ? rawHostId : undefined;
+        if (hostId && m.value != null) {
           const metricName = m.metric;
           if (metricName === "cpu_utilization" || metricName === "memory_utilization") {
             setHostMetrics((prev) => ({
@@ -1545,16 +1546,21 @@ export default function SimulationRunPage() {
         const metrics = dataPayload?.metrics ?? parsed.metrics;
 
         // Host-level metrics and resources from snapshot
-        const hostMetricsList = dataPayload?.host_metrics;
+        const metricsObj = asRecord(dataPayload?.metrics ?? parsed.metrics);
+        const hostMetricsList = [
+          ...(Array.isArray(dataPayload?.host_metrics) ? dataPayload.host_metrics : []),
+          ...(Array.isArray(metricsObj?.host_metrics) ? metricsObj.host_metrics : []),
+        ];
         if (Array.isArray(hostMetricsList) && hostMetricsList.length > 0) {
           const byHost: Record<string, { cpu_utilization?: number; memory_utilization?: number }> = {};
           for (const hm of hostMetricsList) {
-            const id = hm?.host_id;
-            if (id && typeof id === "string" && id.startsWith("host-")) {
+            const rec = asRecord(hm);
+            const id = str(rec?.host_id) ?? str(rec?.host);
+            if (id) {
               const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
               byHost[id] = {
-                cpu_utilization: num(hm.cpu_utilization) ?? byHost[id]?.cpu_utilization,
-                memory_utilization: num(hm.memory_utilization) ?? byHost[id]?.memory_utilization,
+                cpu_utilization: num(rec?.cpu_utilization) ?? byHost[id]?.cpu_utilization,
+                memory_utilization: num(rec?.memory_utilization) ?? byHost[id]?.memory_utilization,
               };
             }
           }
@@ -3274,7 +3280,7 @@ export default function SimulationRunPage() {
         </div>
       )}
 
-      {/* Host-level metrics (host-*) from stream — CPU / memory utilization */}
+      {/* Host-level metrics from stream — CPU / memory utilization */}
       {(() => {
         const hostIds = Array.from(
           new Set([...Object.keys(hostMetrics), ...Object.keys(hostResources)]),
