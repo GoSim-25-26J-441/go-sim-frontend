@@ -142,6 +142,7 @@ export type SimulationMetricLabelKey =
   | "endpoint"
   | "instance"
   | "host"
+  | "broker"
   | "origin"
   | "traffic_class"
   | "source_kind"
@@ -232,7 +233,7 @@ export interface QueueResourceSnapshot {
   depth?: number;
   in_flight?: number;
   max_concurrency?: number;
-  consumer_target?: number;
+  consumer_target?: string;
   oldest_message_age_ms?: number;
   drop_count?: number;
   redelivery_count?: number;
@@ -252,7 +253,7 @@ export interface TopicResourceSnapshot {
   depth?: number;
   in_flight?: number;
   max_concurrency?: number;
-  consumer_target?: number;
+  consumer_target?: string;
   oldest_message_age_ms?: number;
   drop_count?: number;
   redelivery_count?: number;
