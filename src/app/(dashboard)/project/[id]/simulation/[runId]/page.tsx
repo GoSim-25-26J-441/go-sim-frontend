@@ -438,6 +438,15 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
+function text(v: unknown): string | undefined {
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    return trimmed !== "" ? trimmed : undefined;
+  }
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return undefined;
+}
+
 function normalizeClusterResources(input: unknown): ClusterPlacementResources | null {
   const root = asRecord(input);
   if (!root) return null;
@@ -509,7 +518,7 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
         depth: num(r.depth),
         in_flight: num(r.in_flight),
         max_concurrency: num(r.max_concurrency),
-        consumer_target: num(r.consumer_target),
+        consumer_target: text(r.consumer_target),
         oldest_message_age_ms: num(r.oldest_message_age_ms),
         drop_count: num(r.drop_count),
         redelivery_count: num(r.redelivery_count),
@@ -530,13 +539,13 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
         broker,
         broker_service: broker,
         topic,
-        partition: str(r.partition),
+        partition: text(r.partition),
         subscriber: str(r.subscriber),
         consumer_group: str(r.consumer_group),
         depth: num(r.depth),
         in_flight: num(r.in_flight),
         max_concurrency: num(r.max_concurrency),
-        consumer_target: num(r.consumer_target),
+        consumer_target: text(r.consumer_target),
         oldest_message_age_ms: num(r.oldest_message_age_ms),
         drop_count: num(r.drop_count),
         redelivery_count: num(r.redelivery_count),
@@ -4815,7 +4824,7 @@ export default function SimulationRunPage() {
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.depth != null ? q.depth.toLocaleString() : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.in_flight != null ? q.in_flight.toLocaleString() : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.max_concurrency != null ? q.max_concurrency : "—"}</td>
-                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.consumer_target != null ? q.consumer_target : "—"}</td>
+                                <td className="px-3 py-2 font-mono text-white/80">{q.consumer_target != null ? q.consumer_target : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{formatMs(q.oldest_message_age_ms)}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.drop_count != null ? q.drop_count.toLocaleString() : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.redelivery_count != null ? q.redelivery_count.toLocaleString() : "—"}</td>
@@ -4861,7 +4870,7 @@ export default function SimulationRunPage() {
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.depth != null ? t.depth.toLocaleString() : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.in_flight != null ? t.in_flight.toLocaleString() : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.max_concurrency != null ? t.max_concurrency : "—"}</td>
-                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.consumer_target != null ? t.consumer_target : "—"}</td>
+                                <td className="px-3 py-2 font-mono text-white/80">{t.consumer_target != null ? t.consumer_target : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{formatMs(t.oldest_message_age_ms)}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.drop_count != null ? t.drop_count.toLocaleString() : "—"}</td>
                                 <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.redelivery_count != null ? t.redelivery_count.toLocaleString() : "—"}</td>
