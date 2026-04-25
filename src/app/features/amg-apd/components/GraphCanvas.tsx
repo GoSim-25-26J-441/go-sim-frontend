@@ -388,6 +388,22 @@ function GraphCanvasInner({
   fullscreenButton,
 }: GraphCanvasProps & { data: AnalysisResult }) {
   const analysis = data;
+};
+
+function GraphCanvasInner({
+  data,
+  readOnly = false,
+  isGenerating = false,
+  showRegeneratingOverlay = false,
+  layoutMode = "default",
+  onGenerateGraph,
+  onExportImageReady,
+  onExportGraphJsonReady,
+  onDuplicateName,
+  onResetCanvas,
+  fullscreenButton,
+}: GraphCanvasProps & { data: AnalysisResult }) {
+  const analysis = data;
   /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
   const workAreaHeightClass =
     layoutMode === "fullscreen"
@@ -1763,6 +1779,17 @@ function computeStatsFromData(data: AnalysisResult): GraphStats {
     edges,
     detections,
   };
+}
+
+export default function GraphCanvas(props: GraphCanvasProps) {
+  if (!props.data?.graph) {
+    return (
+      <div className="border rounded bg-white p-4 text-sm text-slate-600 shadow-sm">
+        No graph to display yet. Upload a YAML and run analysis.
+      </div>
+    );
+  }
+  return <GraphCanvasInner {...props} data={props.data} />;
 }
 
 export default function GraphCanvas(props: GraphCanvasProps) {
