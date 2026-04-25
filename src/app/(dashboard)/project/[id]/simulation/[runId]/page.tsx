@@ -834,6 +834,94 @@ function endpointTriageTagClasses(tag: EndpointTriageTag): string {
   }
 }
 
+function asUnknownRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function toStr(v: unknown): string | undefined {
+  return typeof v === "string" && v.trim() ? v : undefined;
+}
+
+function getOptimizationActionLabel(reasonDetails: Record<string, unknown> | undefined): string | undefined {
+  if (!reasonDetails) return undefined;
+  return toStr(reasonDetails.type) ?? toStr(reasonDetails.action);
+}
+
+function summarizeConfigDiff(previousConfig: unknown, currentConfig: unknown): string[] {
+  const prevRec = asUnknownRecord(previousConfig) ?? {};
+  const currRec = asUnknownRecord(currentConfig) ?? {};
+  const lines: string[] = [];
+
+  const prevServices = Array.isArray(prevRec.services) ? prevRec.services : [];
+  const currServices = Array.isArray(currRec.services) ? currRec.services : [];
+  const prevById = new Map<string, Record<string, unknown>>();
+  for (const s of prevServices) {
+    const rec = asUnknownRecord(s);
+    const id = toStr(rec?.id);
+    if (rec && id) prevById.set(id, rec);
+  }
+  for (const s of currServices) {
+    const rec = asUnknownRecord(s);
+    const id = toStr(rec?.id);
+    if (!rec || !id) continue;
+    const prev = prevById.get(id);
+    if (!prev) continue;
+    const prevRep = hasNumber(prev.replicas) ? prev.replicas : undefined;
+    const currRep = hasNumber(rec.replicas) ? rec.replicas : undefined;
+    if (prevRep !== currRep && (prevRep != null || currRep != null)) lines.push(`${id} replicas ${prevRep ?? "—"} -> ${currRep ?? "—"}`);
+    const prevCpu = hasNumber(prev.cpu_cores) ? prev.cpu_cores : undefined;
+    const currCpu = hasNumber(rec.cpu_cores) ? rec.cpu_cores : undefined;
+    if (prevCpu !== currCpu && (prevCpu != null || currCpu != null)) lines.push(`${id} CPU ${prevCpu ?? "—"} -> ${currCpu ?? "—"}`);
+    const prevMem = hasNumber(prev.memory_mb) ? prev.memory_mb : undefined;
+    const currMem = hasNumber(rec.memory_mb) ? rec.memory_mb : undefined;
+    if (prevMem !== currMem && (prevMem != null || currMem != null)) lines.push(`${id} memory ${prevMem ?? "—"} -> ${currMem ?? "—"} MB`);
+  }
+
+  const prevHosts = Array.isArray(prevRec.hosts) ? prevRec.hosts : [];
+  const currHosts = Array.isArray(currRec.hosts) ? currRec.hosts : [];
+  if (prevHosts.length !== currHosts.length) lines.push(`hosts ${prevHosts.length} -> ${currHosts.length}`);
+
+  const prevPlacements = Array.isArray(prevRec.placements) ? prevRec.placements : [];
+  const currPlacements = Array.isArray(currRec.placements) ? currRec.placements : [];
+  if (prevPlacements.length !== currPlacements.length) lines.push(`placements ${prevPlacements.length} -> ${currPlacements.length}`);
+
+  return lines;
+}
+
+function formatTargetDelta(scoreP95: number | undefined, targetP95: number | undefined): string {
+  if (!hasNumber(scoreP95) || !hasNumber(targetP95)) return "target delta unavailable";
+  const delta = scoreP95 - targetP95;
+  const dir = delta > 0 ? "over target" : "under target";
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(1)} ms ${dir}`;
+}
+
+function optimizationStepFallbackSignature(step: OptimizationStep): string {
+  const rd = asUnknownRecord(step.reason_details);
+  return [
+    toStr(step.reason) ?? "",
+    hasNumber(step.score_p95_ms) ? step.score_p95_ms.toFixed(4) : "",
+    hasNumber(step.target_p95_ms) ? step.target_p95_ms.toFixed(4) : "",
+    toStr(rd?.type) ?? "",
+    toStr(rd?.action) ?? "",
+  ].join("|");
+}
+
+function isOptimizerStepBlocked(step: OptimizationStep): boolean {
+  const rd = asUnknownRecord(step.reason_details);
+  const type = toStr(rd?.type)?.toLowerCase();
+  const decisionReason = toStr(rd?.decision_reason)?.toLowerCase();
+  const action = toStr(rd?.action)?.toLowerCase();
+  if (type?.includes("topology_guard_blocked")) return true;
+  if (decisionReason && /(blocked|guard|no[_ -]?op|noop|below_min|not_apply|skipped)/.test(decisionReason)) return true;
+  const hasUsableConfigs = asUnknownRecord(step.previous_config) != null && asUnknownRecord(step.current_config) != null;
+  if (action && hasUsableConfigs) {
+    const changes = summarizeConfigDiff(step.previous_config, step.current_config);
+    if (changes.length === 0) return true;
+  }
+  return false;
+}
+
 function classifyServiceBottleneck(sm: ServiceMetricSnapshot): BottleneckTag {
   const latency = typeof sm.latency_p95_ms === "number" ? sm.latency_p95_ms : undefined;
   const queueWait = typeof sm.queue_wait_p95_ms === "number" ? sm.queue_wait_p95_ms : undefined;
@@ -1646,10 +1734,16 @@ export default function SimulationRunPage() {
       try {
         const payload = JSON.parse(data) as { data?: OptimizationStep };
         const step = payload.data;
-        if (step && step.iteration_index != null) {
+        if (step) {
           setOptSteps((prev) => {
-            const exists = prev.some((s) => s.iteration_index === step.iteration_index);
-            return exists ? prev : [...prev, step];
+            if (step.iteration_index != null) {
+              const existsByIteration = prev.some((s) => s.iteration_index === step.iteration_index);
+              return existsByIteration ? prev : [...prev, step];
+            }
+            const sig = optimizationStepFallbackSignature(step);
+            if (!sig || sig === "||||") return [...prev, step];
+            const existsBySig = prev.some((s) => s.iteration_index == null && optimizationStepFallbackSignature(s) === sig);
+            return existsBySig ? prev : [...prev, step];
           });
           const fromStep = configFromStep(step.current_config);
           if (fromStep) setLiveConfig(fromStep);
@@ -3744,84 +3838,134 @@ export default function SimulationRunPage() {
         </div>
       )}
 
-      {/* Optimization timeline — online optimization runs only */}
-      {optSteps.length > 0 && (
-        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">
-              Optimization timeline
-              <span className="ml-2 text-xs font-normal text-white/40">
-                {optSteps.length} step{optSteps.length !== 1 ? "s" : ""}
-              </span>
-            </h2>
-            {status === "running" && (
-              <span className="flex items-center gap-1.5 text-xs text-orange-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-                Live
-              </span>
-            )}
-          </div>
-
-          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-            {[...optSteps].reverse().map((step) => {
-              const overTarget = step.score_p95_ms > step.target_p95_ms;
-              return (
-                <div
-                  key={step.iteration_index}
-                  className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
-                >
-                  {/* Header row */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="font-mono text-white/40 shrink-0">
-                      #{step.iteration_index}
-                    </span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded font-mono font-medium ${
-                        overTarget
-                          ? "bg-red-500/15 text-red-300"
-                          : "bg-emerald-500/15 text-emerald-300"
-                      }`}
-                    >
-                      p95 {step.score_p95_ms.toFixed(1)} ms
-                    </span>
-                    <span className="text-white/30">
-                      target {step.target_p95_ms.toFixed(0)} ms
-                    </span>
-                    <span className="text-white/50 italic flex-1">{step.reason}</span>
-                  </div>
-
-                  {/* Config diff — services replicas */}
-                  {step.previous_config && step.current_config && (() => {
-                    const prev = step.previous_config.services ?? [];
-                    const curr = step.current_config.services ?? [];
-                    const changes = curr.filter((cs) => {
-                      const ps = prev.find((s) => s.id === cs.id);
-                      return ps && ps.replicas !== cs.replicas;
-                    });
-                    if (changes.length === 0) return null;
-                    return (
-                      <div className="flex flex-wrap gap-2 pt-1 border-t border-white/5">
-                        {changes.map((cs) => {
-                          const ps = prev.find((s) => s.id === cs.id)!;
-                          return (
-                            <span key={cs.id} className="font-mono text-[11px] text-white/60">
-                              {cs.id}:
-                              <span className="text-red-400 mx-1">{ps.replicas}</span>
-                              →
-                              <span className="text-emerald-400 ml-1">{cs.replicas}</span>
-                              <span className="text-white/30 ml-1">replicas</span>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
-              );
-            })}
-          </div>
+      {/* Optimizer decision replay */}
+      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white">
+            Optimizer decision replay
+            <span className="ml-2 text-xs font-normal text-white/40">
+              {optSteps.length} step{optSteps.length !== 1 ? "s" : ""}
+            </span>
+          </h2>
+          {status === "running" && (
+            <span className="flex items-center gap-1.5 text-xs text-orange-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+              Live
+            </span>
+          )}
         </div>
-      )}
+
+        {optSteps.length === 0 ? (
+          <p className="text-xs text-white/35 italic">No optimization decisions recorded for this run.</p>
+        ) : (
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {[...optSteps]
+              .slice()
+              .sort((a, b) => {
+                const ai = hasNumber(a.iteration_index) ? a.iteration_index : Number.MAX_SAFE_INTEGER;
+                const bi = hasNumber(b.iteration_index) ? b.iteration_index : Number.MAX_SAFE_INTEGER;
+                if (ai !== bi) return ai - bi;
+                const ar = String(a.reason ?? "");
+                const br = String(b.reason ?? "");
+                return ar.localeCompare(br);
+              })
+              .map((step, idx) => {
+                const overTarget = hasNumber(step.score_p95_ms) && hasNumber(step.target_p95_ms)
+                  ? step.score_p95_ms > step.target_p95_ms
+                  : undefined;
+                const blocked = isOptimizerStepBlocked(step);
+                const reasonDetails = asUnknownRecord(step.reason_details);
+                const actionLabel = getOptimizationActionLabel(reasonDetails ?? undefined);
+                const decisionReason = toStr(reasonDetails?.decision_reason);
+                const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
+                const primitiveReasonDetails = Object.entries(reasonDetails ?? {})
+                  .filter(([k, v]) =>
+                    !["type", "action", "decision_reason", "locality_hit_rate", "min_locality_hit_rate"].includes(k) &&
+                    (typeof v === "string" || typeof v === "number" || typeof v === "boolean")
+                  )
+                  .slice(0, 4);
+                return (
+                  <div
+                    key={`${step.iteration_index ?? "na"}-${actionLabel ?? step.reason ?? "step"}-${idx}`}
+                    className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-white/40 shrink-0">#{hasNumber(step.iteration_index) ? step.iteration_index : "—"}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded font-mono font-medium ${
+                          overTarget === undefined
+                            ? "bg-white/10 text-white/50"
+                            : overTarget
+                              ? "bg-red-500/15 text-red-300"
+                              : "bg-emerald-500/15 text-emerald-300"
+                        }`}
+                      >
+                        p95 {hasNumber(step.score_p95_ms) ? `${step.score_p95_ms.toFixed(1)} ms` : "—"}
+                      </span>
+                      <span className="text-white/30">
+                        target {hasNumber(step.target_p95_ms) ? `${step.target_p95_ms.toFixed(1)} ms` : "—"}
+                      </span>
+                      <span className={`font-mono ${overTarget === undefined ? "text-white/45" : overTarget ? "text-red-300" : "text-emerald-300"}`}>
+                        {formatTargetDelta(step.score_p95_ms, step.target_p95_ms)}
+                      </span>
+                      {actionLabel && (
+                        <span className="inline-flex rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 px-2 py-0.5 font-medium">
+                          {actionLabel}
+                        </span>
+                      )}
+                      {blocked && (
+                        <span className="inline-flex rounded border border-amber-500/30 bg-amber-500/10 text-amber-200 px-2 py-0.5 font-medium">
+                          guardrail/no-op
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-white/70 italic">{step.reason ?? "No reason provided"}</div>
+
+                    {(decisionReason || hasNumber(reasonDetails?.locality_hit_rate) || hasNumber(reasonDetails?.min_locality_hit_rate)) && (
+                      <div className="flex flex-wrap gap-2 text-[11px]">
+                        {decisionReason && (
+                          <span className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            decision: {decisionReason}
+                          </span>
+                        )}
+                        {hasNumber(reasonDetails?.locality_hit_rate) && (
+                          <span className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            locality hit {formatPercent(reasonDetails?.locality_hit_rate as number, 2)}
+                          </span>
+                        )}
+                        {hasNumber(reasonDetails?.min_locality_hit_rate) && (
+                          <span className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            min locality {formatPercent(reasonDetails?.min_locality_hit_rate as number, 2)}
+                          </span>
+                        )}
+                        {primitiveReasonDetails.map(([k, v]) => (
+                          <span key={k} className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            {k}: {String(v)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="pt-1 border-t border-white/5">
+                      {diffLines.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {diffLines.map((line) => (
+                            <span key={line} className="font-mono text-[11px] text-white/65 rounded border border-white/10 bg-black/25 px-2 py-0.5">
+                              {line}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-white/40 italic">no material config change</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
 
       {/* Candidates panel */}
       <div className="bg-card border border-border rounded-lg p-4 space-y-3">
