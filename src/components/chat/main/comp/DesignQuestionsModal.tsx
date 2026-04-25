@@ -469,8 +469,13 @@ export default function DesignQuestionsModal({
           style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
         >
           <button
-            onClick={onSkip}
-            className="text-sm transition-all duration-150 px-2 py-1 rounded-md"
+            type="button"
+            onClick={() => {
+              onSkip();
+              onClose();
+            }}
+            disabled={saving}
+            className="text-sm transition-all duration-150 px-2 py-1 rounded-md disabled:opacity-40 disabled:pointer-events-none"
             style={{ color: "rgba(255,255,255,0.35)" }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.color =

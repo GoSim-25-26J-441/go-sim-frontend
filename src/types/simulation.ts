@@ -379,6 +379,7 @@ export interface MetricUpdatePayload {
   value?: number;
   timestamp?: string;
   labels?: SimulationMetricLabels;
+  host_id?: string;
   service_id?: string;
   service_name?: string;
 }

@@ -94,7 +94,7 @@ export default function Summary({
 
           <div className="flex flex-row gap-1">
             <button
-              onClick={() => router.push("/docs")}
+              onClick={() => {}}
               className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-800/50 text-white/80 hover:text-white transition-colors shadow-md"
             >
               <ShieldAlert className="w-4 h-4" />
@@ -118,12 +118,12 @@ export default function Summary({
       </div>
 
       <div className="flex mt-5 h-[calc(90vh-180px)] flex-row gap-6">
-        <aside className="w-56 shrink-0 border-r border-white/60 flex flex-col gap-6 px-3 py-5">
+        <aside className="min-w-0 shrink-0 w-[226px] min-[1920px]:w-[320px] border-r border-white/60 flex flex-col gap-6 px-2 py-5 min-[1920px]:px-3">
           {navItems.map((item, i) => {
             const isActive = activeNav === item.key;
 
             const sharedClass = [
-              "flex w-full justify-start items-center gap-2 px-4 py-2 text-left",
+              "flex w-full justify-start items-center gap-1.5 min-[1920px]:gap-2 px-2 min-[1920px]:px-4 py-2 text-left",
               mounted
                 ? "translate-x-0 opacity-100"
                 : "-translate-x-4 opacity-0",
