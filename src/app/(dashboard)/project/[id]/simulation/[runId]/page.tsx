@@ -113,6 +113,22 @@ interface AutoscalingPolicyDraft {
   scale_step?: number;
 }
 
+type RuntimeOperationKind = "services" | "workload" | "autoscaling" | "lease" | "run_control";
+type RuntimeOperationStatus = "submitted" | "accepted" | "rejected" | "observed" | "stale";
+
+interface RuntimeOperationRecord {
+  id: string;
+  timestampMs: number;
+  kind: RuntimeOperationKind;
+  method: "PATCH" | "POST" | "PUT";
+  endpoint: string;
+  payload?: unknown;
+  summary: string;
+  validationOk: boolean;
+  status: RuntimeOperationStatus;
+  errorText?: string;
+}
+
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
   services: [],
   workload: [],
@@ -120,6 +136,7 @@ const DEFAULT_LIVE_CONFIG: LiveConfig = {
 };
 
 const PENDING_OBSERVATION_MAX_AGE_MS = 120_000;
+const RUNTIME_OPERATION_STALE_MS = 120_000;
 
 function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | null {
   if (!cfg) return null;
@@ -1793,6 +1810,7 @@ export default function SimulationRunPage() {
   const [leaseRenewStatus, setLeaseRenewStatus] = useState<"idle" | "ok" | "error">("idle");
   const [lastLeaseRenewAttemptAtMs, setLastLeaseRenewAttemptAtMs] = useState<number | null>(null);
   const [leaseClockNowMs, setLeaseClockNowMs] = useState<number>(Date.now());
+  const [runtimeOps, setRuntimeOps] = useState<RuntimeOperationRecord[]>([]);
   const nextLeaseRenewAtRef = useRef<number | null>(null);
   const onlineConfigModelRef = useRef<OnlineConfigModel | null>(null);
 
@@ -2725,6 +2743,16 @@ export default function SimulationRunPage() {
 
   // ── Live config apply (online mode) ─────────────────────────────────────────
 
+  const recordRuntimeOperation = useCallback((op: Omit<RuntimeOperationRecord, "id" | "timestampMs">): string => {
+    const id = `${op.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setRuntimeOps((prev) => [{ ...op, id, timestampMs: Date.now() }, ...prev].slice(0, 24));
+    return id;
+  }, []);
+
+  const updateRuntimeOperation = useCallback((id: string, patch: Partial<RuntimeOperationRecord>) => {
+    setRuntimeOps((prev) => prev.map((op) => (op.id === id ? { ...op, ...patch } : op)));
+  }, []);
+
   const applyServices = useCallback(async (
     serviceRows?: RuntimeServiceDraft[],
     replicasHint?: Record<string, number | undefined>,
@@ -2758,10 +2786,20 @@ export default function SimulationRunPage() {
       setConfigUpdateError(payload.error);
       return false;
     }
+    const opId = recordRuntimeOperation({
+      kind: "services",
+      method: "PATCH",
+      endpoint: `/api/v1/simulation/runs/${runId}/configuration`,
+      payload: { services: payload.value },
+      summary: `Patch ${payload.value.length} service row(s)`,
+      validationOk: true,
+      status: "submitted",
+    });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
       await patchRunConfiguration(runId, { services: payload.value });
+      updateRuntimeOperation(opId, { status: "accepted" });
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingServiceObservationById((prev) => {
           const next = { ...prev };
@@ -2774,6 +2812,10 @@ export default function SimulationRunPage() {
       }
       return true;
     } catch (e) {
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingServiceObservationById((prev) => {
           const next = { ...prev };
@@ -2786,7 +2828,7 @@ export default function SimulationRunPage() {
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.services, optSteps, liveMetricsData, metricsData]);
+  }, [runId, liveConfig?.services, optSteps, liveMetricsData, metricsData, recordRuntimeOperation, updateRuntimeOperation]);
 
   const applyWorkload = useCallback(async (
     workloadRows?: PatchRunConfigurationWorkloadItem[],
@@ -2805,15 +2847,31 @@ export default function SimulationRunPage() {
       setConfigUpdateError(payload.error);
       return false;
     }
+    const isSingle = payload.value.length === 1;
+    const opPayload = isSingle
+      ? { pattern_key: payload.value[0].pattern_key, rate_rps: payload.value[0].rate_rps }
+      : { workload: payload.value };
+    const opId = recordRuntimeOperation({
+      kind: "workload",
+      method: "PATCH",
+      endpoint: isSingle
+        ? `/api/v1/simulation/runs/${runId}/workload`
+        : `/api/v1/simulation/runs/${runId}/configuration`,
+      payload: opPayload,
+      summary: isSingle ? "Patch one workload lane" : `Patch ${payload.value.length} workload lane(s)`,
+      validationOk: true,
+      status: "submitted",
+    });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      if (payload.value.length === 1) {
+      if (isSingle) {
         const { pattern_key, rate_rps } = payload.value[0];
         await patchRunWorkload(runId, { pattern_key, rate_rps });
       } else {
         await patchRunConfiguration(runId, { workload: payload.value });
       }
+      updateRuntimeOperation(opId, { status: "accepted" });
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingTrafficObservationByPattern((prev) => {
           const next = { ...prev };
@@ -2826,6 +2884,10 @@ export default function SimulationRunPage() {
       }
       return true;
     } catch (e) {
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingTrafficObservationByPattern((prev) => {
           const next = { ...prev };
@@ -2838,7 +2900,7 @@ export default function SimulationRunPage() {
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.workload]);
+  }, [runId, liveConfig?.workload, recordRuntimeOperation, updateRuntimeOperation]);
 
   const applyPolicies = useCallback(async (policyDraft?: AutoscalingPolicyDraft): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
@@ -2865,20 +2927,34 @@ export default function SimulationRunPage() {
       setAutoscalingSubmitStatus("error");
       return false;
     }
+    const opId = recordRuntimeOperation({
+      kind: "autoscaling",
+      method: "PATCH",
+      endpoint: `/api/v1/simulation/runs/${runId}/configuration`,
+      payload: { policies: payload.value },
+      summary: "Patch autoscaling policy",
+      validationOk: true,
+      status: "submitted",
+    });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
       await patchRunConfiguration(runId, { policies: payload.value });
+      updateRuntimeOperation(opId, { status: "accepted" });
       setAutoscalingSubmitStatus("submitted");
       return true;
     } catch (e) {
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
       setConfigUpdateError((e as Error).message);
       setAutoscalingSubmitStatus("error");
       return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig]);
+  }, [runId, liveConfig, recordRuntimeOperation, updateRuntimeOperation]);
 
   const handleManualLeaseRenew = useCallback(async () => {
     if (
@@ -2888,10 +2964,20 @@ export default function SimulationRunPage() {
       setLeaseRenewStatus("error");
       return;
     }
+    const opId = recordRuntimeOperation({
+      kind: "lease",
+      method: "POST",
+      endpoint: `/api/v1/simulation/runs/${runId}/online/renew-lease`,
+      payload: undefined,
+      summary: "Renew online lease",
+      validationOk: true,
+      status: "submitted",
+    });
     setLastLeaseRenewAttemptAtMs(Date.now());
     setManualLeaseRenewLoading(true);
     try {
       await renewOnlineLease(runId);
+      updateRuntimeOperation(opId, { status: "accepted" });
       setLeaseRenewError(null);
       setLeaseRenewStatus("ok");
       const currentLeaseTtlMs =
@@ -2906,12 +2992,16 @@ export default function SimulationRunPage() {
         nextLeaseRenewAtRef.current = Date.now() + period;
       }
     } catch (e) {
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
       setLeaseRenewError(e instanceof Error ? e.message : String(e));
       setLeaseRenewStatus("error");
     } finally {
       setManualLeaseRenewLoading(false);
     }
-  }, [runId, runInfo?.metadata]);
+  }, [runId, runInfo?.metadata, recordRuntimeOperation, updateRuntimeOperation]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
@@ -3025,6 +3115,7 @@ export default function SimulationRunPage() {
     setPendingTrafficObservationByPattern({});
     setAutoscalingSubmitStatus("idle");
     setLastLeaseRenewAttemptAtMs(null);
+    setRuntimeOps([]);
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
@@ -3242,6 +3333,96 @@ export default function SimulationRunPage() {
       return next;
     });
   }, [observedTrafficByPattern]);
+
+  useEffect(() => {
+    const latestObservedAutoscaling = [...optSteps]
+      .reverse()
+      .map((step) => asRecord(step.current_config))
+      .map((cfg) => asRecord(cfg?.policies))
+      .map((policies) => asRecord(policies?.autoscaling))
+      .find((autoscaling) => autoscaling != null);
+    const now = Date.now();
+    setRuntimeOps((prev) => {
+      let changed = false;
+      const next = prev.map((op) => {
+        if (op.status !== "accepted") return op;
+        if (now - op.timestampMs > RUNTIME_OPERATION_STALE_MS) {
+          changed = true;
+          return { ...op, status: "stale" as RuntimeOperationStatus };
+        }
+        if (op.kind === "services") {
+          const payload = asRecord(op.payload);
+          const services = Array.isArray(payload?.services) ? payload.services : [];
+          const observed = services.every((svc) => {
+            const record = asRecord(svc);
+            if (!record) return false;
+            const id = str(record.id);
+            if (!id) return false;
+            const current = observedServicesById[id];
+            if (!current) return false;
+            const replicas = num(record.replicas);
+            const cpu = num(record.cpu_cores);
+            const mem = num(record.memory_mb);
+            if (replicas != null && current.replicas !== replicas) return false;
+            if (cpu != null && current.cpu_cores != null && current.cpu_cores !== cpu) return false;
+            if (mem != null && current.memory_mb != null && current.memory_mb !== mem) return false;
+            return true;
+          });
+          if (observed && services.length > 0) {
+            changed = true;
+            return { ...op, status: "observed" as RuntimeOperationStatus };
+          }
+          return op;
+        }
+        if (op.kind === "workload") {
+          const payload = asRecord(op.payload);
+          const rows = Array.isArray(payload?.workload)
+            ? payload.workload
+            : payload
+              ? [payload]
+              : [];
+          const observed = rows.every((row) => {
+            const record = asRecord(row);
+            if (!record) return false;
+            const key = str(record.pattern_key);
+            const rate = num(record.rate_rps);
+            if (!key || rate == null) return false;
+            const current = observedTrafficByPattern[key];
+            return current?.observed_rate_rps === rate;
+          });
+          if (observed && rows.length > 0) {
+            changed = true;
+            return { ...op, status: "observed" as RuntimeOperationStatus };
+          }
+          return op;
+        }
+        if (op.kind === "autoscaling") {
+          const payload = asRecord(op.payload);
+          const policies = asRecord(payload?.policies);
+          const autoscaling = asRecord(policies?.autoscaling);
+          if (!autoscaling || !latestObservedAutoscaling) return op;
+          const enabled = typeof autoscaling.enabled === "boolean" ? autoscaling.enabled : undefined;
+          const target = num(autoscaling.target_cpu_util);
+          const step = num(autoscaling.scale_step);
+          const obsEnabled = typeof latestObservedAutoscaling.enabled === "boolean" ? latestObservedAutoscaling.enabled : undefined;
+          const obsTarget = num(latestObservedAutoscaling.target_cpu_util);
+          const obsStep = num(latestObservedAutoscaling.scale_step);
+          const matches =
+            (enabled == null || obsEnabled === enabled) &&
+            (target == null || obsTarget === target) &&
+            (step == null || obsStep === step);
+          if (matches) {
+            changed = true;
+            return { ...op, status: "observed" as RuntimeOperationStatus };
+          }
+          return op;
+        }
+        if (op.kind === "lease") return op;
+        return op;
+      });
+      return changed ? next : prev;
+    });
+  }, [optSteps, observedServicesById, observedTrafficByPattern]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -3960,6 +4141,55 @@ export default function SimulationRunPage() {
               nextLeaseRenewAtRef.current != null
                 ? Math.max(0, Math.ceil((nextLeaseRenewAtRef.current - leaseClockNowMs) / 1000))
                 : undefined;
+            const formatRuntimeOpTime = (timestampMs: number) =>
+              new Date(timestampMs).toISOString().substring(11, 19);
+            const recentOpsByKind = (kind: RuntimeOperationKind) =>
+              runtimeOps.filter((op) => op.kind === kind).slice(0, 3);
+            const servicePreviewRows = observedAndDraftServiceIds
+              .map((serviceId) => {
+                const observed = observedServicesById[serviceId] ?? { id: serviceId };
+                const draft = serviceMixerDrafts[observed.id] ?? {};
+                const draftId = (draft.id ?? observed.id ?? "").toString().trim();
+                const effectiveReplicas = draft.replicas ?? observed.replicas;
+                const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+                const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+                const dirty =
+                  (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                  draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                  draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                  draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                if (!dirty) return null;
+                return {
+                  id: draftId || observed.id,
+                  replicas: effectiveReplicas,
+                  cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                  memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+                };
+              })
+              .filter((row): row is NonNullable<typeof row> => row != null);
+            const servicePreviewValidation = buildServicePatchPayloadFromModel(
+              onlineConfigModel,
+              servicePreviewRows,
+              serviceReplicaHints
+            );
+            const trafficPreviewRows: PatchRunConfigurationWorkloadItem[] = observedAndDraftPatternKeys
+              .map((patternKey) => {
+                const observed = observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey };
+                const draft = trafficConsoleDrafts[patternKey] ?? {};
+                const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+                const dirty =
+                  (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                  draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                if (!dirty) return null;
+                return {
+                  pattern_key: draftPatternKey || observed.pattern_key,
+                  rate_rps: effectiveRate ?? 0,
+                };
+              })
+              .filter((row): row is PatchRunConfigurationWorkloadItem => row != null);
+            const trafficPreviewValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, trafficPreviewRows);
+            const trafficPreviewIsSingle = trafficPreviewValidation.ok && trafficPreviewValidation.value.length === 1;
 
             return (
               <>
@@ -4056,6 +4286,31 @@ export default function SimulationRunPage() {
                       <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
                         Fix invalid dirty rows before bulk apply: {dirtyInvalidServiceIds.join(", ")}
                       </p>
+                    )}
+                    {servicePreviewRows.length > 0 && (
+                      <details className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                        <summary className="text-[11px] text-white/65 cursor-pointer">
+                          Patch Preview · PATCH /api/v1/simulation/runs/:runId/configuration · services
+                        </summary>
+                        <p className="text-[10px] text-white/45 mt-1">
+                          {servicePreviewValidation.ok ? `Valid · ${servicePreviewValidation.value.length} row(s)` : `Invalid · ${servicePreviewValidation.error}`}
+                        </p>
+                        <pre className="mt-1 text-[10px] text-white/70 overflow-x-auto font-mono">{JSON.stringify(
+                          servicePreviewValidation.ok ? { services: servicePreviewValidation.value } : { services: servicePreviewRows },
+                          null,
+                          2
+                        )}</pre>
+                      </details>
+                    )}
+                    {recentOpsByKind("services").length > 0 && (
+                      <div className="space-y-1">
+                        {recentOpsByKind("services").map((op) => (
+                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
+                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
+                            {op.errorText ? ` · ${op.errorText}` : ""}
+                          </p>
+                        ))}
+                      </div>
                     )}
                     {observedAndDraftServiceIds.length === 0 ? (
                       <p className="text-xs text-white/30 italic">No services observed yet. Waiting for runtime state or scenario fallback.</p>
@@ -4323,6 +4578,35 @@ export default function SimulationRunPage() {
                       <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
                         Fix invalid dirty traffic rows before bulk apply: {dirtyInvalidTrafficKeys.join(", ")}
                       </p>
+                    )}
+                    {trafficPreviewRows.length > 0 && (
+                      <details className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                        <summary className="text-[11px] text-white/65 cursor-pointer">
+                          Patch Preview · {trafficPreviewIsSingle ? "PATCH /api/v1/simulation/runs/:runId/workload" : "PATCH /api/v1/simulation/runs/:runId/configuration"} · workload
+                        </summary>
+                        <p className="text-[10px] text-white/45 mt-1">
+                          {trafficPreviewValidation.ok ? `Valid · ${trafficPreviewValidation.value.length} lane(s)` : `Invalid · ${trafficPreviewValidation.error}`}
+                        </p>
+                        <pre className="mt-1 text-[10px] text-white/70 overflow-x-auto font-mono">{JSON.stringify(
+                          trafficPreviewValidation.ok
+                            ? (trafficPreviewIsSingle
+                              ? trafficPreviewValidation.value[0]
+                              : { workload: trafficPreviewValidation.value })
+                            : { workload: trafficPreviewRows },
+                          null,
+                          2
+                        )}</pre>
+                      </details>
+                    )}
+                    {recentOpsByKind("workload").length > 0 && (
+                      <div className="space-y-1">
+                        {recentOpsByKind("workload").map((op) => (
+                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
+                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
+                            {op.errorText ? ` · ${op.errorText}` : ""}
+                          </p>
+                        ))}
+                      </div>
                     )}
                     {observedAndDraftPatternKeys.length === 0 ? (
                       <p className="text-xs text-white/30 italic">No workload patterns observed yet. Waiting for optimization config or scenario fallback.</p>
@@ -4629,10 +4913,21 @@ export default function SimulationRunPage() {
                         </div>
                       </div>
                       <p className="text-[10px] text-white/35 font-mono">
-                        payload preview: {autoscalingValidation.ok ? JSON.stringify({ policies: autoscalingValidation.value }) : "{ invalid }"}
+                        Patch Preview · PATCH /api/v1/simulation/runs/:runId/configuration ·{" "}
+                        {autoscalingValidation.ok ? JSON.stringify({ policies: autoscalingValidation.value }) : "{ invalid payload }"}
                       </p>
                     </div>
                     {autoscalingRowError && <p className="text-[11px] text-red-300">{autoscalingRowError}</p>}
+                    {recentOpsByKind("autoscaling").length > 0 && (
+                      <div className="space-y-1">
+                        {recentOpsByKind("autoscaling").map((op) => (
+                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
+                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
+                            {op.errorText ? ` · ${op.errorText}` : ""}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4699,6 +4994,19 @@ export default function SimulationRunPage() {
                         {isStopping ? "…" : "Cancel run"}
                       </button>
                     </div>
+                    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5 text-[10px] text-white/65 font-mono">
+                      Patch Preview · POST /api/v1/simulation/runs/:runId/online/renew-lease · no body
+                    </div>
+                    {recentOpsByKind("lease").length > 0 && (
+                      <div className="space-y-1">
+                        {recentOpsByKind("lease").map((op) => (
+                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
+                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
+                            {op.errorText ? ` · ${op.errorText}` : ""}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                     {leaseTtlMs == null && (
                       <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
                         Lease not configured for this run. Manual renewal is unavailable.
