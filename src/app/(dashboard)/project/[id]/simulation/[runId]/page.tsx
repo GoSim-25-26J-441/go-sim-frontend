@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BarChart2, Clock3, History, Lock, Play, Plus, RefreshCw, Route, Settings2, SlidersHorizontal, Square, Trash2, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, BarChart2, Clock3, Gauge, History, Lock, Play, Plus, RefreshCw, Route, Settings2, SlidersHorizontal, Square, Trash2, Wifi, WifiOff } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -105,6 +105,12 @@ interface ObservedServiceRuntime {
 interface ObservedTrafficLane {
   pattern_key: string;
   observed_rate_rps?: number;
+}
+
+interface AutoscalingPolicyDraft {
+  enabled?: boolean;
+  target_cpu_util?: number;
+  scale_step?: number;
 }
 
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
@@ -1761,12 +1767,14 @@ export default function SimulationRunPage() {
   const [trafficConsoleDrafts, setTrafficConsoleDrafts] = useState<
     Record<string, { pattern_key?: string; rate_rps?: number }>
   >({});
+  const [autoscalingPolicyDraft, setAutoscalingPolicyDraft] = useState<AutoscalingPolicyDraft>({});
   const [pendingServiceObservationById, setPendingServiceObservationById] = useState<
     Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number; updatedAt: number }>
   >({});
   const [pendingTrafficObservationByPattern, setPendingTrafficObservationByPattern] = useState<
     Record<string, { rate_rps: number; updatedAt: number }>
   >({});
+  const [autoscalingSubmitStatus, setAutoscalingSubmitStatus] = useState<"idle" | "submitted" | "error">("idle");
   const [controlRoomTab, setControlRoomTab] = useState<
     "services" | "traffic" | "autoscaling" | "lease" | "locked" | "change_log"
   >("services");
@@ -2828,26 +2836,41 @@ export default function SimulationRunPage() {
     }
   }, [runId, liveConfig?.workload]);
 
-  const applyPolicies = useCallback(async () => {
+  const applyPolicies = useCallback(async (policyDraft?: AutoscalingPolicyDraft): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-    const policies = config.policies ?? { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } };
-    if (!policies.autoscaling) return;
+    const baselineAutoscaling = config.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 };
+    const draft = policyDraft ?? {};
+    const policies: PatchRunConfigurationPolicies = {
+      autoscaling: {
+        enabled: typeof draft.enabled === "boolean" ? draft.enabled : baselineAutoscaling.enabled,
+        target_cpu_util:
+          typeof draft.target_cpu_util === "number" ? draft.target_cpu_util : baselineAutoscaling.target_cpu_util,
+        scale_step: typeof draft.scale_step === "number" ? draft.scale_step : baselineAutoscaling.scale_step,
+      },
+    };
+    if (!policies.autoscaling) return false;
     const model = onlineConfigModelRef.current;
     if (!model) {
       setConfigUpdateError("Online config model is not ready yet. Please retry.");
-      return;
+      setAutoscalingSubmitStatus("error");
+      return false;
     }
     const payload = buildPoliciesPatchPayloadFromModel(model, policies);
     if (!payload.ok) {
       setConfigUpdateError(payload.error);
-      return;
+      setAutoscalingSubmitStatus("error");
+      return false;
     }
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
       await patchRunConfiguration(runId, { policies: payload.value });
+      setAutoscalingSubmitStatus("submitted");
+      return true;
     } catch (e) {
       setConfigUpdateError((e as Error).message);
+      setAutoscalingSubmitStatus("error");
+      return false;
     } finally {
       setConfigUpdateLoading(false);
     }
@@ -2964,8 +2987,10 @@ export default function SimulationRunPage() {
     setLiveConfig(null);
     setServiceMixerDrafts({});
     setTrafficConsoleDrafts({});
+    setAutoscalingPolicyDraft({});
     setPendingServiceObservationById({});
     setPendingTrafficObservationByPattern({});
+    setAutoscalingSubmitStatus("idle");
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
@@ -3668,17 +3693,86 @@ export default function SimulationRunPage() {
               new Set([...patternKeysFromRun, ...patternKeysFromSteps, ...patternKeysFromConfig])
             ).sort();
 
-            const autoscaling = config.policies?.autoscaling ?? {
-              enabled: false,
-              target_cpu_util: 70,
-              scale_step: 1,
+            const latestObservedAutoscaling = [...optSteps]
+              .reverse()
+              .map((step) => asRecord(step.current_config))
+              .map((cfg) => asRecord(cfg?.policies))
+              .map((policies) => asRecord(policies?.autoscaling))
+              .find((autoscaling) => autoscaling != null);
+            const baselineAutoscaling = {
+              enabled:
+                typeof latestObservedAutoscaling?.enabled === "boolean"
+                  ? latestObservedAutoscaling.enabled
+                  : Boolean(config.policies?.autoscaling?.enabled ?? false),
+              target_cpu_util:
+                num(latestObservedAutoscaling?.target_cpu_util) ??
+                num(config.policies?.autoscaling?.target_cpu_util) ??
+                70,
+              scale_step:
+                num(latestObservedAutoscaling?.scale_step) ??
+                num(config.policies?.autoscaling?.scale_step) ??
+                1,
             };
-            const targetCpuPercent =
-              autoscaling.target_cpu_util == null
-                ? 70
-                : autoscaling.target_cpu_util <= 1
-                  ? autoscaling.target_cpu_util * 100
-                  : autoscaling.target_cpu_util;
+            const baselineTargetCpuPercent =
+              baselineAutoscaling.target_cpu_util <= 1
+                ? baselineAutoscaling.target_cpu_util * 100
+                : baselineAutoscaling.target_cpu_util;
+            const autoscaling = {
+              enabled:
+                typeof autoscalingPolicyDraft.enabled === "boolean"
+                  ? autoscalingPolicyDraft.enabled
+                  : baselineAutoscaling.enabled,
+              target_cpu_util:
+                typeof autoscalingPolicyDraft.target_cpu_util === "number"
+                  ? autoscalingPolicyDraft.target_cpu_util
+                  : baselineTargetCpuPercent,
+              scale_step:
+                typeof autoscalingPolicyDraft.scale_step === "number"
+                  ? autoscalingPolicyDraft.scale_step
+                  : baselineAutoscaling.scale_step,
+            };
+            const targetCpuPercent = autoscaling.target_cpu_util;
+            const autoscalingDirty =
+              (autoscalingPolicyDraft.enabled ?? undefined) !== undefined && autoscaling.enabled !== baselineAutoscaling.enabled ||
+              (autoscalingPolicyDraft.target_cpu_util ?? undefined) !== undefined && autoscaling.target_cpu_util !== baselineTargetCpuPercent ||
+              (autoscalingPolicyDraft.scale_step ?? undefined) !== undefined && autoscaling.scale_step !== baselineAutoscaling.scale_step;
+            const autoscalingDraftForPatch: AutoscalingPolicyDraft = {
+              enabled: autoscaling.enabled,
+              target_cpu_util: autoscaling.target_cpu_util,
+              scale_step: autoscaling.scale_step,
+            };
+            const autoscalingValidation = buildPoliciesPatchPayloadFromModel(onlineConfigModel, {
+              autoscaling: {
+                enabled: autoscalingDraftForPatch.enabled ?? false,
+                target_cpu_util: autoscalingDraftForPatch.target_cpu_util,
+                scale_step: autoscalingDraftForPatch.scale_step,
+              },
+            });
+            const autoscalingRowError = autoscalingDirty && !autoscalingValidation.ok ? autoscalingValidation.error : undefined;
+            const cpuUtilPercentValues = (displayMetrics?.metrics?.service_metrics ?? [])
+              .map((sm) => {
+                if (!hasNumber(sm.cpu_utilization)) return undefined;
+                return sm.cpu_utilization <= 1 ? sm.cpu_utilization * 100 : sm.cpu_utilization;
+              })
+              .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+            const avgServiceCpuUtilPct =
+              cpuUtilPercentValues.length > 0
+                ? cpuUtilPercentValues.reduce((sum, value) => sum + value, 0) / cpuUtilPercentValues.length
+                : undefined;
+            const maxServiceCpuUtilPct =
+              cpuUtilPercentValues.length > 0
+                ? Math.max(...cpuUtilPercentValues)
+                : undefined;
+            const servicesAboveTargetCount = cpuUtilPercentValues.filter((value) => value > targetCpuPercent).length;
+            const cpuTargetDelta = avgServiceCpuUtilPct != null ? avgServiceCpuUtilPct - targetCpuPercent : undefined;
+            const cpuTargetStatus =
+              cpuTargetDelta == null
+                ? "No live CPU data"
+                : cpuTargetDelta > 5
+                  ? "above target"
+                  : cpuTargetDelta < -5
+                    ? "below target"
+                    : "near target";
 
             const lockedFields = onlineConfigModel.byGroup.createTimeLocked.filter((f) => f.observedValue != null);
             const recentSteps = [...optSteps]
@@ -4295,92 +4389,121 @@ export default function SimulationRunPage() {
 
                 {controlRoomTab === "autoscaling" && (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Autoscaling</h3>
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide flex items-center gap-1.5">
+                        <Gauge className="w-3.5 h-3.5" /> Autoscaling Gauge
+                      </h3>
+                      <span className="text-[10px] text-white/30 font-mono">PATCH /configuration · policies.autoscaling</span>
                       <button
                         type="button"
-                        onClick={applyPolicies}
-                        disabled={configUpdateLoading}
+                        onClick={async () => {
+                          const ok = await applyPolicies(autoscalingDraftForPatch);
+                          if (ok) setAutoscalingPolicyDraft({});
+                        }}
+                        disabled={configUpdateLoading || Boolean(autoscalingRowError) || !autoscalingDirty}
                         className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {configUpdateLoading ? "Applying…" : "Apply autoscaling"}
                       </button>
                     </div>
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="flex items-center gap-2 text-xs text-white/70">
-                        <input
-                          type="checkbox"
-                          checked={autoscaling.enabled}
-                          onChange={(e) =>
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                policies: {
-                                  autoscaling: {
-                                    ...(c.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 }),
-                                    enabled: e.target.checked,
-                                  },
-                                },
-                              };
-                            })
-                          }
-                          className="rounded border-white/20"
-                        />
-                        Autoscaling enabled
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-white/70">
-                        Target CPU %
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={targetCpuPercent}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10);
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                policies: {
-                                  autoscaling: {
-                                    ...(c.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 }),
-                                    target_cpu_util: Number.isFinite(v) ? v : 70,
-                                  },
-                                },
-                              };
-                            });
-                          }}
-                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-white/70">
-                        Scale step
-                        <input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={autoscaling.scale_step ?? 1}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10);
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                policies: {
-                                  autoscaling: {
-                                    ...(c.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 }),
-                                    scale_step: Number.isFinite(v) && v >= 1 ? v : 1,
-                                  },
-                                },
-                              };
-                            });
-                          }}
-                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                        />
-                      </label>
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      <span className={`rounded border px-1.5 py-0.5 ${autoscalingDirty ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        {autoscalingDirty ? "dirty" : "clean"}
+                      </span>
+                      <span className={`rounded border px-1.5 py-0.5 ${autoscalingSubmitStatus === "submitted" ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        {autoscalingSubmitStatus === "submitted" ? "submitted" : "idle"}
+                      </span>
+                      <span className="rounded border border-white/15 bg-white/5 text-white/60 px-1.5 py-0.5">
+                        baseline target: {baselineTargetCpuPercent.toFixed(1)}%
+                      </span>
                     </div>
+                    <div className="rounded border border-border bg-black/20 p-2 space-y-2">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs text-white/70">
+                          <input
+                            type="checkbox"
+                            checked={autoscaling.enabled}
+                            onChange={(e) => {
+                              setAutoscalingSubmitStatus("idle");
+                              setAutoscalingPolicyDraft((prev) => ({ ...prev, enabled: e.target.checked }));
+                            }}
+                            className="rounded border-white/20"
+                          />
+                          Autoscaling enabled
+                        </label>
+                        <label className="flex items-center gap-2 text-xs text-white/70">
+                          Target CPU %
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            step={1}
+                            value={targetCpuPercent}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value);
+                              setAutoscalingSubmitStatus("idle");
+                              setAutoscalingPolicyDraft((prev) => ({
+                                ...prev,
+                                target_cpu_util: Number.isFinite(value) ? value : undefined,
+                              }));
+                            }}
+                            className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs text-white/70">
+                          Scale step
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={autoscaling.scale_step ?? 1}
+                            onChange={(e) => {
+                              const value = parseInt(e.target.value, 10);
+                              setAutoscalingSubmitStatus("idle");
+                              setAutoscalingPolicyDraft((prev) => ({
+                                ...prev,
+                                scale_step: Number.isFinite(value) ? value : undefined,
+                              }));
+                            }}
+                            className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                          />
+                        </label>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-white/55">
+                          <span>CPU target threshold meter</span>
+                          <span className="font-mono">{targetCpuPercent.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-2 rounded bg-white/10 overflow-hidden">
+                          <div
+                            className="h-full bg-cyan-400/80"
+                            style={{ width: `${Math.max(0, Math.min(100, targetCpuPercent))}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Avg CPU</p>
+                          <p className="text-white/80 font-mono">{avgServiceCpuUtilPct != null ? `${avgServiceCpuUtilPct.toFixed(1)}%` : "—"}</p>
+                        </div>
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Peak CPU</p>
+                          <p className="text-white/80 font-mono">{maxServiceCpuUtilPct != null ? `${maxServiceCpuUtilPct.toFixed(1)}%` : "—"}</p>
+                        </div>
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Services above target</p>
+                          <p className="text-white/80 font-mono">{cpuUtilPercentValues.length > 0 ? servicesAboveTargetCount : "—"}</p>
+                        </div>
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Status</p>
+                          <p className="text-white/80 font-mono">{cpuTargetStatus}</p>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-white/35 font-mono">
+                        payload preview: {autoscalingValidation.ok ? JSON.stringify({ policies: autoscalingValidation.value }) : "{ invalid }"}
+                      </p>
+                    </div>
+                    {autoscalingRowError && <p className="text-[11px] text-red-300">{autoscalingRowError}</p>}
                   </div>
                 )}
 
