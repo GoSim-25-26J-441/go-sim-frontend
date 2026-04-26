@@ -3813,7 +3813,92 @@ export default function SimulationRunPage() {
                     ? "below target"
                     : "near target";
 
-            const lockedFields = onlineConfigModel.byGroup.createTimeLocked.filter((f) => f.observedValue != null);
+            const lockedFields = onlineConfigModel.byGroup.createTimeLocked;
+            const lockedFieldByKey = Object.fromEntries(lockedFields.map((field) => [field.key, field]));
+            const lockedBaseGroupKeys: Array<{ id: string; title: string; keys: string[] }> = [
+              {
+                id: "mode",
+                title: "Mode",
+                keys: ["real_time_mode", "optimization.online", "optimization_target_primary"],
+              },
+              {
+                id: "latency",
+                title: "Latency / controller loop",
+                keys: ["target_p95_latency_ms", "control_interval_ms"],
+              },
+              {
+                id: "host_bounds",
+                title: "Host bounds",
+                keys: ["min_hosts", "max_hosts"],
+              },
+              {
+                id: "util_targets",
+                title: "Utilization targets",
+                keys: ["target_util_high", "target_util_low"],
+              },
+              {
+                id: "scale_down_guardrails",
+                title: "Scale-down guardrails",
+                keys: [
+                  "scale_down_cpu_util_max",
+                  "scale_down_mem_util_max",
+                  "scale_down_host_cpu_util_max",
+                  "scale_down_cooldown_ms",
+                  "host_drain_timeout_ms",
+                  "memory_headroom_mb",
+                ],
+              },
+              {
+                id: "run_limits",
+                title: "Run limits / lease",
+                keys: [
+                  "max_controller_steps",
+                  "max_online_duration_ms",
+                  "allow_unbounded_online",
+                  "max_noop_intervals",
+                  "lease_ttl_ms",
+                ],
+              },
+            ];
+            const canonicalTopologyKeys = [
+              "min_locality_hit_rate",
+              "max_cross_zone_request_fraction",
+              "max_topology_latency_penalty_mean_ms",
+            ];
+            const discoveredTopologyKeys = lockedFields
+              .map((field) => field.key)
+              .filter((key) =>
+                /(topology|locality|zone|guardrail|penalty|cross_zone|min_locality)/i.test(key)
+              )
+              .filter((key, index, array) => array.indexOf(key) === index)
+              .sort((a, b) => a.localeCompare(b));
+            const topologyKeys = Array.from(
+              new Set([...canonicalTopologyKeys, ...discoveredTopologyKeys])
+            );
+            const lockedGroups = [
+              ...lockedBaseGroupKeys,
+              { id: "topology", title: "Topology guardrails", keys: topologyKeys },
+            ];
+            const formatLockedFieldValue = (key: string, value: unknown): string => {
+              if (value == null) return "Unavailable";
+              if (typeof value === "boolean") return value ? "true" : "false";
+              if (typeof value === "number" && Number.isFinite(value)) {
+                if (/(util|rate|fraction|hit_rate)/i.test(key)) {
+                  const pct = value <= 1 ? value * 100 : value;
+                  return `${pct.toFixed(1)}%`;
+                }
+                if (/_ms$/i.test(key)) return `${value.toLocaleString()} ms`;
+                if (/(^|_)mb$/i.test(key) || /memory_headroom_mb/i.test(key)) {
+                  return `${value.toLocaleString()} MB`;
+                }
+                if (Number.isInteger(value)) return value.toLocaleString();
+                return value.toFixed(2);
+              }
+              if (typeof value === "string") return value.trim() !== "" ? value : "Unavailable";
+              if (Array.isArray(value)) return value.length ? JSON.stringify(value) : "Unavailable";
+              if (typeof value === "object") return JSON.stringify(value);
+              return String(value);
+            };
             const recentSteps = [...optSteps]
               .sort((a, b) => (a.iteration_index ?? Number.MAX_SAFE_INTEGER) - (b.iteration_index ?? Number.MAX_SAFE_INTEGER))
               .slice(-8);
@@ -4629,21 +4714,40 @@ export default function SimulationRunPage() {
 
                 {controlRoomTab === "locked" && (
                   <div className="space-y-2">
-                    <p className="text-xs text-white/45">Create-time settings (read-only; create a new run to change).</p>
-                    {lockedFields.length === 0 ? (
-                      <p className="text-xs text-white/30 italic">No locked online settings observed for this run.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {lockedFields.map((f) => (
-                          <span key={f.key} className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/70">
-                            <span className="text-white/45">{f.key}</span>:{" "}
-                            <span className="font-mono">
-                              {typeof f.observedValue === "object"
-                                ? JSON.stringify(f.observedValue)
-                                : String(f.observedValue)}
-                            </span>
-                          </span>
-                        ))}
+                    <p className="text-xs text-white/45">Locked after run creation (requires a new run to change).</p>
+                    <div className="space-y-2">
+                      {lockedGroups.map((group) => (
+                        <div key={group.id} className="rounded border border-white/10 bg-black/20">
+                          <div className="px-2 py-1.5 border-b border-white/10 text-[11px] uppercase tracking-wide text-white/55">
+                            {group.title}
+                          </div>
+                          <div className="divide-y divide-white/5">
+                            {group.keys.map((key) => {
+                              const field = lockedFieldByKey[key];
+                              const label = field?.label ?? key;
+                              const value = field?.observedValue;
+                              return (
+                                <div key={key} className="px-2 py-1.5 flex items-start justify-between gap-3 text-xs">
+                                  <div className="min-w-0">
+                                    <p className="text-white/65 truncate">{label}</p>
+                                    <p className="text-[10px] text-white/35 font-mono">{key}</p>
+                                  </div>
+                                  <p className="text-white/80 font-mono text-right break-all">
+                                    {formatLockedFieldValue(key, value)}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      {lockedFields.length === 0 && (
+                        <p className="text-xs text-white/30 italic">No locked online settings observed for this run.</p>
+                      )}
+                    </div>
+                    {lockedFields.length > 0 && (
+                      <div className="text-[10px] text-white/35">
+                        Data source: run metadata and observed optimization/runtime state (read-only).
                       </div>
                     )}
                   </div>
