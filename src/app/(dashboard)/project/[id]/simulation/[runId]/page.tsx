@@ -102,6 +102,11 @@ interface ObservedServiceRuntime {
   memory_utilization?: number;
 }
 
+interface ObservedTrafficLane {
+  pattern_key: string;
+  observed_rate_rps?: number;
+}
+
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
   services: [],
   workload: [],
@@ -1753,8 +1758,14 @@ export default function SimulationRunPage() {
   // Live config (online mode) — editable form state; synced from optimization_step
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
   const [serviceMixerDrafts, setServiceMixerDrafts] = useState<Record<string, RuntimeServiceDraft>>({});
+  const [trafficConsoleDrafts, setTrafficConsoleDrafts] = useState<
+    Record<string, { pattern_key?: string; rate_rps?: number }>
+  >({});
   const [pendingServiceObservationById, setPendingServiceObservationById] = useState<
     Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number; updatedAt: number }>
+  >({});
+  const [pendingTrafficObservationByPattern, setPendingTrafficObservationByPattern] = useState<
+    Record<string, { rate_rps: number; updatedAt: number }>
   >({});
   const [controlRoomTab, setControlRoomTab] = useState<
     "services" | "traffic" | "autoscaling" | "lease" | "locked" | "change_log"
@@ -2765,18 +2776,22 @@ export default function SimulationRunPage() {
     }
   }, [runId, liveConfig?.services, optSteps, liveMetricsData, metricsData]);
 
-  const applyWorkload = useCallback(async () => {
+  const applyWorkload = useCallback(async (
+    workloadRows?: PatchRunConfigurationWorkloadItem[],
+    pendingTargets?: Record<string, { rate_rps: number }>
+  ): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-    if (!config.workload.length) return;
+    const rows = workloadRows ?? config.workload;
+    if (!rows.length) return false;
     const model = onlineConfigModelRef.current;
     if (!model) {
       setConfigUpdateError("Online config model is not ready yet. Please retry.");
-      return;
+      return false;
     }
-    const payload = buildWorkloadPatchPayloadFromModel(model, config.workload);
+    const payload = buildWorkloadPatchPayloadFromModel(model, rows);
     if (!payload.ok) {
       setConfigUpdateError(payload.error);
-      return;
+      return false;
     }
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
@@ -2787,8 +2802,27 @@ export default function SimulationRunPage() {
       } else {
         await patchRunConfiguration(runId, { workload: payload.value });
       }
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingTrafficObservationByPattern((prev) => {
+          const next = { ...prev };
+          const now = Date.now();
+          for (const [patternKey, target] of Object.entries(pendingTargets)) {
+            next[patternKey] = { ...target, updatedAt: now };
+          }
+          return next;
+        });
+      }
+      return true;
     } catch (e) {
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingTrafficObservationByPattern((prev) => {
+          const next = { ...prev };
+          for (const patternKey of Object.keys(pendingTargets)) delete next[patternKey];
+          return next;
+        });
+      }
       setConfigUpdateError((e as Error).message);
+      return false;
     } finally {
       setConfigUpdateLoading(false);
     }
@@ -2929,7 +2963,9 @@ export default function SimulationRunPage() {
   useEffect(() => {
     setLiveConfig(null);
     setServiceMixerDrafts({});
+    setTrafficConsoleDrafts({});
     setPendingServiceObservationById({});
+    setPendingTrafficObservationByPattern({});
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
@@ -3096,6 +3132,47 @@ export default function SimulationRunPage() {
       return next;
     });
   }, [observedServicesById]);
+
+  const observedTrafficByPattern = useMemo<Record<string, ObservedTrafficLane>>(() => {
+    const out: Record<string, ObservedTrafficLane> = {};
+    const ensure = (patternKey: string) => {
+      const key = patternKey.trim();
+      if (!key) return;
+      if (!out[key]) out[key] = { pattern_key: key };
+    };
+    for (const key of runDerivedOptions.patternKeys) ensure(key);
+    for (const w of runInfo?.configuration?.workload ?? []) {
+      if (typeof w.pattern_key !== "string") continue;
+      ensure(w.pattern_key);
+      if (typeof w.rate_rps === "number" && Number.isFinite(w.rate_rps)) {
+        out[w.pattern_key].observed_rate_rps = w.rate_rps;
+      }
+    }
+    const latestStepWorkload =
+      [...optSteps].reverse().find((step) => Array.isArray(step.current_config?.workload))?.current_config?.workload ?? [];
+    for (const w of latestStepWorkload) {
+      const record = asRecord(w);
+      if (!record) continue;
+      const patternKey = str(record.pattern_key);
+      const rateRps = num(record.rate_rps);
+      if (!patternKey) continue;
+      ensure(patternKey);
+      if (rateRps != null) out[patternKey].observed_rate_rps = rateRps;
+    }
+    return out;
+  }, [runDerivedOptions.patternKeys, runInfo?.configuration?.workload, optSteps]);
+
+  useEffect(() => {
+    setPendingTrafficObservationByPattern((prev) => {
+      const next = { ...prev };
+      for (const [patternKey, target] of Object.entries(prev)) {
+        const observed = observedTrafficByPattern[patternKey];
+        if (!observed || observed.observed_rate_rps == null) continue;
+        if (observed.observed_rate_rps === target.rate_rps) delete next[patternKey];
+      }
+      return next;
+    });
+  }, [observedTrafficByPattern]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -3591,10 +3668,6 @@ export default function SimulationRunPage() {
               new Set([...patternKeysFromRun, ...patternKeysFromSteps, ...patternKeysFromConfig])
             ).sort();
 
-            const workloadValid =
-              config.workload.length > 0 &&
-              config.workload.every((w) => (w.pattern_key ?? "").toString().trim() !== "" && (w.rate_rps ?? 0) > 0);
-
             const autoscaling = config.policies?.autoscaling ?? {
               enabled: false,
               target_cpu_util: 70,
@@ -3640,6 +3713,30 @@ export default function SimulationRunPage() {
               return !rowValidation.ok;
             });
             const dirtyInvalidCount = dirtyInvalidServiceIds.length;
+            const observedAndDraftPatternKeys = Array.from(
+              new Set([...Object.keys(observedTrafficByPattern), ...Object.keys(trafficConsoleDrafts)])
+            ).sort((a, b) => a.localeCompare(b));
+            const dirtyInvalidTrafficKeys = observedAndDraftPatternKeys.filter((patternKey) => {
+              const observed = observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey };
+              const draft = trafficConsoleDrafts[patternKey] ?? {};
+              const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+              const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+              const dirty =
+                (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+              if (!dirty) return false;
+              const rowDraft: PatchRunConfigurationWorkloadItem = {
+                pattern_key: draftPatternKey || observed.pattern_key,
+                rate_rps: effectiveRate ?? 0,
+              };
+              const rowValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, [rowDraft]);
+              return !rowValidation.ok;
+            });
+            const dirtyInvalidTrafficCount = dirtyInvalidTrafficKeys.length;
+            const liveThroughputRps = num(displayMetrics?.summary?.throughput_rps);
+            const liveRequestCount =
+              num(displayMetrics?.summary?.request_count) ??
+              num(displayMetrics?.summary?.total_requests);
 
             return (
               <>
@@ -3927,87 +4024,267 @@ export default function SimulationRunPage() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setLiveConfig((prev) => {
-                            const c = prev ?? DEFAULT_LIVE_CONFIG;
-                            const firstKey = knownPatternKeys[0] ?? "";
-                            return { ...c, workload: [...c.workload, { pattern_key: firstKey, rate_rps: 1 }] };
-                          })}
+                          onClick={() => {
+                            const candidate =
+                              knownPatternKeys.find((key): key is string => typeof key === "string" && !trafficConsoleDrafts[key]) ??
+                              (typeof knownPatternKeys[0] === "string" ? knownPatternKeys[0] : undefined);
+                            if (!candidate) return;
+                            setTrafficConsoleDrafts((prev) => ({ ...prev, [candidate]: { pattern_key: candidate, rate_rps: 1 } }));
+                          }}
                           className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
                         >
                           <Plus className="w-3.5 h-3.5" /> Add pattern
                         </button>
                         <button
                           type="button"
-                          onClick={applyWorkload}
-                          disabled={configUpdateLoading || !workloadValid}
+                          onClick={async () => {
+                            const observedLanes = observedAndDraftPatternKeys.map((patternKey) => observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey });
+                            const changedRows: PatchRunConfigurationWorkloadItem[] = [];
+                            const pendingTargets: Record<string, { rate_rps: number }> = {};
+                            const invalidDirtyRows: string[] = [];
+                            for (const observed of observedLanes) {
+                              const draft = trafficConsoleDrafts[observed.pattern_key] ?? {};
+                              const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                              const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+                              const dirty =
+                                (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                                draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                              if (!dirty) continue;
+                              const row: PatchRunConfigurationWorkloadItem = {
+                                pattern_key: draftPatternKey || observed.pattern_key,
+                                rate_rps: effectiveRate ?? 0,
+                              };
+                              const rowValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, [row]);
+                              if (!rowValidation.ok) {
+                                invalidDirtyRows.push(observed.pattern_key);
+                                continue;
+                              }
+                              changedRows.push(row);
+                              if (row.pattern_key && typeof row.rate_rps === "number" && row.rate_rps > 0) {
+                                pendingTargets[row.pattern_key] = { rate_rps: row.rate_rps };
+                              }
+                            }
+                            if (invalidDirtyRows.length > 0 || changedRows.length === 0) return;
+                            const ok = await applyWorkload(changedRows, pendingTargets);
+                            if (ok) {
+                              setTrafficConsoleDrafts((prev) => {
+                                const next = { ...prev };
+                                for (const observed of observedLanes) {
+                                  const draft = prev[observed.pattern_key];
+                                  if (!draft) continue;
+                                  const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                                  const dirty =
+                                    (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                                    draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                                  if (dirty) delete next[observed.pattern_key];
+                                }
+                                return next;
+                              });
+                            }
+                          }}
+                          disabled={configUpdateLoading || dirtyInvalidTrafficCount > 0}
+                          title={dirtyInvalidTrafficCount > 0 ? "Fix invalid dirty traffic rows before bulk apply." : undefined}
                           className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
-                          {configUpdateLoading ? "Applying…" : "Apply traffic"}
+                          {configUpdateLoading ? "Applying…" : "Apply changed traffic"}
                         </button>
                       </div>
                     </div>
-                    {config.workload.length === 0 ? (
-                      <p className="text-xs text-white/30 italic">No workload patterns. Add one to update traffic at runtime.</p>
+                    {(liveThroughputRps != null || liveRequestCount != null) && (
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-white/45">
+                        {liveThroughputRps != null && <span>Live throughput: {liveThroughputRps.toFixed(2)} rps</span>}
+                        {liveRequestCount != null && <span>Live request count: {Math.round(liveRequestCount).toLocaleString()}</span>}
+                      </div>
+                    )}
+                    {dirtyInvalidTrafficCount > 0 && (
+                      <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                        Fix invalid dirty traffic rows before bulk apply: {dirtyInvalidTrafficKeys.join(", ")}
+                      </p>
+                    )}
+                    {observedAndDraftPatternKeys.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No workload patterns observed yet. Waiting for optimization config or scenario fallback.</p>
                     ) : (
                       <div className="space-y-2">
-                        {config.workload.map((w, i) => {
+                        {observedAndDraftPatternKeys.map((patternKey) => {
+                          const observed = observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey };
+                          const draft = trafficConsoleDrafts[observed.pattern_key] ?? {};
+                          const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                          const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+                          const dirty =
+                            (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                            draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                          const rowDraft: PatchRunConfigurationWorkloadItem = {
+                            pattern_key: draftPatternKey || observed.pattern_key,
+                            rate_rps: effectiveRate ?? 0,
+                          };
+                          const rowValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, [rowDraft]);
+                          const rowError = dirty && !rowValidation.ok ? rowValidation.error : undefined;
+                          const pending =
+                            pendingTrafficObservationByPattern[draftPatternKey] ??
+                            pendingTrafficObservationByPattern[observed.pattern_key];
+                          const baseRate = observed.observed_rate_rps ?? effectiveRate ?? 1;
+                          const sliderMin = Math.max(0.1, Number((baseRate * 0.25).toFixed(2)));
+                          const sliderMax = Math.max(sliderMin + 0.1, Number((baseRate * 5).toFixed(2)));
                           const patternOptions = [...knownPatternKeys];
-                          if (w.pattern_key && !patternOptions.includes(w.pattern_key)) patternOptions.push(w.pattern_key);
+                          if (observed.pattern_key && !patternOptions.includes(observed.pattern_key)) patternOptions.push(observed.pattern_key);
+                          if (draft.pattern_key && !patternOptions.includes(draft.pattern_key)) patternOptions.push(draft.pattern_key);
                           patternOptions.sort();
                           return (
-                            <div key={`${w.pattern_key}-${i}`} className="flex items-center gap-3 flex-wrap">
-                              <select
-                                value={w.pattern_key}
-                                onChange={(e) =>
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      workload: c.workload.map((item, j) =>
-                                        j === i ? { ...item, pattern_key: e.target.value } : item
-                                      ),
-                                    };
-                                  })
-                                }
-                                className="w-36 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              >
-                                {patternOptions.length === 0 && <option value="">Select…</option>}
-                                {patternOptions.map((key) => (
-                                  <option key={key} value={key}>{key || "(empty)"}</option>
+                            <div key={observed.pattern_key} className="rounded border border-border bg-black/20 p-2 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-mono text-white">{observed.pattern_key}</span>
+                                  {dirty && (
+                                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                                      dirty
+                                    </span>
+                                  )}
+                                  {pending && (
+                                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                                      pending observation
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (rowError) return;
+                                      const ok = await applyWorkload(
+                                        [rowDraft],
+                                        rowDraft.pattern_key && rowDraft.rate_rps > 0
+                                          ? { [rowDraft.pattern_key]: { rate_rps: rowDraft.rate_rps } }
+                                          : undefined
+                                      );
+                                      if (ok) {
+                                        setTrafficConsoleDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[observed.pattern_key];
+                                          return next;
+                                        });
+                                      }
+                                    }}
+                                    disabled={configUpdateLoading || Boolean(rowError) || !dirty}
+                                    className="px-2 py-1 text-xs rounded border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50"
+                                  >
+                                    Apply
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setTrafficConsoleDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[observed.pattern_key];
+                                        return next;
+                                      })
+                                    }
+                                    className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors"
+                                    title="Reset draft"
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <label className="text-[11px] text-white/60">
+                                  Pattern key
+                                  <select
+                                    value={draft.pattern_key ?? observed.pattern_key}
+                                    onChange={(e) =>
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: { ...(prev[observed.pattern_key] ?? {}), pattern_key: e.target.value },
+                                      }))
+                                    }
+                                    className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                  >
+                                    {patternOptions.length === 0 && <option value="">Select…</option>}
+                                    {patternOptions.map((key) => (
+                                      <option key={key} value={key}>{key || "(empty)"}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="text-[11px] text-white/60">
+                                  Target RPS (obs: {observed.observed_rate_rps != null ? observed.observed_rate_rps.toFixed(2) : "—"})
+                                  <input
+                                    type="number"
+                                    min={0.01}
+                                    step={0.1}
+                                    value={draft.rate_rps ?? (observed.observed_rate_rps ?? "")}
+                                    onChange={(e) => {
+                                      const value = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: {
+                                          ...(prev[observed.pattern_key] ?? {}),
+                                          rate_rps: Number.isFinite(value) ? value : undefined,
+                                        },
+                                      }));
+                                    }}
+                                    className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                  />
+                                </label>
+                                <label className="text-[11px] text-white/60">
+                                  Target slider
+                                  <input
+                                    type="range"
+                                    min={sliderMin}
+                                    max={sliderMax}
+                                    step={0.1}
+                                    value={Math.min(sliderMax, Math.max(sliderMin, draft.rate_rps ?? (observed.observed_rate_rps ?? sliderMin)))}
+                                    onChange={(e) => {
+                                      const value = parseFloat(e.target.value);
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: {
+                                          ...(prev[observed.pattern_key] ?? {}),
+                                          rate_rps: Number.isFinite(value) ? value : undefined,
+                                        },
+                                      }));
+                                    }}
+                                    className="mt-2 w-full accent-cyan-400"
+                                  />
+                                </label>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {[0.5, 1, 2, 5].map((multiplier) => (
+                                  <button
+                                    key={multiplier}
+                                    type="button"
+                                    onClick={() => {
+                                      const value = Number((baseRate * multiplier).toFixed(2));
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: {
+                                          ...(prev[observed.pattern_key] ?? {}),
+                                          pattern_key: draft.pattern_key ?? observed.pattern_key,
+                                          rate_rps: value,
+                                        },
+                                      }));
+                                    }}
+                                    className="px-2 py-0.5 rounded border border-white/15 bg-white/5 text-[10px] text-white/70 hover:bg-white/10"
+                                  >
+                                    {multiplier === 1 ? "1x reset" : `${multiplier}x`}
+                                  </button>
                                 ))}
-                              </select>
-                              <input
-                                type="number"
-                                min={0.01}
-                                step={0.1}
-                                value={w.rate_rps}
-                                onChange={(e) => {
-                                  const v = parseFloat(e.target.value);
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      workload: c.workload.map((item, j) =>
-                                        j === i ? { ...item, rate_rps: Number.isFinite(v) ? v : 0 } : item
-                                      ),
-                                    };
-                                  });
-                                }}
-                                className="w-24 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              />
-                              <span className="text-xs text-white/40">RPS</span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return { ...c, workload: c.workload.filter((_, j) => j !== i) };
-                                  })
-                                }
-                                className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                {!observedTrafficByPattern[observed.pattern_key] && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setTrafficConsoleDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[observed.pattern_key];
+                                        return next;
+                                      })
+                                    }
+                                    className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                    title="Remove draft lane"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              {rowError && <p className="text-[11px] text-red-300">{rowError}</p>}
                             </div>
                           );
                         })}
