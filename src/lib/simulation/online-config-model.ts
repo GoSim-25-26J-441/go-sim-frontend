@@ -49,6 +49,7 @@ type ValidationResult<T> = ValidationOk<T> | ValidationErr;
 
 export interface OnlineConfigModelInputs {
   runMetadata?: Record<string, unknown> | null;
+  optimizationConfigMetadata?: Record<string, unknown> | null;
   latestOptimizationConfig?: OptimizationStepConfig | null;
   latestResources?: ClusterPlacementResources | null;
   scenarioServiceIds?: string[];
@@ -231,6 +232,8 @@ const LEASE_CONTROL_FIELDS: OnlineConfigFieldModel[] = [
 ];
 
 const CREATE_TIME_LOCKED_KEYS: Array<{ key: string; label: string; helpText: string }> = [
+  { key: "mode", label: "Mode", helpText: "Backend mode flag configured at run creation." },
+  { key: "objective", label: "Objective", helpText: "Backend optimization objective configured at creation." },
   { key: "real_time_mode", label: "Real-time Mode", helpText: "Run mode selected at creation time." },
   { key: "optimization.online", label: "Online Optimization Enabled", helpText: "Creation-time optimization mode flag." },
   { key: "optimization_target_primary", label: "Optimization Target Primary", helpText: "Primary optimization objective for online controller." },
@@ -249,8 +252,8 @@ const CREATE_TIME_LOCKED_KEYS: Array<{ key: string; label: string; helpText: str
   { key: "max_noop_intervals", label: "Max No-op Intervals", helpText: "No-op interval guard configured at creation." },
   { key: "lease_ttl_ms", label: "Lease TTL (ms)", helpText: "Lease duration configured at creation." },
   { key: "scale_down_cooldown_ms", label: "Scale-down Cooldown (ms)", helpText: "Cooldown between scale-down actions." },
-  { key: "host_drain_timeout_ms", label: "Host Drain Timeout (ms)", helpText: "Host drain timeout configured at creation." },
-  { key: "memory_headroom_mb", label: "Memory Headroom (MB)", helpText: "Memory guardrail headroom configured at creation." },
+  { key: "drain_timeout_ms", label: "Drain Timeout (ms)", helpText: "Replica drain timeout configured at creation." },
+  { key: "memory_downsize_headroom_mb", label: "Memory Downsize Headroom (MB)", helpText: "Memory downsize guardrail headroom configured at creation." },
 ];
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -341,6 +344,11 @@ function createTimeLockedFields(
 
 export function buildOnlineConfigModel(inputs: OnlineConfigModelInputs): OnlineConfigModel {
   const metadata = inputs.runMetadata ?? undefined;
+  const optimizationMetadata = inputs.optimizationConfigMetadata ?? undefined;
+  const lockedMetadata = {
+    ...(metadata ?? {}),
+    ...(optimizationMetadata ?? {}),
+  };
   const latestCfg = inputs.latestOptimizationConfig ?? undefined;
   const serviceIds = uniqueSorted([
     ...fromOptimizationServiceIds(latestCfg),
@@ -379,7 +387,7 @@ export function buildOnlineConfigModel(inputs: OnlineConfigModelInputs): OnlineC
     return f;
   });
 
-  const createLockedFields = createTimeLockedFields(metadata, latestCfg);
+  const createLockedFields = createTimeLockedFields(lockedMetadata, latestCfg);
   const fields = [...runtimeFields, ...leaseFields, ...createLockedFields];
   return {
     fields,

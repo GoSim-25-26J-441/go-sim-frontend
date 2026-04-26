@@ -68,8 +68,38 @@ describe("buildOnlineConfigModel", () => {
     expect(locked.some((f) => f.key === "control_interval_ms")).toBe(true);
     expect(locked.some((f) => f.key === "min_hosts")).toBe(true);
     expect(locked.some((f) => f.key === "max_hosts")).toBe(true);
+    expect(locked.some((f) => f.key === "drain_timeout_ms")).toBe(true);
+    expect(locked.some((f) => f.key === "memory_downsize_headroom_mb")).toBe(true);
     expect(locked.some((f) => f.key === "min_locality_hit_rate")).toBe(true);
     expect(locked.some((f) => f.key === "topology_guardrail_enabled")).toBe(true);
+  });
+
+  it("prefers metadata.optimization_config values for locked settings", () => {
+    const model = buildOnlineConfigModel({
+      runMetadata: {
+        target_p95_latency_ms: 250,
+        max_controller_steps: 20,
+      },
+      optimizationConfigMetadata: {
+        target_p95_latency_ms: 180,
+        max_controller_steps: 8,
+      },
+    });
+    const target = model.byGroup.createTimeLocked.find((f) => f.key === "target_p95_latency_ms");
+    const maxSteps = model.byGroup.createTimeLocked.find((f) => f.key === "max_controller_steps");
+    expect(target?.observedValue).toBe(180);
+    expect(maxSteps?.observedValue).toBe(8);
+  });
+
+  it("includes canonical locked keys without requiring legacy aliases", () => {
+    const model = buildOnlineConfigModel({ runMetadata: {} });
+    const lockedKeys = new Set(model.byGroup.createTimeLocked.map((f) => f.key));
+    expect(lockedKeys.has("drain_timeout_ms")).toBe(true);
+    expect(lockedKeys.has("memory_downsize_headroom_mb")).toBe(true);
+    expect(lockedKeys.has("mode")).toBe(true);
+    expect(lockedKeys.has("objective")).toBe(true);
+    expect(lockedKeys.has("host_drain_timeout_ms")).toBe(false);
+    expect(lockedKeys.has("memory_headroom_mb")).toBe(false);
   });
 
   it("builds service/workload/policy patch payloads from runtime editable model", () => {

@@ -54,12 +54,13 @@ import {
 import { type RuntimeServiceDraft } from "@/lib/simulation/online-runtime-payload-validation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
+  getRunConfiguration,
+  isSimulationApiError,
   patchRunConfiguration,
   patchRunWorkload,
   renewOnlineLease,
   startSimulationRun,
   stopSimulationRun,
-  type PatchRunConfigurationBody,
   type PatchRunConfigurationWorkloadItem,
   type PatchRunConfigurationPolicies,
 } from "@/lib/api-client/simulation";
@@ -1773,6 +1774,10 @@ export default function SimulationRunPage() {
   const [hostResources, setHostResources] = useState<Record<string, { cpu_cores?: number; memory_gb?: number }>>({});
   const [clusterResources, setClusterResources] = useState<ClusterPlacementResources | null>(null);
   const [livePlacementStatus, setLivePlacementStatus] = useState<PlacementStatus>("unavailable");
+  const [runtimeConfigSeed, setRuntimeConfigSeed] = useState<
+    Awaited<ReturnType<typeof getRunConfiguration>> | null
+  >(null);
+  const [runtimeConfigSeedNotice, setRuntimeConfigSeedNotice] = useState<string | null>(null);
   // Timeseries from GET .../metrics/timeseries API (for line chart over time)
   const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
   const [unscopedMetricDebug, setUnscopedMetricDebug] = useState<UnscopedMetricDebugPoint[]>([]);
@@ -1811,12 +1816,14 @@ export default function SimulationRunPage() {
   const [lastLeaseRenewAttemptAtMs, setLastLeaseRenewAttemptAtMs] = useState<number | null>(null);
   const [leaseClockNowMs, setLeaseClockNowMs] = useState<number>(Date.now());
   const [runtimeOps, setRuntimeOps] = useState<RuntimeOperationRecord[]>([]);
+  const [changeLogFilter, setChangeLogFilter] = useState<"all" | "manual" | "controller" | "errors">("all");
   const nextLeaseRenewAtRef = useRef<number | null>(null);
   const onlineConfigModelRef = useRef<OnlineConfigModel | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
   const timeseriesWorkerRef = useRef<Worker | null>(null);
+  const runtimeConfigFetchAttemptedRef = useRef<string | null>(null);
 
   // ── Run info fetch ──────────────────────────────────────────────────────────
 
@@ -2753,6 +2760,19 @@ export default function SimulationRunPage() {
     setRuntimeOps((prev) => prev.map((op) => (op.id === id ? { ...op, ...patch } : op)));
   }, []);
 
+  const formatRuntimeMutationError = useCallback((error: unknown): string => {
+    if (isSimulationApiError(error)) {
+      const base = error.message;
+      if (error.status === 400) return `${base} (invalid patch payload)`;
+      if (error.status === 404) return `${base} (engine run or pattern not found)`;
+      if (error.status === 409) return `${base} (conflicting runtime update)`;
+      if (error.status === 412) return `${base} (run/config is no longer available)`;
+      return base;
+    }
+    if (error instanceof Error) return error.message;
+    return String(error);
+  }, []);
+
   const applyServices = useCallback(async (
     serviceRows?: RuntimeServiceDraft[],
     replicasHint?: Record<string, number | undefined>,
@@ -2823,12 +2843,12 @@ export default function SimulationRunPage() {
           return next;
         });
       }
-      setConfigUpdateError((e as Error).message);
+      setConfigUpdateError(formatRuntimeMutationError(e));
       return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.services, optSteps, liveMetricsData, metricsData, recordRuntimeOperation, updateRuntimeOperation]);
+  }, [runId, liveConfig, optSteps, liveMetricsData, metricsData, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
 
   const applyWorkload = useCallback(async (
     workloadRows?: PatchRunConfigurationWorkloadItem[],
@@ -2895,12 +2915,12 @@ export default function SimulationRunPage() {
           return next;
         });
       }
-      setConfigUpdateError((e as Error).message);
+      setConfigUpdateError(formatRuntimeMutationError(e));
       return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.workload, recordRuntimeOperation, updateRuntimeOperation]);
+  }, [runId, liveConfig, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
 
   const applyPolicies = useCallback(async (policyDraft?: AutoscalingPolicyDraft): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
@@ -2948,13 +2968,13 @@ export default function SimulationRunPage() {
         status: "rejected",
         errorText: e instanceof Error ? e.message : String(e),
       });
-      setConfigUpdateError((e as Error).message);
+      setConfigUpdateError(formatRuntimeMutationError(e));
       setAutoscalingSubmitStatus("error");
       return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig, recordRuntimeOperation, updateRuntimeOperation]);
+  }, [runId, liveConfig, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
 
   const handleManualLeaseRenew = useCallback(async () => {
     if (
@@ -3026,6 +3046,12 @@ export default function SimulationRunPage() {
   const isOnlineMode =
     status === "running" &&
     (runInfo?.metadata?.mode === "online" || runInfo?.metadata?.mode === "online_optimization");
+  const hasEngineAssociation = Boolean(
+    runInfo?.engine_run_id ||
+      (runInfo?.metadata &&
+        typeof runInfo.metadata === "object" &&
+        typeof (runInfo.metadata as Record<string, unknown>).engine_run_id === "string")
+  );
   const leaseTtlMs =
     typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0
       ? runInfo.metadata.lease_ttl_ms
@@ -3069,6 +3095,84 @@ export default function SimulationRunPage() {
     return () => window.clearInterval(timer);
   }, [runId, status, isOnlineMode, leaseTtlMs, leaseRenewIntervalMs]);
 
+  useEffect(() => {
+    if (!isOnlineMode || status !== "running" || !hasEngineAssociation) return;
+    if (runtimeConfigFetchAttemptedRef.current === runId) return;
+    runtimeConfigFetchAttemptedRef.current = runId;
+    void (async () => {
+      try {
+        const configuration = await getRunConfiguration(runId);
+        setRuntimeConfigSeed(configuration);
+        setRuntimeConfigSeedNotice(null);
+        const runtimeHosts = Array.isArray(configuration.hosts) ? configuration.hosts : [];
+        const runtimeServices = Array.isArray(configuration.services)
+          ? configuration.services
+              .map((service) => ({
+                service_id: service.service_id || service.id || "",
+                replicas: service.replicas,
+                cpu_cores: service.cpu_cores,
+                memory_mb: service.memory_mb,
+              }))
+              .filter(
+                (service) =>
+                  typeof service.service_id === "string" && service.service_id.trim() !== ""
+              )
+          : [];
+        const runtimePlacements = Array.isArray(configuration.placements)
+          ? configuration.placements.filter(
+              (placement) =>
+                typeof placement.service_id === "string" &&
+                placement.service_id.trim() !== ""
+            )
+          : [];
+        const runtimeResources = {
+          hosts: runtimeHosts,
+          services: runtimeServices,
+          placements: runtimePlacements,
+        };
+        if (
+          runtimeResources.hosts.length > 0 ||
+          runtimeResources.services.length > 0 ||
+          runtimeResources.placements.length > 0
+        ) {
+          setClusterResources(runtimeResources);
+          setLivePlacementStatus(placementStatusFromFinalConfig(runtimeResources));
+        }
+        setLiveConfig((prev) => {
+          if (prev && (prev.services.length > 0 || prev.workload.length > 0)) return prev;
+          return {
+            services: (configuration.services ?? [])
+              .map((service) => ({
+                id: service.id || service.service_id,
+                replicas: service.replicas,
+                cpu_cores: service.cpu_cores,
+                memory_mb: service.memory_mb,
+              }))
+              .filter((service) => typeof service.id === "string" && service.id.trim() !== ""),
+            workload: (configuration.workload ?? [])
+              .map((item) => ({
+                pattern_key: item.pattern_key,
+                rate_rps:
+                  typeof item.rate_rps === "number" && Number.isFinite(item.rate_rps)
+                    ? item.rate_rps
+                    : 0,
+              }))
+              .filter((item) => typeof item.pattern_key === "string" && item.pattern_key.trim() !== ""),
+            policies: prev?.policies ?? DEFAULT_LIVE_CONFIG.policies,
+          };
+        });
+      } catch (e) {
+        if (isSimulationApiError(e) && e.status === 412) {
+          setRuntimeConfigSeedNotice("Live runtime configuration is no longer available.");
+          return;
+        }
+        setRuntimeConfigSeedNotice(
+          e instanceof Error ? `Runtime configuration seed failed: ${e.message}` : "Runtime configuration seed failed."
+        );
+      }
+    })();
+  }, [runId, isOnlineMode, status, hasEngineAssociation]);
+
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
   const messagingResources = placementSource.resources;
@@ -3108,6 +3212,8 @@ export default function SimulationRunPage() {
   }, [configUpdateError, serviceMixerDrafts, trafficConsoleDrafts, autoscalingPolicyDraft]);
   useEffect(() => {
     setLiveConfig(null);
+    setRuntimeConfigSeed(null);
+    setRuntimeConfigSeedNotice(null);
     setServiceMixerDrafts({});
     setTrafficConsoleDrafts({});
     setAutoscalingPolicyDraft({});
@@ -3144,6 +3250,14 @@ export default function SimulationRunPage() {
         if (id && typeof id === "string") serviceIds.push(id);
       }
     }
+    for (const service of runtimeConfigSeed?.services ?? []) {
+      const id = service.id || service.service_id;
+      if (id && typeof id === "string") serviceIds.push(id);
+    }
+    for (const workloadItem of runtimeConfigSeed?.workload ?? []) {
+      const key = workloadItem.pattern_key;
+      if (key && typeof key === "string") patternKeys.push(key);
+    }
     // From scenario YAML (fallback when run doesn't include configuration)
     if (scenarioYaml) {
       try {
@@ -3179,7 +3293,7 @@ export default function SimulationRunPage() {
       patternKeys: Array.from(new Set(patternKeys)).sort(),
       serviceIds: Array.from(new Set(serviceIds)).sort(),
     };
-  }, [runInfo?.configuration, scenarioYaml]);
+  }, [runInfo?.configuration, scenarioYaml, runtimeConfigSeed]);
 
   const onlineConfigModel: OnlineConfigModel = useMemo(() => {
     const latestStepConfig =
@@ -3188,6 +3302,13 @@ export default function SimulationRunPage() {
       runMetadata:
         runInfo?.metadata && typeof runInfo.metadata === "object"
           ? (runInfo.metadata as Record<string, unknown>)
+          : null,
+      optimizationConfigMetadata:
+        runInfo?.metadata &&
+        typeof runInfo.metadata === "object" &&
+        (runInfo.metadata as Record<string, unknown>).optimization_config &&
+        typeof (runInfo.metadata as Record<string, unknown>).optimization_config === "object"
+          ? ((runInfo.metadata as Record<string, unknown>).optimization_config as Record<string, unknown>)
           : null,
       latestOptimizationConfig: latestStepConfig,
       latestResources: placementSource.resources ?? null,
@@ -3226,6 +3347,13 @@ export default function SimulationRunPage() {
     for (const id of runDerivedOptions.serviceIds) ensure(id);
     for (const s of runInfo?.configuration?.services ?? []) {
       if (typeof s.id === "string") ensure(s.id);
+    }
+    for (const s of runtimeConfigSeed?.services ?? []) {
+      const id = s.id || s.service_id;
+      if (typeof id === "string") ensure(id);
+      if (typeof id === "string" && typeof s.replicas === "number" && Number.isFinite(s.replicas)) out[id].replicas = s.replicas;
+      if (typeof id === "string" && typeof s.cpu_cores === "number" && Number.isFinite(s.cpu_cores)) out[id].cpu_cores = s.cpu_cores;
+      if (typeof id === "string" && typeof s.memory_mb === "number" && Number.isFinite(s.memory_mb)) out[id].memory_mb = s.memory_mb;
     }
     const latestStepServices =
       [...optSteps].reverse().find((step) => Array.isArray(step.current_config?.services))?.current_config?.services ?? [];
@@ -3266,7 +3394,7 @@ export default function SimulationRunPage() {
       }
     }
     return out;
-  }, [runDerivedOptions.serviceIds, runInfo?.configuration?.services, optSteps, placementSource.resources, displayMetrics?.metrics?.service_metrics]);
+  }, [runDerivedOptions.serviceIds, runInfo?.configuration?.services, runtimeConfigSeed?.services, optSteps, placementSource.resources, displayMetrics?.metrics?.service_metrics]);
 
   useEffect(() => {
     setPendingServiceObservationById((prev) => {
@@ -3303,6 +3431,13 @@ export default function SimulationRunPage() {
         out[w.pattern_key].observed_rate_rps = w.rate_rps;
       }
     }
+    for (const w of runtimeConfigSeed?.workload ?? []) {
+      if (typeof w.pattern_key !== "string") continue;
+      ensure(w.pattern_key);
+      if (typeof w.rate_rps === "number" && Number.isFinite(w.rate_rps)) {
+        out[w.pattern_key].observed_rate_rps = w.rate_rps;
+      }
+    }
     const latestStepWorkload =
       [...optSteps].reverse().find((step) => Array.isArray(step.current_config?.workload))?.current_config?.workload ?? [];
     for (const w of latestStepWorkload) {
@@ -3315,7 +3450,7 @@ export default function SimulationRunPage() {
       if (rateRps != null) out[patternKey].observed_rate_rps = rateRps;
     }
     return out;
-  }, [runDerivedOptions.patternKeys, runInfo?.configuration?.workload, optSteps]);
+  }, [runDerivedOptions.patternKeys, runInfo?.configuration?.workload, runtimeConfigSeed?.workload, optSteps]);
 
   useEffect(() => {
     setPendingTrafficObservationByPattern((prev) => {
@@ -3855,6 +3990,11 @@ export default function SimulationRunPage() {
               {configUpdateError}
             </p>
           )}
+          {runtimeConfigSeedNotice && (
+            <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+              {runtimeConfigSeedNotice}
+            </p>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {[
               { id: "services", label: "Services", icon: Settings2 },
@@ -4000,7 +4140,7 @@ export default function SimulationRunPage() {
               {
                 id: "mode",
                 title: "Mode",
-                keys: ["real_time_mode", "optimization.online", "optimization_target_primary"],
+                keys: ["mode", "objective", "real_time_mode", "optimization.online", "optimization_target_primary"],
               },
               {
                 id: "latency",
@@ -4025,8 +4165,8 @@ export default function SimulationRunPage() {
                   "scale_down_mem_util_max",
                   "scale_down_host_cpu_util_max",
                   "scale_down_cooldown_ms",
-                  "host_drain_timeout_ms",
-                  "memory_headroom_mb",
+                  "drain_timeout_ms",
+                  "memory_downsize_headroom_mb",
                 ],
               },
               {
@@ -4069,7 +4209,7 @@ export default function SimulationRunPage() {
                   return `${pct.toFixed(1)}%`;
                 }
                 if (/_ms$/i.test(key)) return `${value.toLocaleString()} ms`;
-                if (/(^|_)mb$/i.test(key) || /memory_headroom_mb/i.test(key)) {
+                if (/(^|_)mb$/i.test(key)) {
                   return `${value.toLocaleString()} MB`;
                 }
                 if (Number.isInteger(value)) return value.toLocaleString();
@@ -4080,9 +4220,6 @@ export default function SimulationRunPage() {
               if (typeof value === "object") return JSON.stringify(value);
               return String(value);
             };
-            const recentSteps = [...optSteps]
-              .sort((a, b) => (a.iteration_index ?? Number.MAX_SAFE_INTEGER) - (b.iteration_index ?? Number.MAX_SAFE_INTEGER))
-              .slice(-8);
             const observedAndDraftServiceIds = Array.from(
               new Set([...Object.keys(observedServicesById), ...Object.keys(serviceMixerDrafts)])
             ).sort((a, b) => a.localeCompare(b));
@@ -4143,8 +4280,61 @@ export default function SimulationRunPage() {
                 : undefined;
             const formatRuntimeOpTime = (timestampMs: number) =>
               new Date(timestampMs).toISOString().substring(11, 19);
-            const recentOpsByKind = (kind: RuntimeOperationKind) =>
-              runtimeOps.filter((op) => op.kind === kind).slice(0, 3);
+            const controllerChangeLogEntries = [...optSteps]
+              .sort((a, b) => (b.iteration_index ?? Number.MIN_SAFE_INTEGER) - (a.iteration_index ?? Number.MIN_SAFE_INTEGER))
+              .map((step, index) => {
+                const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
+                const blocked = isOptimizerStepBlocked(step);
+                return {
+                  id: `controller-${step.iteration_index ?? "na"}-${index}`,
+                  source: "controller" as const,
+                  status: blocked ? "stale" as RuntimeOperationStatus : "accepted" as RuntimeOperationStatus,
+                  timestampMs: -1,
+                  iteration: step.iteration_index,
+                  summary: step.reason ?? "optimizer_step",
+                  details: {
+                    target_p95_ms: step.target_p95_ms,
+                    score_p95_ms: step.score_p95_ms,
+                    diffLines,
+                    previous_config: step.previous_config,
+                    current_config: step.current_config,
+                  },
+                  hasError: false,
+                };
+              });
+            const manualChangeLogEntries = runtimeOps.map((op) => ({
+              id: op.id,
+              source: (op.kind === "lease" ? "lease" : op.kind === "run_control" ? "run" : "manual") as "manual" | "lease" | "run",
+              status: op.status,
+              timestampMs: op.timestampMs,
+              iteration: undefined as number | undefined,
+              summary: op.summary,
+              details: {
+                method: op.method,
+                endpoint: op.endpoint,
+                payload: op.payload,
+                kind: op.kind,
+                errorText: op.errorText,
+              },
+              hasError: op.status === "rejected" || Boolean(op.errorText),
+            }));
+            const unifiedChangeLogEntries = [...manualChangeLogEntries, ...controllerChangeLogEntries]
+              .filter((entry) => {
+                if (changeLogFilter === "all") return true;
+                if (changeLogFilter === "manual") return entry.source !== "controller";
+                if (changeLogFilter === "controller") return entry.source === "controller";
+                if (changeLogFilter === "errors") return entry.hasError;
+                return true;
+              })
+              .sort((a, b) => {
+                if (a.timestampMs >= 0 && b.timestampMs >= 0) return b.timestampMs - a.timestampMs;
+                if (a.timestampMs >= 0) return -1;
+                if (b.timestampMs >= 0) return 1;
+                const ai = typeof a.iteration === "number" ? a.iteration : Number.MIN_SAFE_INTEGER;
+                const bi = typeof b.iteration === "number" ? b.iteration : Number.MIN_SAFE_INTEGER;
+                return bi - ai;
+              })
+              .slice(0, 40);
             const servicePreviewRows = observedAndDraftServiceIds
               .map((serviceId) => {
                 const observed = observedServicesById[serviceId] ?? { id: serviceId };
@@ -4301,16 +4491,6 @@ export default function SimulationRunPage() {
                           2
                         )}</pre>
                       </details>
-                    )}
-                    {recentOpsByKind("services").length > 0 && (
-                      <div className="space-y-1">
-                        {recentOpsByKind("services").map((op) => (
-                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
-                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
-                            {op.errorText ? ` · ${op.errorText}` : ""}
-                          </p>
-                        ))}
-                      </div>
                     )}
                     {observedAndDraftServiceIds.length === 0 ? (
                       <p className="text-xs text-white/30 italic">No services observed yet. Waiting for runtime state or scenario fallback.</p>
@@ -4597,16 +4777,6 @@ export default function SimulationRunPage() {
                           2
                         )}</pre>
                       </details>
-                    )}
-                    {recentOpsByKind("workload").length > 0 && (
-                      <div className="space-y-1">
-                        {recentOpsByKind("workload").map((op) => (
-                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
-                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
-                            {op.errorText ? ` · ${op.errorText}` : ""}
-                          </p>
-                        ))}
-                      </div>
                     )}
                     {observedAndDraftPatternKeys.length === 0 ? (
                       <p className="text-xs text-white/30 italic">No workload patterns observed yet. Waiting for optimization config or scenario fallback.</p>
@@ -4918,16 +5088,6 @@ export default function SimulationRunPage() {
                       </p>
                     </div>
                     {autoscalingRowError && <p className="text-[11px] text-red-300">{autoscalingRowError}</p>}
-                    {recentOpsByKind("autoscaling").length > 0 && (
-                      <div className="space-y-1">
-                        {recentOpsByKind("autoscaling").map((op) => (
-                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
-                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
-                            {op.errorText ? ` · ${op.errorText}` : ""}
-                          </p>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -4997,16 +5157,6 @@ export default function SimulationRunPage() {
                     <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5 text-[10px] text-white/65 font-mono">
                       Patch Preview · POST /api/v1/simulation/runs/:runId/online/renew-lease · no body
                     </div>
-                    {recentOpsByKind("lease").length > 0 && (
-                      <div className="space-y-1">
-                        {recentOpsByKind("lease").map((op) => (
-                          <p key={op.id} className="text-[10px] text-white/45 font-mono">
-                            [{formatRuntimeOpTime(op.timestampMs)}] {op.method} {op.endpoint} · {op.status}
-                            {op.errorText ? ` · ${op.errorText}` : ""}
-                          </p>
-                        ))}
-                      </div>
-                    )}
                     {leaseTtlMs == null && (
                       <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
                         Lease not configured for this run. Manual renewal is unavailable.
@@ -5063,21 +5213,87 @@ export default function SimulationRunPage() {
 
                 {controlRoomTab === "change_log" && (
                   <div className="space-y-2">
-                    <p className="text-xs text-white/45">Runtime change history placeholder (optimizer-step derived for now).</p>
-                    {recentSteps.length === 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-white/45">Unified runtime timeline (manual patches + controller steps).</p>
+                      <div className="flex flex-wrap gap-1">
+                        {[
+                          { id: "all", label: "All" },
+                          { id: "manual", label: "Manual" },
+                          { id: "controller", label: "Controller" },
+                          { id: "errors", label: "Errors" },
+                        ].map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => setChangeLogFilter(option.id as typeof changeLogFilter)}
+                            className={`px-2 py-0.5 rounded border text-[10px] ${
+                              changeLogFilter === option.id
+                                ? "border-white/30 bg-white/10 text-white"
+                                : "border-white/15 bg-black/20 text-white/60 hover:bg-white/5"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {unifiedChangeLogEntries.length === 0 ? (
                       <p className="text-xs text-white/30 italic">No runtime changes observed yet.</p>
                     ) : (
                       <div className="space-y-1">
-                        {recentSteps.map((step, idx) => (
-                          <div
-                            key={`${step.iteration_index ?? "na"}-${idx}-${step.reason ?? ""}`}
-                            className="rounded border border-border bg-black/20 px-2 py-1 text-[11px] text-white/70"
-                          >
-                            <span className="font-mono text-white/50">#{step.iteration_index ?? "—"}</span>{" "}
-                            <span>{step.reason ?? "optimizer_step"}</span>
-                            {typeof step.score_p95_ms === "number" && (
-                              <span className="text-white/45"> · score p95: {step.score_p95_ms.toFixed(1)} ms</span>
-                            )}
+                        {unifiedChangeLogEntries.map((entry) => (
+                          <div key={entry.id} className="rounded border border-border bg-black/20 px-2 py-1.5 text-[11px] text-white/70">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono text-white/50">
+                                  {entry.timestampMs >= 0 ? `[${formatRuntimeOpTime(entry.timestampMs)}]` : `#${entry.iteration ?? "—"}`}
+                                </span>
+                                <span className={`rounded px-1.5 py-0.5 border text-[10px] ${
+                                  entry.source === "controller"
+                                    ? "border-purple-500/30 bg-purple-500/10 text-purple-300"
+                                    : entry.source === "lease"
+                                      ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+                                      : entry.source === "run"
+                                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                        : "border-white/20 bg-white/5 text-white/70"
+                                }`}>
+                                  {entry.source === "controller" ? "Controller" : entry.source === "lease" ? "Lease" : entry.source === "run" ? "Run" : "Manual"}
+                                </span>
+                                <span className={`rounded px-1.5 py-0.5 border text-[10px] ${
+                                  entry.status === "rejected"
+                                    ? "border-red-500/30 bg-red-500/10 text-red-300"
+                                    : entry.status === "observed"
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                      : entry.status === "stale"
+                                        ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                        : "border-white/20 bg-white/5 text-white/70"
+                                }`}>
+                                  {entry.status}
+                                </span>
+                                <span>{entry.summary}</span>
+                              </div>
+                            </div>
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-[10px] text-white/45">Details</summary>
+                              {entry.source === "controller" ? (
+                                <div className="mt-1 space-y-1">
+                                  <p className="text-[10px] text-white/55">
+                                    target p95: {num((entry.details as Record<string, unknown>).target_p95_ms)?.toFixed(1) ?? "—"} ms · score p95: {num((entry.details as Record<string, unknown>).score_p95_ms)?.toFixed(1) ?? "—"} ms
+                                  </p>
+                                  {Array.isArray((entry.details as Record<string, unknown>).diffLines) && ((entry.details as Record<string, unknown>).diffLines as string[]).length > 0 ? (
+                                    <ul className="text-[10px] text-white/55 list-disc pl-4">
+                                      {((entry.details as Record<string, unknown>).diffLines as string[]).slice(0, 8).map((line, i) => (
+                                        <li key={`${entry.id}-diff-${i}`}>{line}</li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-[10px] text-white/45">No material config diff available.</p>
+                                  )}
+                                </div>
+                              ) : (
+                                <pre className="mt-1 text-[10px] text-white/65 overflow-x-auto font-mono">{JSON.stringify(entry.details, null, 2)}</pre>
+                              )}
+                            </details>
                           </div>
                         ))}
                       </div>
@@ -5901,7 +6117,7 @@ export default function SimulationRunPage() {
                                 paddingAngle={0}
                                 stroke="none"
                               >
-                                {donutData.map((entry, i) => (
+                                {donutData.map((entry) => (
                                   <Cell key={entry.name} fill={entry.color} />
                                 ))}
                               </Pie>

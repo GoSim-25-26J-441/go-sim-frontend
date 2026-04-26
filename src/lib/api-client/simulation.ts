@@ -1,9 +1,12 @@
 // Simulation API client for backend integration
 // Backend: go-sim-backend simulation API (source of truth for create/start/stop/events)
 
-import { env } from "@/lib/env";
+import { env } from "../env";
 import { authenticatedFetch } from "./http";
-import { SimulationRun } from "@/types/simulation";
+import type {
+  RuntimeConfiguration,
+  SimulationRun,
+} from "@/types/simulation";
 import { SimulationApiError, type SimulationErrorBody } from "./simulation-errors";
 
 const BASE_URL = `${env.BACKEND_BASE}/api/v1/simulation`;
@@ -65,8 +68,8 @@ export interface CreateProjectRunOptimization {
   max_noop_intervals?: number;
   lease_ttl_ms?: number;
   scale_down_cooldown_ms?: number;
-  host_drain_timeout_ms?: number;
-  memory_headroom_mb?: number;
+  drain_timeout_ms?: number;
+  memory_downsize_headroom_mb?: number;
   [key: string]: unknown;
 }
 
@@ -213,6 +216,37 @@ export interface PatchRunWorkloadBody {
   rate_rps: number;
 }
 
+export interface RuntimeConfigurationResponse {
+  configuration: RuntimeConfiguration;
+}
+
+function normalizeRuntimeConfiguration(
+  configuration: RuntimeConfiguration | undefined
+): RuntimeConfiguration {
+  const cfg = configuration ?? {};
+  return {
+    ...cfg,
+    services: Array.isArray(cfg.services)
+      ? cfg.services.map((service) => {
+          const serviceId =
+            typeof service.service_id === "string" && service.service_id.trim() !== ""
+              ? service.service_id
+              : typeof service.id === "string" && service.id.trim() !== ""
+                ? service.id
+                : "";
+          return {
+            ...service,
+            service_id: serviceId,
+            id: serviceId || undefined,
+          };
+        })
+      : [],
+    workload: Array.isArray(cfg.workload) ? cfg.workload : [],
+    hosts: Array.isArray(cfg.hosts) ? cfg.hosts : [],
+    placements: Array.isArray(cfg.placements) ? cfg.placements : [],
+  };
+}
+
 /**
  * Full configuration update for a running simulation (online mode).
  * Backend: PATCH /api/v1/simulation/runs/:id/configuration
@@ -228,8 +262,7 @@ export async function patchRunConfiguration(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: "Configuration update failed" }));
-    throw new Error((err as { error?: string }).error ?? `Configuration update failed (${response.status})`);
+    await throwSimulationHttpError(response, "Configuration update failed");
   }
   return response.json() as Promise<PatchRunConfigurationResponse>;
 }
@@ -249,10 +282,26 @@ export async function patchRunWorkload(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: "Workload update failed" }));
-    throw new Error((err as { error?: string }).error ?? `Workload update failed (${response.status})`);
+    await throwSimulationHttpError(response, "Workload update failed");
   }
   return response.json() as Promise<{ message: string; run_id?: string }>;
+}
+
+/**
+ * Get live runtime configuration for an online running simulation.
+ * Backend: GET /api/v1/simulation/runs/:id/configuration
+ */
+export async function getRunConfiguration(
+  runId: string
+): Promise<RuntimeConfigurationResponse["configuration"]> {
+  const url = `${BASE_URL}/runs/${encodeURIComponent(runId)}/configuration`;
+  const response = await authenticatedFetch(url, { method: "GET" });
+  if (!response.ok) {
+    // 412 is expected when runtime configuration is no longer available.
+    await throwSimulationHttpError(response, "Live runtime configuration is not available");
+  }
+  const data = (await response.json()) as RuntimeConfigurationResponse;
+  return normalizeRuntimeConfiguration(data.configuration);
 }
 
 /**
@@ -540,7 +589,7 @@ export interface SimulationRunMetricsFlatResponse {
 export {
   normalizePersistedMetricPoint,
   type NormalizedPersistedMetricPoint,
-} from "@/lib/simulation/normalize-persisted-metric-point";
+} from "../simulation/normalize-persisted-metric-point";
 
 export async function getSimulationMetrics(id: string): Promise<SimulationRun["results"] | null> {
   try {
