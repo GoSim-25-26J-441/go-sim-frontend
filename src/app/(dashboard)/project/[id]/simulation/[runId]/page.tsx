@@ -119,6 +119,8 @@ const DEFAULT_LIVE_CONFIG: LiveConfig = {
   policies: { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } },
 };
 
+const PENDING_OBSERVATION_MAX_AGE_MS = 120_000;
+
 function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | null {
   if (!cfg) return null;
   const services: RuntimeServiceDraft[] = (cfg.services ?? []).map((s) => ({
@@ -1789,6 +1791,8 @@ export default function SimulationRunPage() {
   } | null>(null);
   const [leaseRenewError, setLeaseRenewError] = useState<string | null>(null);
   const [leaseRenewStatus, setLeaseRenewStatus] = useState<"idle" | "ok" | "error">("idle");
+  const [lastLeaseRenewAttemptAtMs, setLastLeaseRenewAttemptAtMs] = useState<number | null>(null);
+  const [leaseClockNowMs, setLeaseClockNowMs] = useState<number>(Date.now());
   const nextLeaseRenewAtRef = useRef<number | null>(null);
   const onlineConfigModelRef = useRef<OnlineConfigModel | null>(null);
 
@@ -2877,6 +2881,14 @@ export default function SimulationRunPage() {
   }, [runId, liveConfig]);
 
   const handleManualLeaseRenew = useCallback(async () => {
+    if (
+      !(typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0)
+    ) {
+      setLeaseRenewError("Lease is not configured for this run.");
+      setLeaseRenewStatus("error");
+      return;
+    }
+    setLastLeaseRenewAttemptAtMs(Date.now());
     setManualLeaseRenewLoading(true);
     try {
       await renewOnlineLease(runId);
@@ -2928,17 +2940,29 @@ export default function SimulationRunPage() {
     typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0
       ? runInfo.metadata.lease_ttl_ms
       : undefined;
+  const leaseRenewIntervalMs =
+    leaseTtlMs == null
+      ? undefined
+      : Math.min(
+          Math.max(Math.floor(leaseTtlMs * 0.45), 5_000),
+          Math.max(leaseTtlMs - 2_000, 5_000),
+        );
+
+  useEffect(() => {
+    if (!isOnlineMode) return;
+    const timer = window.setInterval(() => setLeaseClockNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [isOnlineMode]);
 
   useEffect(() => {
     if (status !== "running" || !isOnlineMode || leaseTtlMs == null) {
       nextLeaseRenewAtRef.current = null;
       return;
     }
-    const period = Math.min(
-      Math.max(Math.floor(leaseTtlMs * 0.45), 5_000),
-      Math.max(leaseTtlMs - 2_000, 5_000),
-    );
+    const period = leaseRenewIntervalMs;
+    if (period == null) return;
     const tick = () => {
+      setLastLeaseRenewAttemptAtMs(Date.now());
       nextLeaseRenewAtRef.current = Date.now() + period;
       renewOnlineLease(runId)
         .then(() => {
@@ -2953,7 +2977,7 @@ export default function SimulationRunPage() {
     tick();
     const timer = window.setInterval(tick, period);
     return () => window.clearInterval(timer);
-  }, [runId, status, isOnlineMode, leaseTtlMs]);
+  }, [runId, status, isOnlineMode, leaseTtlMs, leaseRenewIntervalMs]);
 
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
@@ -2984,6 +3008,15 @@ export default function SimulationRunPage() {
     if (!isOnlineMode) setControlRoomTab("services");
   }, [isOnlineMode]);
   useEffect(() => {
+    // Avoid carrying stale cross-tab mutation errors between control-room panels.
+    setConfigUpdateError(null);
+  }, [controlRoomTab]);
+  useEffect(() => {
+    if (!configUpdateError) return;
+    // Clear stale mutation errors once the operator edits any runtime draft.
+    setConfigUpdateError(null);
+  }, [configUpdateError, serviceMixerDrafts, trafficConsoleDrafts, autoscalingPolicyDraft]);
+  useEffect(() => {
     setLiveConfig(null);
     setServiceMixerDrafts({});
     setTrafficConsoleDrafts({});
@@ -2991,6 +3024,7 @@ export default function SimulationRunPage() {
     setPendingServiceObservationById({});
     setPendingTrafficObservationByPattern({});
     setAutoscalingSubmitStatus("idle");
+    setLastLeaseRenewAttemptAtMs(null);
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
@@ -3146,7 +3180,12 @@ export default function SimulationRunPage() {
   useEffect(() => {
     setPendingServiceObservationById((prev) => {
       const next = { ...prev };
+      const now = Date.now();
       for (const [id, target] of Object.entries(prev)) {
+        if (now - target.updatedAt > PENDING_OBSERVATION_MAX_AGE_MS) {
+          delete next[id];
+          continue;
+        }
         const observed = observedServicesById[id];
         if (!observed) continue;
         const replicasMatch = observed.replicas === target.replicas;
@@ -3190,7 +3229,12 @@ export default function SimulationRunPage() {
   useEffect(() => {
     setPendingTrafficObservationByPattern((prev) => {
       const next = { ...prev };
+      const now = Date.now();
       for (const [patternKey, target] of Object.entries(prev)) {
+        if (now - target.updatedAt > PENDING_OBSERVATION_MAX_AGE_MS) {
+          delete next[patternKey];
+          continue;
+        }
         const observed = observedTrafficByPattern[patternKey];
         if (!observed || observed.observed_rate_rps == null) continue;
         if (observed.observed_rate_rps === target.rate_rps) delete next[patternKey];
@@ -3227,11 +3271,6 @@ export default function SimulationRunPage() {
         {stopError && (
           <span className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
             Stop failed: {stopError}
-          </span>
-        )}
-        {leaseRenewError && isOnlineMode && (
-          <span className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-            Lease renewal: {leaseRenewError}
           </span>
         )}
         {status === "pending" && (
@@ -3831,6 +3870,11 @@ export default function SimulationRunPage() {
             const liveRequestCount =
               num(displayMetrics?.summary?.request_count) ??
               num(displayMetrics?.summary?.total_requests);
+            const leaseAutoRenewEnabled = status === "running" && isOnlineMode && leaseTtlMs != null;
+            const leaseNextRenewInSeconds =
+              nextLeaseRenewAtRef.current != null
+                ? Math.max(0, Math.ceil((nextLeaseRenewAtRef.current - leaseClockNowMs) / 1000))
+                : undefined;
 
             return (
               <>
@@ -3976,12 +4020,12 @@ export default function SimulationRunPage() {
                                     <span className="text-xs font-mono text-white">{observed.id}</span>
                                     {dirty && (
                                       <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
-                                        dirty
+                                        Dirty
                                       </span>
                                     )}
                                     {pending && (
                                       <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
-                                        pending observation
+                                        Pending observation
                                       </span>
                                     )}
                                   </div>
@@ -4230,12 +4274,12 @@ export default function SimulationRunPage() {
                                   <span className="text-xs font-mono text-white">{observed.pattern_key}</span>
                                   {dirty && (
                                     <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
-                                      dirty
+                                        Dirty
                                     </span>
                                   )}
                                   {pending && (
                                     <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
-                                      pending observation
+                                        Pending observation
                                     </span>
                                   )}
                                 </div>
@@ -4408,10 +4452,10 @@ export default function SimulationRunPage() {
                     </div>
                     <div className="flex flex-wrap gap-2 text-[11px]">
                       <span className={`rounded border px-1.5 py-0.5 ${autoscalingDirty ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-white/15 bg-white/5 text-white/60"}`}>
-                        {autoscalingDirty ? "dirty" : "clean"}
+                        {autoscalingDirty ? "Dirty" : "Clean"}
                       </span>
                       <span className={`rounded border px-1.5 py-0.5 ${autoscalingSubmitStatus === "submitted" ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300" : "border-white/15 bg-white/5 text-white/60"}`}>
-                        {autoscalingSubmitStatus === "submitted" ? "submitted" : "idle"}
+                        {autoscalingSubmitStatus === "submitted" ? "Submitted" : "Idle"}
                       </span>
                       <span className="rounded border border-white/15 bg-white/5 text-white/60 px-1.5 py-0.5">
                         baseline target: {baselineTargetCpuPercent.toFixed(1)}%
@@ -4509,23 +4553,38 @@ export default function SimulationRunPage() {
 
                 {controlRoomTab === "lease" && (
                   <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      <span className={`rounded border px-1.5 py-0.5 ${leaseAutoRenewEnabled ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        auto-renew: {leaseAutoRenewEnabled ? "enabled" : "disabled"}
+                      </span>
+                      <span className={`rounded border px-1.5 py-0.5 ${leaseRenewStatus === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : leaseRenewStatus === "error" ? "border-red-500/30 bg-red-500/10 text-red-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        last result: {leaseRenewStatus}
+                      </span>
+                      <span className="rounded border border-white/15 bg-white/5 text-white/60 px-1.5 py-0.5">
+                        run status: {status}
+                      </span>
+                    </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                       <div className="rounded border border-border bg-black/20 px-2 py-1.5">
                         <p className="text-white/40">lease_ttl_ms</p>
-                        <p className="text-white/80 font-mono">{leaseTtlMs ?? "—"}</p>
+                        <p className="text-white/80 font-mono">{leaseTtlMs ?? "not configured"}</p>
                       </div>
                       <div className="rounded border border-border bg-black/20 px-2 py-1.5">
-                        <p className="text-white/40">Auto renew</p>
-                        <p className="text-white/80 font-mono">{leaseTtlMs != null ? "enabled" : "disabled"}</p>
+                        <p className="text-white/40">Renew interval</p>
+                        <p className="text-white/80 font-mono">{leaseRenewIntervalMs != null ? `${leaseRenewIntervalMs} ms` : "n/a"}</p>
                       </div>
                       <div className="rounded border border-border bg-black/20 px-2 py-1.5">
-                        <p className="text-white/40">Last renewal</p>
-                        <p className="text-white/80 font-mono">{leaseRenewStatus}</p>
-                      </div>
-                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
-                        <p className="text-white/40">Next renewal</p>
+                        <p className="text-white/40">Next scheduled renew</p>
                         <p className="text-white/80 font-mono">
-                          {nextLeaseRenewAtRef.current ? new Date(nextLeaseRenewAtRef.current).toISOString().substring(11, 19) : "—"}
+                          {leaseNextRenewInSeconds != null
+                            ? `${leaseNextRenewInSeconds}s (${new Date(nextLeaseRenewAtRef.current ?? 0).toISOString().substring(11, 19)})`
+                            : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Last renewal attempt</p>
+                        <p className="text-white/80 font-mono">
+                          {lastLeaseRenewAttemptAtMs != null ? new Date(lastLeaseRenewAttemptAtMs).toISOString().substring(11, 19) : "—"}
                         </p>
                       </div>
                     </div>
@@ -4533,10 +4592,10 @@ export default function SimulationRunPage() {
                       <button
                         type="button"
                         onClick={handleManualLeaseRenew}
-                        disabled={manualLeaseRenewLoading}
+                        disabled={manualLeaseRenewLoading || leaseTtlMs == null}
                         className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
-                        {manualLeaseRenewLoading ? "Renewing…" : "Renew lease"}
+                        {manualLeaseRenewLoading ? "Renewing…" : "Renew lease now"}
                       </button>
                       <button
                         type="button"
@@ -4555,6 +4614,11 @@ export default function SimulationRunPage() {
                         {isStopping ? "…" : "Cancel run"}
                       </button>
                     </div>
+                    {leaseTtlMs == null && (
+                      <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
+                        Lease not configured for this run. Manual renewal is unavailable.
+                      </p>
+                    )}
                     {leaseRenewError && (
                       <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
                         Lease renewal: {leaseRenewError}
