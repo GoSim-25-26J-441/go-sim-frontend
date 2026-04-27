@@ -6,7 +6,7 @@
 import type { NormalizedPersistedMetricPoint } from "./normalize-persisted-metric-point";
 
 export type SeriesScopeInput = {
-  labels?: Record<string, string | undefined>;
+  labels?: Record<string, string | number | boolean | undefined>;
   tags?: Record<string, unknown>;
   service_id?: string;
   host_id?: string;
@@ -22,26 +22,31 @@ export type SeriesScopeInput = {
 };
 
 export function extractSeriesScope(p: SeriesScopeInput): string {
+  const id = (v: unknown): string | undefined => {
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    return undefined;
+  };
   const tag = (key: string) => {
     const v = p.tags?.[key];
-    return typeof v === "string" ? v : undefined;
+    return id(v);
   };
 
   return (
-    p.serviceId ??
-    p.labels?.service ??
-    p.labels?.service_id ??
-    p.labels?.host ??
-    p.labels?.host_id ??
-    p.labels?.instance ??
-    p.labels?.instance_id ??
-    p.service_id ??
-    p.hostId ??
-    p.host_id ??
-    p.instanceId ??
-    p.instance_id ??
-    p.nodeId ??
-    p.node_id ??
+    id(p.serviceId) ??
+    id(p.labels?.service) ??
+    id(p.labels?.service_id) ??
+    id(p.labels?.host) ??
+    id(p.labels?.host_id) ??
+    id(p.labels?.instance) ??
+    id(p.labels?.instance_id) ??
+    id(p.service_id) ??
+    id(p.hostId) ??
+    id(p.host_id) ??
+    id(p.instanceId) ??
+    id(p.instance_id) ??
+    id(p.nodeId) ??
+    id(p.node_id) ??
     tag("service") ??
     tag("service_id") ??
     tag("host") ??
@@ -50,6 +55,46 @@ export function extractSeriesScope(p: SeriesScopeInput): string {
     tag("instance_id") ??
     "unscoped"
   );
+}
+
+function id(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return undefined;
+}
+
+function scopeValueForLabel(p: SeriesScopeInput, label: string): string | undefined {
+  const key = label.trim();
+  if (!key) return undefined;
+
+  if (key === "broker" || key === "broker_service") {
+    return (
+      id(p.labels?.broker) ??
+      id(p.labels?.broker_service) ??
+      id(p.tags?.broker) ??
+      id(p.tags?.broker_service)
+    );
+  }
+
+  const labelVal = id(p.labels?.[key]);
+  if (labelVal) return labelVal;
+  const tagVal = id(p.tags?.[key]);
+  if (tagVal) return tagVal;
+
+  // Common alias handling for existing IDs and convenience names.
+  if (key === "service") return id(p.serviceId) ?? id(p.service_id) ?? id(p.labels?.service_id) ?? id(p.tags?.service_id);
+  if (key === "host") return id(p.hostId) ?? id(p.host_id) ?? id(p.labels?.host_id) ?? id(p.tags?.host_id);
+  if (key === "instance") return id(p.instanceId) ?? id(p.instance_id) ?? id(p.labels?.instance_id) ?? id(p.tags?.instance_id);
+  if (key === "node") return id(p.nodeId) ?? id(p.node_id) ?? id(p.labels?.node_id) ?? id(p.tags?.node_id);
+  return undefined;
+}
+
+export function extractSeriesScopeByLabel(p: SeriesScopeInput, groupingLabel?: string): string {
+  if (groupingLabel && groupingLabel !== "auto") {
+    const scoped = scopeValueForLabel(p, groupingLabel);
+    return scoped ?? "unscoped";
+  }
+  return extractSeriesScope(p);
 }
 
 function labelsForScope(n: NormalizedPersistedMetricPoint): Record<string, string | undefined> {
@@ -70,6 +115,23 @@ export function extractSeriesScopeFromNormalized(n: NormalizedPersistedMetricPoi
     instanceId: n.instanceId,
     nodeId: n.nodeId,
   });
+}
+
+export function extractSeriesScopeByLabelFromNormalized(
+  n: NormalizedPersistedMetricPoint,
+  groupingLabel?: string
+): string {
+  return extractSeriesScopeByLabel(
+    {
+      labels: labelsForScope(n),
+      tags: n.tags,
+      serviceId: n.serviceId,
+      hostId: n.hostId,
+      instanceId: n.instanceId,
+      nodeId: n.nodeId,
+    },
+    groupingLabel
+  );
 }
 
 export function flatTimeseriesSeriesKeyFromNormalized(

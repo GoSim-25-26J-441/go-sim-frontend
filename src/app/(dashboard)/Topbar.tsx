@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { isAmgApdScrollWithContentPath } from "@/app/features/amg-apd/utils/amgApdDashboardRoutes";
+import { isProjectPatternsNonStickyTopbarPath } from "@/app/features/amg-apd/utils/amgApdDashboardRoutes";
 import { LogOut, User, FileText } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import { useEffect, useRef, useState } from "react";
@@ -12,7 +12,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 export default function Topbar() {
   const pathname = usePathname();
-  const scrollTopbarWithContent = isAmgApdScrollWithContentPath(pathname);
+  const topbarScrollsWithPage = isProjectPatternsNonStickyTopbarPath(pathname);
 
   const router = useRouter();
   const { signOut, userProfile, user } = useAuth();
@@ -70,7 +70,9 @@ export default function Topbar() {
     .slice(0, 2);
 
   return (
-    <header className="sticky top-0 z-40 h-full px-6">
+    <header
+      className={`z-40 h-full px-6 ${topbarScrollsWithPage ? "relative" : "sticky top-0"}`}
+    >
       <div className="flex h-full w-full items-center justify-between">
         <Link href="/dashboard" className="flex items-center">
           <img src="/logo/logo.png" alt="logo" className="h-8 w-auto" />
@@ -111,9 +113,9 @@ export default function Topbar() {
             {isDropdownOpen && (
               <div
                 role="menu"
-                className="absolute right-0 top-full mt-3 w-56 bg-[#1F2937] border border-gray-700 rounded-md shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                className="absolute right-0 top-full mt-3 w-56 bg-[#1F1F1F] border border-gray-700 rounded-md shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
               >
-                <div className="px-4 py-3 border-b border-gray-700 bg-gray-800/50">
+                <div className="px-4 py-3 border-b border-gray-700">
                   <p className="text-sm font-semibold text-white truncate">
                     {displayName}
                   </p>

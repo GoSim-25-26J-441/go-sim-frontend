@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, Eye, EyeOff } from "lucide-react";
 import { toDisplayName } from "@/app/features/amg-apd/utils/displayNames";
 
@@ -763,14 +763,22 @@ export default function BeforeAfterPreview({
   previewFrom,
   previewTo,
   previewRemoveLeg,
+  /** Increment (e.g. from designer tour) to expand the before/after panels without a click. */
+  expandSignal = 0,
 }: {
   suggestionId: string | undefined;
   kind: string;
   previewFrom?: string;
   previewTo?: string;
   previewRemoveLeg?: string;
+  expandSignal?: number;
 }) {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!expandSignal) return;
+    setOpen(true);
+  }, [expandSignal]);
   const nodes = parseNodesFromId(suggestionId);
   const model = getPreviewModel(
     kind,

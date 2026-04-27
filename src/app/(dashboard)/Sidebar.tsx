@@ -342,8 +342,8 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="h-full min-h-0 flex flex-row">
-      <div className="w-64 md:w-[280px] lg:w-[320px] h-full flex flex-col px-5 pt-5">
+    <aside className="h-full min-h-0 min-w-0 flex flex-row">
+      <div className="w-full min-w-0 md:max-[1919px]:w-[236px] min-[1920px]:w-[320px] h-full flex flex-col px-4 min-[1920px]:px-5 pt-5">
         <div className="p-4 border-b border-gray-800 flex justify-end">
           <button
             type="button"

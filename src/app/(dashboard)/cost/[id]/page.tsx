@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -724,21 +723,20 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     if (error) {
         return (
-            <div className="p-6">
-                <div className="max-w-2xl mx-auto">
-                    <div className="bg-card border border-border rounded-lg p-6">
-                        <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
-                        <h1 className="text-2xl font-bold text-red-500 mb-2">Error</h1>
-                        <p className="opacity-80">{error}</p>
-                        <p className="text-sm opacity-60 mt-4">Request ID: {requestId}</p>
-                        <button
-                            onClick={handleBackClick}
-                            className="mt-4 px-4 py-2 rounded-lg font-medium border border-border flex items-center gap-2 hover:bg-surface transition-colors"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                            Back to Designs
-                        </button>
-                    </div>
+            <div className="p-6 min-h-[80vh] flex items-center justify-center">
+                <div className="max-w-md w-full rounded-2xl border border-border bg-surface/30 px-8 py-10 text-center shadow-sm">
+                    <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                    <h2 className="text-xl font-semibold mb-2">Resource Not Found</h2>
+                    <p className="text-sm opacity-70">
+                        We could not find the requested resource. It may have been removed or is no longer available.
+                    </p>
+                    <button
+                        onClick={handleBackClick}
+                        className="mt-6 px-4 py-2 rounded-lg font-medium border border-border inline-flex items-center gap-2 hover:bg-surface transition-colors"
+                    >
+                        <ChevronLeft className="w-4 h-4" />
+                        Back to Designs
+                    </button>
                 </div>
             </div>
         );

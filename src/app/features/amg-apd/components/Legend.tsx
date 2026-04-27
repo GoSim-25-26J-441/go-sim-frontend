@@ -10,6 +10,7 @@ import {
 } from "@/app/features/amg-apd/utils/colors";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
 function prettyLabel(key: string) {
   return key
@@ -115,6 +116,7 @@ export default function Legend({
           <span className="font-semibold text-white/80 text-xs">Anti-patterns:</span>
           <button
             type="button"
+            data-amg-designer={AMG_DESIGNER.legendHelp}
             onClick={() => setShowHelp(true)}
             className={
               versionCount === 1
@@ -127,7 +129,11 @@ export default function Legend({
             ?
           </button>
           {kinds.map((k) => (
-            <span key={k} className="inline-flex items-center gap-1.5">
+            <span
+              key={k}
+              data-amg-designer-legend-kind={k}
+              className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-[box-shadow,background] duration-150"
+            >
               <span
                 style={{ background: colorForDetectionKind(k) }}
                 className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white/10"

@@ -1,16 +1,11 @@
 /**
- * Dashboard routes for AMG APD (patterns, compare, check, etc.) where the global
- * Topbar should scroll with the page instead of staying sticky.
+ * Routes where the global Topbar should scroll with the page (not `position: sticky`).
+ * Scoped to project patterns home and compare only.
  */
-export function isAmgApdScrollWithContentPath(pathname: string | null): boolean {
+export function isProjectPatternsNonStickyTopbarPath(
+  pathname: string | null,
+): boolean {
   if (!pathname) return false;
-  if (
-    pathname === "/dashboard/patterns" ||
-    pathname.startsWith("/dashboard/patterns/")
-  ) {
-    return true;
-  }
-  if (/^\/project\/[^/]+\/patterns(?:\/|$)/.test(pathname)) return true;
-  if (/^\/project\/[^/]+\/pattern(?:\/|$)/.test(pathname)) return true;
-  return false;
+  const p = pathname.replace(/\/$/, "") || pathname;
+  return /^\/project\/[^/]+\/patterns(?:\/compare)?$/.test(p);
 }
