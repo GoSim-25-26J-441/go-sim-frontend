@@ -33,18 +33,18 @@ describe("normalizePersistedMetricPoint", () => {
     expect(n!.hostId).toBe("h2");
   });
 
-  it("uses host_id when present", () => {
+  it("uses host_id when present, without requiring host-* prefixes", () => {
     const n = normalizePersistedMetricPoint(
       {
         time: "2025-01-01T00:00:00Z",
         value: 1,
-        host_id: "host-9",
+        host_id: "edge-a",
         labels: {},
         tags: {},
       },
       "cpu_utilization",
     );
-    expect(n!.hostId).toBe("host-9");
+    expect(n!.hostId).toBe("edge-a");
   });
 
   it("uses service_id and instance_id", () => {

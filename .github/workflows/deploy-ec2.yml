@@ -1,4 +1,4 @@
-# Aligned with backend: CI (lint + build) on push/PR; deploy on push to main (build in GitHub, upload to S3, SSM runs script from S3).
+# CI: npm ci → typecheck → test → lint → build. Deploy on push to main (artifact to S3, SSM runs script from S3).
 # Required secrets: AWS_ROLE_ARN, AWS_REGION, DEPLOY_BUCKET, EC2_INSTANCE_ID
 # Build-time env (for NEXT_PUBLIC_* and next.config): NEXT_PUBLIC_BACKEND_BASE, BACKEND_BASE; optional: NEXT_PUBLIC_APP_NAME, NEXT_PUBLIC_FIREBASE_*
 
@@ -38,7 +38,16 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm i
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
 
       - name: Build
         run: npm run build
@@ -75,7 +84,16 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm i
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
 
       - name: Build
         run: npm run build

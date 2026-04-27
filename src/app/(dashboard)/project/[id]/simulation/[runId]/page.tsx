@@ -30,6 +30,7 @@ import {
 import { env } from "@/lib/env";
 import {
   extractSeriesScopeFromNormalized,
+  extractSeriesScopeByLabelFromNormalized,
   flatTimeseriesLegendLabel,
   flatTimeseriesSeriesKeyFromNormalized,
   isUnscopedSeriesKey,
@@ -57,25 +58,26 @@ import {
 } from "@/lib/api-client/simulation";
 import YAML from "yaml";
 import ClusterPlacementView, {
-  type ClusterPlacementResources,
-  type ClusterPlacementHostResource,
-  type ClusterPlacementServiceResource,
-  type ClusterPlacementInstance,
 } from "@/components/simulation/ClusterPlacementView";
+import type {
+  ClusterPlacementResources,
+  ClusterPlacementHostResource,
+  ClusterPlacementServiceResource,
+  ClusterPlacementInstance,
+  MetricPoint,
+  MetricTimeseries,
+  MetricsResponse,
+  MetricsSummary,
+  EndpointRequestStat,
+  ServiceMetricSnapshot,
+  SnapshotMetrics,
+  HostMetricSnapshot,
+  MetricUpdatePayload,
+  OptimizationStepConfig,
+  OptimizationStepEvent,
+} from "@/types/simulation";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-interface ServiceConfig {
-  id: string;
-  replicas?: number;
-  [key: string]: unknown;
-}
-
-interface OptimizationStepConfig {
-  services?: ServiceConfig[];
-  workload?: unknown[];
-  hosts?: unknown[];
-}
 
 /** Editable config for Live config panel; matches PATCH shape. */
 interface LiveConfig {
@@ -100,21 +102,21 @@ function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | n
   }));
   const workload: PatchRunConfigurationWorkloadItem[] = Array.isArray(cfg.workload)
     ? cfg.workload
-        .filter((w): w is PatchRunConfigurationWorkloadItem => typeof w === "object" && w !== null && "pattern_key" in w && "rate_rps" in w)
-        .map((w) => ({ pattern_key: w.pattern_key, rate_rps: Number(w.rate_rps) }))
+        .map((w) => {
+          const r = asRecord(w);
+          if (!r) return null;
+          const pattern_key = str(r.pattern_key);
+          const rate_rps = num(r.rate_rps);
+          if (!pattern_key || rate_rps == null) return null;
+          return { pattern_key, rate_rps };
+        })
+        .filter((w): w is PatchRunConfigurationWorkloadItem => w !== null)
     : [];
   if (services.length === 0 && workload.length === 0) return null;
   return { services, workload, policies: DEFAULT_LIVE_CONFIG.policies };
 }
 
-interface OptimizationStep {
-  iteration_index: number;
-  target_p95_ms: number;
-  score_p95_ms: number;
-  reason: string;
-  previous_config?: OptimizationStepConfig;
-  current_config?: OptimizationStepConfig;
-}
+type OptimizationStep = OptimizationStepEvent;
 
 interface Candidate {
   id: string;
@@ -247,6 +249,85 @@ const LINE_COLORS  = [
   "#f472b6", "#facc15", "#60a5fa", "#f87171",
 ];
 
+type TimeseriesMetricBehavior = "cumulative_counter" | "gauge" | "observation";
+type TimeseriesMetricUnit = "count" | "ms" | "percent" | "ratio" | "rps" | "raw";
+type TimeseriesMetricOption = {
+  value: string;
+  label: string;
+  unit: TimeseriesMetricUnit;
+  behavior: TimeseriesMetricBehavior;
+  description: string;
+};
+
+const TIMESERIES_METRIC_OPTIONS: TimeseriesMetricOption[] = [
+  { value: "request_count", label: "Request count", unit: "count", behavior: "cumulative_counter", description: "Cumulative requests per label set." },
+  { value: "request_error_count", label: "Request error count", unit: "count", behavior: "cumulative_counter", description: "Cumulative request errors per label set." },
+  { value: "request_latency_ms", label: "Request latency", unit: "ms", behavior: "observation", description: "Observed request latency." },
+  { value: "root_request_latency_ms", label: "Root request latency", unit: "ms", behavior: "observation", description: "End-to-end root request latency." },
+  { value: "service_request_latency_ms", label: "Service request latency", unit: "ms", behavior: "observation", description: "Per-service hop latency." },
+  { value: "queue_wait_ms", label: "Queue wait", unit: "ms", behavior: "observation", description: "Queueing wait before processing." },
+  { value: "service_processing_latency_ms", label: "Service processing latency", unit: "ms", behavior: "observation", description: "In-service processing latency." },
+  { value: "cpu_utilization", label: "CPU utilization", unit: "percent", behavior: "gauge", description: "Latest CPU utilization." },
+  { value: "memory_utilization", label: "Memory utilization", unit: "percent", behavior: "gauge", description: "Latest memory utilization." },
+  { value: "queue_length", label: "Queue length", unit: "count", behavior: "gauge", description: "Current queue length." },
+  { value: "concurrent_requests", label: "Concurrent requests", unit: "count", behavior: "gauge", description: "Current in-flight requests." },
+  { value: "active_connections", label: "Active connections", unit: "count", behavior: "gauge", description: "Current open connections." },
+  { value: "route_selection_count", label: "Route selection count", unit: "count", behavior: "cumulative_counter", description: "Cumulative route selections." },
+  { value: "route_rejection_count", label: "Route rejection count", unit: "count", behavior: "cumulative_counter", description: "Cumulative route rejections." },
+  { value: "locality_route_hit_count", label: "Locality route hit count", unit: "count", behavior: "cumulative_counter", description: "Cumulative locality route hits." },
+  { value: "locality_route_miss_count", label: "Locality route miss count", unit: "count", behavior: "cumulative_counter", description: "Cumulative locality route misses." },
+  { value: "same_zone_request_count", label: "Same-zone request count", unit: "count", behavior: "cumulative_counter", description: "Cumulative same-zone requests." },
+  { value: "cross_zone_request_count", label: "Cross-zone request count", unit: "count", behavior: "cumulative_counter", description: "Cumulative cross-zone requests." },
+  { value: "cross_zone_latency_penalty_ms", label: "Cross-zone latency penalty", unit: "ms", behavior: "observation", description: "Cross-zone latency penalty observation." },
+  { value: "same_zone_latency_penalty_ms", label: "Same-zone latency penalty", unit: "ms", behavior: "observation", description: "Same-zone latency penalty observation." },
+  { value: "external_latency_penalty_ms", label: "External latency penalty", unit: "ms", behavior: "observation", description: "External latency penalty observation." },
+  { value: "topology_latency_penalty_ms", label: "Topology latency penalty", unit: "ms", behavior: "observation", description: "Topology latency penalty observation." },
+  { value: "ingress_logical_failure_count", label: "Ingress logical failure count", unit: "count", behavior: "cumulative_counter", description: "Cumulative ingress logical failures." },
+  { value: "retry_attempts", label: "Retry attempts", unit: "count", behavior: "cumulative_counter", description: "Cumulative retry attempts." },
+  { value: "db_wait_ms", label: "DB wait", unit: "ms", behavior: "observation", description: "Database wait latency observation." },
+  { value: "cache_hit_count", label: "Cache hit count", unit: "count", behavior: "cumulative_counter", description: "Cumulative cache hits." },
+  { value: "cache_miss_count", label: "Cache miss count", unit: "count", behavior: "cumulative_counter", description: "Cumulative cache misses." },
+  { value: "downstream_caller_cpu_ms", label: "Downstream caller CPU", unit: "ms", behavior: "observation", description: "Caller CPU time in downstream calls." },
+  { value: "queue_depth", label: "Queue depth", unit: "count", behavior: "gauge", description: "Current queue depth." },
+  { value: "queue_publish_attempt_count", label: "Queue publish attempt count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue publish attempts." },
+  { value: "queue_enqueue_count", label: "Queue enqueue count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue enqueues." },
+  { value: "queue_dequeue_count", label: "Queue dequeue count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue dequeues." },
+  { value: "queue_drop_count", label: "Queue drop count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue drops." },
+  { value: "queue_redelivery_count", label: "Queue redelivery count", unit: "count", behavior: "cumulative_counter", description: "Cumulative queue redeliveries." },
+  { value: "queue_dlq_count", label: "Queue DLQ count", unit: "count", behavior: "cumulative_counter", description: "Cumulative dead-letter events." },
+  { value: "message_age_ms", label: "Message age", unit: "ms", behavior: "gauge", description: "Latest message age." },
+  { value: "queue_publish_latency_ms", label: "Queue publish latency", unit: "ms", behavior: "observation", description: "Queue publish latency observation." },
+  { value: "topic_publish_count", label: "Topic publish count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic publishes." },
+  { value: "topic_deliver_count", label: "Topic deliver count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic deliveries." },
+  { value: "topic_drop_count", label: "Topic drop count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic drops." },
+  { value: "topic_redelivery_count", label: "Topic redelivery count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic redeliveries." },
+  { value: "topic_dlq_count", label: "Topic DLQ count", unit: "count", behavior: "cumulative_counter", description: "Cumulative topic dead-letter events." },
+  { value: "topic_backlog_depth", label: "Topic backlog depth", unit: "count", behavior: "gauge", description: "Current topic backlog depth." },
+  { value: "topic_message_age_ms", label: "Topic message age", unit: "ms", behavior: "gauge", description: "Latest topic message age." },
+  { value: "topic_publish_latency_ms", label: "Topic publish latency", unit: "ms", behavior: "observation", description: "Topic publish latency observation." },
+  { value: "topic_consumer_lag", label: "Topic consumer lag", unit: "count", behavior: "gauge", description: "Current topic consumer lag." },
+];
+
+const TIMESERIES_GROUP_BY_OPTIONS = [
+  { value: "auto", label: "Auto (legacy scope)" },
+  { value: "service", label: "Service" },
+  { value: "host", label: "Host" },
+  { value: "instance", label: "Instance" },
+  { value: "node", label: "Node" },
+  { value: "endpoint", label: "Endpoint" },
+  { value: "origin", label: "Origin" },
+  { value: "reason", label: "Reason" },
+  { value: "traffic_class", label: "Traffic class" },
+  { value: "source_kind", label: "Source kind" },
+  { value: "topic", label: "Topic" },
+  { value: "consumer_group", label: "Consumer group" },
+  { value: "broker", label: "Broker" },
+  { value: "subscriber", label: "Subscriber" },
+  { value: "strategy", label: "Strategy" },
+  { value: "host_zone", label: "Host zone" },
+  { value: "requested_zone", label: "Requested zone" },
+] as const;
+
 /** Sort by timestamp and keep one point per t (latest value wins). Used so we don't mix or duplicate. */
 function sortAndDedupePoints(pts: TimePoint[]): TimePoint[] {
   if (pts.length <= 1) return pts;
@@ -256,138 +337,25 @@ function sortAndDedupePoints(pts: TimePoint[]): TimePoint[] {
 }
 
 // ── Persisted metrics types ───────────────────────────────────────────────────
-
-interface MetricPoint {
-  time: string;
-  value: number;
-  labels?: Record<string, string | undefined>;
-  tags?: Record<string, unknown>;
-  service_id?: string;
-  instance_id?: string;
-  host_id?: string;
-  node_id?: string;
-}
-
-interface MetricTimeseries {
-  metric: string;
-  points: MetricPoint[];
-}
-
-/** Point from GET /runs/{id}/metrics/timeseries (flat series; optional metric per point when unfiltered). */
-interface TimeseriesPoint {
-  timestamp?: string;
-  time?: string;
-  metric?: string;
-  value: number;
-  labels?: Record<string, string | undefined>;
-  tags?: Record<string, unknown>;
-  service_id?: string;
-  host_id?: string;
-  instance_id?: string;
-  node_id?: string;
-}
-
-interface MetricsSummary {
-  /** Backend-owned final topology/placement (optional on older persisted runs). */
-  final_config?: Record<string, unknown>;
-  metrics?: Record<string, unknown>;
-  summary_data?: Record<string, unknown>;
-  total_requests?: number;
-  total_errors?: number;
-  total_duration_ms?: number;
-  successful_requests?: number;
-  failed_requests?: number;
-  throughput_rps?: number;
-  latency_p50_ms?: number;
-  latency_p95_ms?: number;
-  latency_p99_ms?: number;
-  latency_mean_ms?: number;
-}
-
-/** Per-service metrics from metrics_snapshot or GET /runs/{id}/metrics */
-interface ServiceMetricSnapshot {
-  service_name: string;
-  request_count?: number;
-  error_count?: number;
-  concurrent_requests?: number;
-  latency_p95_ms?: number;
-  cpu_utilization?: number;   // 0–1 or 0–100
-  memory_utilization?: number; // 0–1 or 0–100
-  active_replicas?: number;
-  [key: string]: unknown;
-}
-
-/** Run-level + service_metrics from SSE metrics_snapshot.data.metrics */
-interface SnapshotMetrics {
-  total_requests?: number;
-  total_errors?: number;
-  total_duration_ms?: number;
-  failed_requests?: number;
-  successful_requests?: number;
-  throughput_rps?: number;
-  latency_p50_ms?: number;
-  latency_p95_ms?: number;
-  latency_p99_ms?: number;
-  latency_mean_ms?: number;
-  service_metrics?: ServiceMetricSnapshot[];
-}
-
-/** Host-level metrics from metric_update (labels.host) or metrics_snapshot.data.host_metrics */
-interface HostMetricSnapshot {
-  host_id: string;
-  cpu_utilization?: number;   // 0–1
-  memory_utilization?: number; // 0–1
-}
-
-/** Host resources from metrics_snapshot.data.resources.hosts */
-interface HostResource {
-  host_id: string;
-  cpu_cores?: number;
-  memory_gb?: number;
-}
-
-interface ServiceResource {
-  service_id: string;
-  replicas?: number;
-  cpu_cores?: number;
-  memory_mb?: number;
-}
-
-interface InstancePlacement {
-  service_id: string;
-  instance_id?: string;
-  host_id?: string;
-  lifecycle?: string;
-  cpu_utilization?: number;
-  memory_utilization?: number;
-}
-
-interface ClusterResources {
-  hosts?: HostResource[];
-  services?: ServiceResource[];
-  placements?: InstancePlacement[];
-}
+type TimeseriesPoint = MetricPoint;
 
 type PlacementStatus = PlacementPersistenceStatus;
 
 /** Precomputed chart rows from Web Worker (when timeseries processed off main thread) */
 export type TimeseriesProcessedItem = { metric: string; rows: ChartRow[] };
 
-interface MetricsResponse {
-  run_id: string;
-  summary?: MetricsSummary;
-  timeseries?: MetricTimeseries[];
+type DashboardMetricsResponse = MetricsResponse & {
   /** When set, chart uses this instead of building rows from timeseries */
   timeseriesProcessed?: TimeseriesProcessedItem[];
-  metrics?: { service_metrics?: ServiceMetricSnapshot[] };
-}
+  metrics?: SnapshotMetrics;
+};
 
 interface UnscopedMetricDebugPoint {
   source: "metrics.timeseries" | "metrics/timeseries";
   metric: string;
   timestamp: string;
   value: number;
-  labels?: Record<string, string | undefined>;
+  labels?: Record<string, string | number | boolean | undefined>;
   tags?: Record<string, unknown>;
   service_id?: string;
   instance_id?: string;
@@ -470,6 +438,15 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
+function text(v: unknown): string | undefined {
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    return trimmed !== "" ? trimmed : undefined;
+  }
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return undefined;
+}
+
 function normalizeClusterResources(input: unknown): ClusterPlacementResources | null {
   const root = asRecord(input);
   if (!root) return null;
@@ -488,6 +465,8 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
       host_id,
       cpu_cores: num(r.cpu_cores) ?? num(r.cores),
       memory_gb: num(r.memory_gb),
+      cpu_utilization: num(r.cpu_utilization),
+      memory_utilization: num(r.memory_utilization),
     });
   }
 
@@ -515,12 +494,67 @@ function normalizeClusterResources(input: unknown): ClusterPlacementResources | 
       instance_id: str(r.instance_id) ?? str(r.instance),
       host_id: str(r.host_id) ?? str(r.host),
       lifecycle: str(r.lifecycle) ?? str(r.state),
+      cpu_cores: num(r.cpu_cores),
+      memory_mb: num(r.memory_mb),
       cpu_utilization: num(r.cpu_utilization),
       memory_utilization: num(r.memory_utilization),
+      active_requests: num(r.active_requests),
+      queue_length: num(r.queue_length),
     });
   }
 
-  return { hosts, services, placements };
+  const rawQueues = Array.isArray(root.queues) ? root.queues : [];
+  const queues = rawQueues
+    .map((q) => {
+      const r = asRecord(q);
+      if (!r) return null;
+      const broker = str(r.broker) ?? str(r.broker_service);
+      const topic = str(r.topic);
+      if (!broker || !topic) return null;
+      return {
+        broker,
+        broker_service: broker,
+        topic,
+        depth: num(r.depth),
+        in_flight: num(r.in_flight),
+        max_concurrency: num(r.max_concurrency),
+        consumer_target: text(r.consumer_target),
+        oldest_message_age_ms: num(r.oldest_message_age_ms),
+        drop_count: num(r.drop_count),
+        redelivery_count: num(r.redelivery_count),
+        dlq_count: num(r.dlq_count),
+      };
+    })
+    .filter((q): q is NonNullable<typeof q> => q !== null);
+
+  const rawTopics = Array.isArray(root.topics) ? root.topics : [];
+  const topics = rawTopics
+    .map((t) => {
+      const r = asRecord(t);
+      if (!r) return null;
+      const broker = str(r.broker) ?? str(r.broker_service);
+      const topic = str(r.topic);
+      if (!broker || !topic) return null;
+      return {
+        broker,
+        broker_service: broker,
+        topic,
+        partition: text(r.partition),
+        subscriber: str(r.subscriber),
+        consumer_group: str(r.consumer_group),
+        depth: num(r.depth),
+        in_flight: num(r.in_flight),
+        max_concurrency: num(r.max_concurrency),
+        consumer_target: text(r.consumer_target),
+        oldest_message_age_ms: num(r.oldest_message_age_ms),
+        drop_count: num(r.drop_count),
+        redelivery_count: num(r.redelivery_count),
+        dlq_count: num(r.dlq_count),
+      };
+    })
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+
+  return { hosts, services, placements, queues, topics };
 }
 
 function isBatchOptimizationMeta(m?: RunInfo["metadata"]): boolean {
@@ -727,6 +761,307 @@ function candidateMetricsForDisplay(
 
 function formatBatchScoreNumber(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+const BOTTLENECK_THRESHOLDS = {
+  queueShare: 0.25,
+  highUtilPct: 75,
+  lowUtilPct: 25,
+  highLatencyMs: 250,
+  unexplainedLatencyShare: 0.5,
+} as const;
+
+type BottleneckTag =
+  | "queue-bound"
+  | "CPU-bound"
+  | "memory-bound"
+  | "downstream/topology-bound"
+  | "underutilized"
+  | "healthy";
+
+const ENDPOINT_TRIAGE_THRESHOLDS = {
+  lowVolumeRequests: 10,
+  failingErrorRate: 0.05,
+  queueBoundShare: 0.25,
+  processingBoundShare: 0.5,
+  downstreamRootHopRatio: 1.5,
+} as const;
+
+type EndpointTriageTag =
+  | "failing"
+  | "queue-bound"
+  | "processing-bound"
+  | "downstream/topology-bound"
+  | "low-volume"
+  | "healthy";
+
+const TOPOLOGY_HEALTH_THRESHOLDS = {
+  localityWatchMin: 0.8,
+  localityDegradedMin: 0.6,
+  crossZoneWatch: 0.25,
+  crossZoneDegraded: 0.5,
+  topologyPenaltyWatchMs: 10,
+  topologyPenaltyDegradedMs: 50,
+} as const;
+
+type TopologyHealth = "healthy" | "watch" | "degraded";
+
+function toPercent(v: number | undefined): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  return v <= 1 ? v * 100 : v;
+}
+
+function formatPercent(v: number | undefined, digits = 1): string {
+  const pct = toPercent(v);
+  return pct != null ? `${pct.toFixed(digits)}%` : "—";
+}
+
+function formatMs(v: number | undefined): string {
+  return typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(0)} ms` : "—";
+}
+
+function hasNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function formatCount(v?: number): string {
+  return hasNumber(v) ? v.toLocaleString() : "—";
+}
+
+function formatPair(left?: number, right?: number): string {
+  return `${formatCount(left)} / ${formatCount(right)}`;
+}
+
+function normalizeFraction(v: number | undefined): number | undefined {
+  if (!hasNumber(v)) return undefined;
+  if (v < 0) return undefined;
+  if (v <= 1) return v;
+  if (v <= 100) return v / 100;
+  return undefined;
+}
+
+function classifyTopologyHealth(
+  localityHitRate: number | undefined,
+  crossZoneFraction: number | undefined,
+  topologyPenaltyMeanMs: number | undefined,
+): TopologyHealth {
+  if (
+    (hasNumber(localityHitRate) && localityHitRate < TOPOLOGY_HEALTH_THRESHOLDS.localityDegradedMin) ||
+    (hasNumber(crossZoneFraction) && crossZoneFraction > TOPOLOGY_HEALTH_THRESHOLDS.crossZoneDegraded) ||
+    (hasNumber(topologyPenaltyMeanMs) && topologyPenaltyMeanMs > TOPOLOGY_HEALTH_THRESHOLDS.topologyPenaltyDegradedMs)
+  ) {
+    return "degraded";
+  }
+  if (
+    (hasNumber(localityHitRate) && localityHitRate < TOPOLOGY_HEALTH_THRESHOLDS.localityWatchMin) ||
+    (hasNumber(crossZoneFraction) && crossZoneFraction > TOPOLOGY_HEALTH_THRESHOLDS.crossZoneWatch) ||
+    (hasNumber(topologyPenaltyMeanMs) && topologyPenaltyMeanMs > TOPOLOGY_HEALTH_THRESHOLDS.topologyPenaltyWatchMs)
+  ) {
+    return "watch";
+  }
+  return "healthy";
+}
+
+function topologyHealthClasses(health: TopologyHealth): string {
+  switch (health) {
+    case "degraded":
+      return "border-red-500/30 bg-red-500/10 text-red-200";
+    case "watch":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
+}
+
+function endpointErrorRate(requestCount: number | undefined, errorCount: number | undefined): number | undefined {
+  if (!hasNumber(requestCount) || requestCount <= 0 || !hasNumber(errorCount)) return undefined;
+  return errorCount / requestCount;
+}
+
+function classifyEndpointTriage(sm: EndpointRequestStat): EndpointTriageTag {
+  const requests = hasNumber(sm.request_count) ? sm.request_count : undefined;
+  const errors = hasNumber(sm.error_count) ? sm.error_count : undefined;
+  const hopP95 = hasNumber(sm.latency_p95_ms) ? sm.latency_p95_ms : undefined;
+  const rootP95 = hasNumber(sm.root_latency_p95_ms) ? sm.root_latency_p95_ms : undefined;
+  const queueP95 = hasNumber(sm.queue_wait_p95_ms) ? sm.queue_wait_p95_ms : undefined;
+  const processingP95 = hasNumber(sm.processing_latency_p95_ms) ? sm.processing_latency_p95_ms : undefined;
+  const errRate = endpointErrorRate(requests, errors);
+
+  if (hasNumber(errRate) && errRate >= ENDPOINT_TRIAGE_THRESHOLDS.failingErrorRate) return "failing";
+  if (hasNumber(requests) && requests < ENDPOINT_TRIAGE_THRESHOLDS.lowVolumeRequests) return "low-volume";
+  if (hasNumber(hopP95) && hopP95 > 0 && hasNumber(queueP95) && queueP95 / hopP95 >= ENDPOINT_TRIAGE_THRESHOLDS.queueBoundShare) {
+    return "queue-bound";
+  }
+  if (
+    hasNumber(hopP95) &&
+    hopP95 > 0 &&
+    hasNumber(processingP95) &&
+    processingP95 / hopP95 >= ENDPOINT_TRIAGE_THRESHOLDS.processingBoundShare
+  ) {
+    return "processing-bound";
+  }
+  if (hasNumber(rootP95) && hasNumber(hopP95) && hopP95 > 0 && rootP95 > hopP95 * ENDPOINT_TRIAGE_THRESHOLDS.downstreamRootHopRatio) {
+    return "downstream/topology-bound";
+  }
+  return "healthy";
+}
+
+function endpointTriageTagClasses(tag: EndpointTriageTag): string {
+  switch (tag) {
+    case "failing":
+      return "border-red-500/30 bg-red-500/10 text-red-200";
+    case "queue-bound":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    case "processing-bound":
+      return "border-orange-500/30 bg-orange-500/10 text-orange-200";
+    case "downstream/topology-bound":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+    case "low-volume":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
+}
+
+function asUnknownRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function toStr(v: unknown): string | undefined {
+  return typeof v === "string" && v.trim() ? v : undefined;
+}
+
+function getOptimizationActionLabel(reasonDetails: Record<string, unknown> | undefined): string | undefined {
+  if (!reasonDetails) return undefined;
+  return toStr(reasonDetails.type) ?? toStr(reasonDetails.action);
+}
+
+function summarizeConfigDiff(previousConfig: unknown, currentConfig: unknown): string[] {
+  const prevRec = asUnknownRecord(previousConfig) ?? {};
+  const currRec = asUnknownRecord(currentConfig) ?? {};
+  const lines: string[] = [];
+
+  const prevServices = Array.isArray(prevRec.services) ? prevRec.services : [];
+  const currServices = Array.isArray(currRec.services) ? currRec.services : [];
+  const prevById = new Map<string, Record<string, unknown>>();
+  for (const s of prevServices) {
+    const rec = asUnknownRecord(s);
+    const id = toStr(rec?.id);
+    if (rec && id) prevById.set(id, rec);
+  }
+  for (const s of currServices) {
+    const rec = asUnknownRecord(s);
+    const id = toStr(rec?.id);
+    if (!rec || !id) continue;
+    const prev = prevById.get(id);
+    if (!prev) continue;
+    const prevRep = hasNumber(prev.replicas) ? prev.replicas : undefined;
+    const currRep = hasNumber(rec.replicas) ? rec.replicas : undefined;
+    if (prevRep !== currRep && (prevRep != null || currRep != null)) lines.push(`${id} replicas ${prevRep ?? "—"} -> ${currRep ?? "—"}`);
+    const prevCpu = hasNumber(prev.cpu_cores) ? prev.cpu_cores : undefined;
+    const currCpu = hasNumber(rec.cpu_cores) ? rec.cpu_cores : undefined;
+    if (prevCpu !== currCpu && (prevCpu != null || currCpu != null)) lines.push(`${id} CPU ${prevCpu ?? "—"} -> ${currCpu ?? "—"}`);
+    const prevMem = hasNumber(prev.memory_mb) ? prev.memory_mb : undefined;
+    const currMem = hasNumber(rec.memory_mb) ? rec.memory_mb : undefined;
+    if (prevMem !== currMem && (prevMem != null || currMem != null)) lines.push(`${id} memory ${prevMem ?? "—"} -> ${currMem ?? "—"} MB`);
+  }
+
+  const prevHosts = Array.isArray(prevRec.hosts) ? prevRec.hosts : [];
+  const currHosts = Array.isArray(currRec.hosts) ? currRec.hosts : [];
+  if (prevHosts.length !== currHosts.length) lines.push(`hosts ${prevHosts.length} -> ${currHosts.length}`);
+
+  const prevPlacements = Array.isArray(prevRec.placements) ? prevRec.placements : [];
+  const currPlacements = Array.isArray(currRec.placements) ? currRec.placements : [];
+  if (prevPlacements.length !== currPlacements.length) lines.push(`placements ${prevPlacements.length} -> ${currPlacements.length}`);
+
+  return lines;
+}
+
+function formatTargetDelta(scoreP95: number | undefined, targetP95: number | undefined): string {
+  if (!hasNumber(scoreP95) || !hasNumber(targetP95)) return "target delta unavailable";
+  const delta = scoreP95 - targetP95;
+  const dir = delta > 0 ? "over target" : "under target";
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(1)} ms ${dir}`;
+}
+
+function optimizationStepFallbackSignature(step: OptimizationStep): string {
+  const rd = asUnknownRecord(step.reason_details);
+  return [
+    toStr(step.reason) ?? "",
+    hasNumber(step.score_p95_ms) ? step.score_p95_ms.toFixed(4) : "",
+    hasNumber(step.target_p95_ms) ? step.target_p95_ms.toFixed(4) : "",
+    toStr(rd?.type) ?? "",
+    toStr(rd?.action) ?? "",
+  ].join("|");
+}
+
+function isOptimizerStepBlocked(step: OptimizationStep): boolean {
+  const rd = asUnknownRecord(step.reason_details);
+  const type = toStr(rd?.type)?.toLowerCase();
+  const decisionReason = toStr(rd?.decision_reason)?.toLowerCase();
+  const action = toStr(rd?.action)?.toLowerCase();
+  if (type?.includes("topology_guard_blocked")) return true;
+  if (decisionReason && /(blocked|guard|no[_ -]?op|noop|below_min|not_apply|skipped)/.test(decisionReason)) return true;
+  const hasUsableConfigs = asUnknownRecord(step.previous_config) != null && asUnknownRecord(step.current_config) != null;
+  if (action && hasUsableConfigs) {
+    const changes = summarizeConfigDiff(step.previous_config, step.current_config);
+    if (changes.length === 0) return true;
+  }
+  return false;
+}
+
+function classifyServiceBottleneck(sm: ServiceMetricSnapshot): BottleneckTag {
+  const latency = typeof sm.latency_p95_ms === "number" ? sm.latency_p95_ms : undefined;
+  const queueWait = typeof sm.queue_wait_p95_ms === "number" ? sm.queue_wait_p95_ms : undefined;
+  const processing = typeof sm.processing_latency_p95_ms === "number" ? sm.processing_latency_p95_ms : undefined;
+  const queueLength = typeof sm.queue_length === "number" ? sm.queue_length : undefined;
+  const cpu = toPercent(sm.cpu_utilization);
+  const mem = toPercent(sm.memory_utilization);
+  const replicas = typeof sm.active_replicas === "number" ? sm.active_replicas : undefined;
+
+  if (
+    (latency != null && queueWait != null && latency > 0 && queueWait / latency >= BOTTLENECK_THRESHOLDS.queueShare) ||
+    (queueLength != null && queueLength > 0)
+  ) {
+    return "queue-bound";
+  }
+  if (cpu != null && cpu > BOTTLENECK_THRESHOLDS.highUtilPct) return "CPU-bound";
+  if (mem != null && mem > BOTTLENECK_THRESHOLDS.highUtilPct) return "memory-bound";
+  if (
+    cpu != null &&
+    mem != null &&
+    cpu < BOTTLENECK_THRESHOLDS.lowUtilPct &&
+    mem < BOTTLENECK_THRESHOLDS.lowUtilPct &&
+    replicas != null &&
+    replicas > 1
+  ) {
+    return "underutilized";
+  }
+  if (latency != null && latency >= BOTTLENECK_THRESHOLDS.highLatencyMs) {
+    const explained = (queueWait ?? 0) + (processing ?? 0);
+    if (explained / latency < BOTTLENECK_THRESHOLDS.unexplainedLatencyShare) {
+      return "downstream/topology-bound";
+    }
+  }
+  return "healthy";
+}
+
+function bottleneckTagClasses(tag: BottleneckTag): string {
+  switch (tag) {
+    case "queue-bound":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    case "CPU-bound":
+      return "border-red-500/30 bg-red-500/10 text-red-200";
+    case "memory-bound":
+      return "border-orange-500/30 bg-orange-500/10 text-orange-200";
+    case "downstream/topology-bound":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+    case "underutilized":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
 }
 
 function candidateBatchFeasibleCell(
@@ -1371,11 +1706,11 @@ export default function SimulationRunPage() {
   const [scenarioYaml, setScenarioYaml] = useState<string | null>(null);
   const [scenarioOpen, setScenarioOpen] = useState(false);
   // Persisted metrics (fetched when run reaches terminal state)
-  const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null);
+  const [metricsData, setMetricsData] = useState<DashboardMetricsResponse | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   // Live metrics from SSE metrics_snapshot (used while run is running)
-  const [liveMetricsData, setLiveMetricsData] = useState<MetricsResponse | null>(null);
+  const [liveMetricsData, setLiveMetricsData] = useState<DashboardMetricsResponse | null>(null);
   // Best-candidate topology (from same candidates API response)
   const [bestCandidate, setBestCandidate] = useState<{ best_candidate_id: string; best_candidate?: BestCandidateTopology } | null>(null);
   // Request count chart — buffer collects raw points; flushed to state at FLUSH_MS interval
@@ -1387,7 +1722,7 @@ export default function SimulationRunPage() {
   // Concurrent requests (gauge): per-instance ref, per-service state for "current load" display
   const concurrentByInstanceRef = useRef<Record<string, number>>({});
   const [concurrentRequestsByService, setConcurrentRequestsByService] = useState<Record<string, number>>({});
-  // Host-level metrics (host-*): from metric_update labels.host or metrics_snapshot.host_metrics; gauges = latest value
+  // Host-level metrics: from metric_update host labels/ids or metrics_snapshot host_metrics; gauges = latest value
   const [hostMetrics, setHostMetrics] = useState<Record<string, { cpu_utilization?: number; memory_utilization?: number }>>({});
   const [hostResources, setHostResources] = useState<Record<string, { cpu_cores?: number; memory_gb?: number }>>({});
   const [clusterResources, setClusterResources] = useState<ClusterPlacementResources | null>(null);
@@ -1396,6 +1731,7 @@ export default function SimulationRunPage() {
   const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
   const [unscopedMetricDebug, setUnscopedMetricDebug] = useState<UnscopedMetricDebugPoint[]>([]);
   const [timeseriesApiMetric, setTimeseriesApiMetric] = useState<string>("request_latency_ms");
+  const [timeseriesGroupBy, setTimeseriesGroupBy] = useState<string>("auto");
   const [timeseriesApiLoading, setTimeseriesApiLoading] = useState(false);
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
   // Live config (online mode) — editable form state; synced from optimization_step
@@ -1488,10 +1824,16 @@ export default function SimulationRunPage() {
       try {
         const payload = JSON.parse(data) as { data?: OptimizationStep };
         const step = payload.data;
-        if (step && step.iteration_index != null) {
+        if (step) {
           setOptSteps((prev) => {
-            const exists = prev.some((s) => s.iteration_index === step.iteration_index);
-            return exists ? prev : [...prev, step];
+            if (step.iteration_index != null) {
+              const existsByIteration = prev.some((s) => s.iteration_index === step.iteration_index);
+              return existsByIteration ? prev : [...prev, step];
+            }
+            const sig = optimizationStepFallbackSignature(step);
+            if (!sig || sig === "||||") return [...prev, step];
+            const existsBySig = prev.some((s) => s.iteration_index == null && optimizationStepFallbackSignature(s) === sig);
+            return existsBySig ? prev : [...prev, step];
           });
           const fromStep = configFromStep(step.current_config);
           if (fromStep) setLiveConfig(fromStep);
@@ -1501,24 +1843,17 @@ export default function SimulationRunPage() {
 
     if (type === "metric_update") {
       try {
-        interface MetricPayload {
-          metric?: string;
-          value?: number;
-          timestamp?: string;
-          labels?: { service?: string; instance?: string; host?: string; endpoint?: string; [key: string]: unknown };
-          service_id?: string;
-          service_name?: string;
-        }
-        const outer = JSON.parse(data) as MetricPayload & { data?: MetricPayload };
+        const outer = JSON.parse(data) as MetricUpdatePayload & { data?: MetricUpdatePayload };
         // Backend wraps the metric inside a "data" field: { data: {...}, event, run_id }
         // Fall back to flat format for older/direct payloads.
-        const m: MetricPayload = outer.data ?? outer;
+        const m: MetricUpdatePayload = outer.data ?? outer;
         const svc = (m.labels?.service ?? m.service_id ?? m.service_name) as string | undefined;
         if (svc) knownServicesRef.current.add(svc);
 
-        // Host-level metrics (host-*): gauges, use latest value
-        const hostId = m.labels?.host as string | undefined;
-        if (hostId && typeof hostId === "string" && hostId.startsWith("host-") && m.value != null) {
+        // Host-level metrics: gauges, use latest value for any non-empty host id
+        const rawHostId = m.labels?.host ?? m.labels?.host_id ?? m.host_id;
+        const hostId = typeof rawHostId === "string" && rawHostId.trim() ? rawHostId : undefined;
+        if (hostId && m.value != null) {
           const metricName = m.metric;
           if (metricName === "cpu_utilization" || metricName === "memory_utilization") {
             setHostMetrics((prev) => ({
@@ -1581,13 +1916,16 @@ export default function SimulationRunPage() {
           data?: {
             metrics?: SnapshotMetrics;
             host_metrics?: HostMetricSnapshot[];
-            resources?: ClusterResources;
+            resources?: ClusterPlacementResources;
           };
           metrics?: SnapshotMetrics;
         };
         const dataPayload = parsed.data;
         const normalizedResources = normalizeClusterResources(dataPayload?.resources);
         const liveStatusNow = placementStatusFromFinalConfig(dataPayload?.resources);
+        const resourcePayload = asRecord(dataPayload?.resources);
+        const hasQueuesArray = !!resourcePayload && Object.prototype.hasOwnProperty.call(resourcePayload, "queues") && Array.isArray(resourcePayload.queues);
+        const hasTopicsArray = !!resourcePayload && Object.prototype.hasOwnProperty.call(resourcePayload, "topics") && Array.isArray(resourcePayload.topics);
         setLivePlacementStatus(liveStatusNow);
         if (normalizedResources) {
           setClusterResources((prev) => ({
@@ -1597,21 +1935,32 @@ export default function SimulationRunPage() {
               liveStatusNow === "unavailable"
                 ? prev?.placements ?? normalizedResources.placements
                 : normalizedResources.placements,
+            queues: hasQueuesArray
+              ? normalizedResources.queues
+              : prev?.queues ?? normalizedResources.queues,
+            topics: hasTopicsArray
+              ? normalizedResources.topics
+              : prev?.topics ?? normalizedResources.topics,
           }));
         }
         const metrics = dataPayload?.metrics ?? parsed.metrics;
 
         // Host-level metrics and resources from snapshot
-        const hostMetricsList = dataPayload?.host_metrics;
+        const metricsObj = asRecord(dataPayload?.metrics ?? parsed.metrics);
+        const hostMetricsList = [
+          ...(Array.isArray(dataPayload?.host_metrics) ? dataPayload.host_metrics : []),
+          ...(Array.isArray(metricsObj?.host_metrics) ? metricsObj.host_metrics : []),
+        ];
         if (Array.isArray(hostMetricsList) && hostMetricsList.length > 0) {
           const byHost: Record<string, { cpu_utilization?: number; memory_utilization?: number }> = {};
           for (const hm of hostMetricsList) {
-            const id = hm?.host_id;
-            if (id && typeof id === "string" && id.startsWith("host-")) {
+            const rec = asRecord(hm);
+            const id = str(rec?.host_id) ?? str(rec?.host);
+            if (id) {
               const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
               byHost[id] = {
-                cpu_utilization: num(hm.cpu_utilization) ?? byHost[id]?.cpu_utilization,
-                memory_utilization: num(hm.memory_utilization) ?? byHost[id]?.memory_utilization,
+                cpu_utilization: num(rec?.cpu_utilization) ?? byHost[id]?.cpu_utilization,
+                memory_utilization: num(rec?.memory_utilization) ?? byHost[id]?.memory_utilization,
               };
             }
           }
@@ -1655,9 +2004,9 @@ export default function SimulationRunPage() {
         const num = (v: unknown): number | undefined =>
           typeof v === "number" && Number.isFinite(v) ? v : undefined;
         const totalRequests = num(metrics.total_requests);
-        if (totalRequests == null && !list?.length) return;
 
         const summary: MetricsSummary = {
+          ...(metrics as Record<string, unknown>),
           total_requests: totalRequests ?? undefined,
           total_errors: num(metrics.total_errors) ?? num(metrics.failed_requests),
           total_duration_ms: num(metrics.total_duration_ms),
@@ -1672,7 +2021,10 @@ export default function SimulationRunPage() {
         setLiveMetricsData({
           run_id: runId,
           summary,
-          metrics: Array.isArray(list) && list.length > 0 ? { service_metrics: list } : undefined,
+          metrics: {
+            ...(metrics as Record<string, unknown>),
+            service_metrics: Array.isArray(list) ? list : undefined,
+          },
         });
       } catch { /* malformed — ignore */ }
     }
@@ -1781,7 +2133,7 @@ export default function SimulationRunPage() {
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as MetricsResponse & Record<string, unknown>;
+      const data = (await res.json()) as DashboardMetricsResponse & Record<string, unknown>;
       if (Array.isArray(data.timeseries) && data.timeseries.length > 0) {
         const samples: UnscopedMetricDebugPoint[] = [];
         for (const ts of data.timeseries) {
@@ -1827,6 +2179,31 @@ export default function SimulationRunPage() {
           num(raw.total_requests) ??
           num(fromSummaryData.total_requests) ??
           num(fromTopLevel.total_requests),
+        ingress_requests:
+          num(fromSummaryMetrics.ingress_requests) ??
+          num(raw.ingress_requests) ??
+          num(fromSummaryData.ingress_requests) ??
+          num(fromTopLevel.ingress_requests),
+        internal_requests:
+          num(fromSummaryMetrics.internal_requests) ??
+          num(raw.internal_requests) ??
+          num(fromSummaryData.internal_requests) ??
+          num(fromTopLevel.internal_requests),
+        retry_attempts:
+          num(fromSummaryMetrics.retry_attempts) ??
+          num(raw.retry_attempts) ??
+          num(fromSummaryData.retry_attempts) ??
+          num(fromTopLevel.retry_attempts),
+        attempt_error_rate:
+          num(fromSummaryMetrics.attempt_error_rate) ??
+          num(raw.attempt_error_rate) ??
+          num(fromSummaryData.attempt_error_rate) ??
+          num(fromTopLevel.attempt_error_rate),
+        ingress_error_rate:
+          num(fromSummaryMetrics.ingress_error_rate) ??
+          num(raw.ingress_error_rate) ??
+          num(fromSummaryData.ingress_error_rate) ??
+          num(fromTopLevel.ingress_error_rate),
         total_errors:
           num(fromSummaryMetrics.total_errors) ??
           num(fromSummaryMetrics.failed_requests) ??
@@ -1881,12 +2258,131 @@ export default function SimulationRunPage() {
           num(fromSummaryData.avg_latency_ms) ??
           num(fromTopLevel.latency_mean_ms) ??
           num(fromTopLevel.avg_latency_ms),
+        queue_depth_sum:
+          num(fromSummaryMetrics.queue_depth_sum) ??
+          num(raw.queue_depth_sum) ??
+          num(fromSummaryData.queue_depth_sum) ??
+          num(fromTopLevel.queue_depth_sum),
+        max_queue_depth:
+          num(fromSummaryMetrics.max_queue_depth) ??
+          num(raw.max_queue_depth) ??
+          num(fromSummaryData.max_queue_depth) ??
+          num(fromTopLevel.max_queue_depth),
+        queue_oldest_message_age_ms:
+          num(fromSummaryMetrics.queue_oldest_message_age_ms) ??
+          num(raw.queue_oldest_message_age_ms) ??
+          num(fromSummaryData.queue_oldest_message_age_ms) ??
+          num(fromTopLevel.queue_oldest_message_age_ms),
+        queue_drop_rate:
+          num(fromSummaryMetrics.queue_drop_rate) ??
+          num(raw.queue_drop_rate) ??
+          num(fromSummaryData.queue_drop_rate) ??
+          num(fromTopLevel.queue_drop_rate),
+        queue_redelivery_count_total:
+          num(fromSummaryMetrics.queue_redelivery_count_total) ??
+          num(raw.queue_redelivery_count_total) ??
+          num(fromSummaryData.queue_redelivery_count_total) ??
+          num(fromTopLevel.queue_redelivery_count_total),
+        queue_dlq_count_total:
+          num(fromSummaryMetrics.queue_dlq_count_total) ??
+          num(raw.queue_dlq_count_total) ??
+          num(fromSummaryData.queue_dlq_count_total) ??
+          num(fromTopLevel.queue_dlq_count_total),
+        topic_backlog_depth_sum:
+          num(fromSummaryMetrics.topic_backlog_depth_sum) ??
+          num(raw.topic_backlog_depth_sum) ??
+          num(fromSummaryData.topic_backlog_depth_sum) ??
+          num(fromTopLevel.topic_backlog_depth_sum),
+        topic_consumer_lag_sum:
+          num(fromSummaryMetrics.topic_consumer_lag_sum) ??
+          num(raw.topic_consumer_lag_sum) ??
+          num(fromSummaryData.topic_consumer_lag_sum) ??
+          num(fromTopLevel.topic_consumer_lag_sum),
+        topic_oldest_message_age_ms:
+          num(fromSummaryMetrics.topic_oldest_message_age_ms) ??
+          num(raw.topic_oldest_message_age_ms) ??
+          num(fromSummaryData.topic_oldest_message_age_ms) ??
+          num(fromTopLevel.topic_oldest_message_age_ms),
+        topic_drop_rate:
+          num(fromSummaryMetrics.topic_drop_rate) ??
+          num(raw.topic_drop_rate) ??
+          num(fromSummaryData.topic_drop_rate) ??
+          num(fromTopLevel.topic_drop_rate),
+        locality_hit_rate:
+          num(fromSummaryMetrics.locality_hit_rate) ??
+          num(raw.locality_hit_rate) ??
+          num(fromSummaryData.locality_hit_rate) ??
+          num(fromTopLevel.locality_hit_rate),
+        same_zone_request_count_total:
+          num(fromSummaryMetrics.same_zone_request_count_total) ??
+          num(raw.same_zone_request_count_total) ??
+          num(fromSummaryData.same_zone_request_count_total) ??
+          num(fromTopLevel.same_zone_request_count_total),
+        cross_zone_request_count_total:
+          num(fromSummaryMetrics.cross_zone_request_count_total) ??
+          num(raw.cross_zone_request_count_total) ??
+          num(fromSummaryData.cross_zone_request_count_total) ??
+          num(fromTopLevel.cross_zone_request_count_total),
+        cross_zone_request_fraction:
+          num(fromSummaryMetrics.cross_zone_request_fraction) ??
+          num(raw.cross_zone_request_fraction) ??
+          num(fromSummaryData.cross_zone_request_fraction) ??
+          num(fromTopLevel.cross_zone_request_fraction),
+        cross_zone_latency_penalty_ms_total:
+          num(fromSummaryMetrics.cross_zone_latency_penalty_ms_total) ??
+          num(raw.cross_zone_latency_penalty_ms_total) ??
+          num(fromSummaryData.cross_zone_latency_penalty_ms_total) ??
+          num(fromTopLevel.cross_zone_latency_penalty_ms_total),
+        cross_zone_latency_penalty_ms_mean:
+          num(fromSummaryMetrics.cross_zone_latency_penalty_ms_mean) ??
+          num(raw.cross_zone_latency_penalty_ms_mean) ??
+          num(fromSummaryData.cross_zone_latency_penalty_ms_mean) ??
+          num(fromTopLevel.cross_zone_latency_penalty_ms_mean),
+        same_zone_latency_penalty_ms_total:
+          num(fromSummaryMetrics.same_zone_latency_penalty_ms_total) ??
+          num(raw.same_zone_latency_penalty_ms_total) ??
+          num(fromSummaryData.same_zone_latency_penalty_ms_total) ??
+          num(fromTopLevel.same_zone_latency_penalty_ms_total),
+        same_zone_latency_penalty_ms_mean:
+          num(fromSummaryMetrics.same_zone_latency_penalty_ms_mean) ??
+          num(raw.same_zone_latency_penalty_ms_mean) ??
+          num(fromSummaryData.same_zone_latency_penalty_ms_mean) ??
+          num(fromTopLevel.same_zone_latency_penalty_ms_mean),
+        external_latency_ms_total:
+          num(fromSummaryMetrics.external_latency_ms_total) ??
+          num(raw.external_latency_ms_total) ??
+          num(fromSummaryData.external_latency_ms_total) ??
+          num(fromTopLevel.external_latency_ms_total),
+        external_latency_ms_mean:
+          num(fromSummaryMetrics.external_latency_ms_mean) ??
+          num(raw.external_latency_ms_mean) ??
+          num(fromSummaryData.external_latency_ms_mean) ??
+          num(fromTopLevel.external_latency_ms_mean),
+        topology_latency_penalty_ms_total:
+          num(fromSummaryMetrics.topology_latency_penalty_ms_total) ??
+          num(raw.topology_latency_penalty_ms_total) ??
+          num(fromSummaryData.topology_latency_penalty_ms_total) ??
+          num(fromTopLevel.topology_latency_penalty_ms_total),
+        topology_latency_penalty_ms_mean:
+          num(fromSummaryMetrics.topology_latency_penalty_ms_mean) ??
+          num(raw.topology_latency_penalty_ms_mean) ??
+          num(fromSummaryData.topology_latency_penalty_ms_mean) ??
+          num(fromTopLevel.topology_latency_penalty_ms_mean),
       };
       const serviceMetrics =
         data.metrics?.service_metrics ??
         (Array.isArray(fromSummaryMetrics.service_metrics) ? fromSummaryMetrics.service_metrics : undefined);
+      const endpointRequestStats =
+        data.metrics?.endpoint_request_stats ??
+        (Array.isArray(fromSummaryMetrics.endpoint_request_stats) ? fromSummaryMetrics.endpoint_request_stats : undefined);
       const metricsPayload =
-        serviceMetrics != null ? { ...data.metrics, service_metrics: serviceMetrics } : data.metrics;
+        serviceMetrics != null || endpointRequestStats != null
+          ? {
+              ...data.metrics,
+              ...(serviceMetrics != null ? { service_metrics: serviceMetrics } : {}),
+              ...(endpointRequestStats != null ? { endpoint_request_stats: endpointRequestStats } : {}),
+            }
+          : data.metrics;
 
       if (data.timeseries && data.timeseries.length > 0 && typeof Worker !== "undefined") {
         let worker: Worker | null = timeseriesWorkerRef.current;
@@ -2045,7 +2541,12 @@ export default function SimulationRunPage() {
               };
               worker.addEventListener("message", onMsg);
               worker.addEventListener("error", onErr);
-              worker.postMessage({ type: "processTimeseriesPoints", points });
+              worker.postMessage({
+                type: "processTimeseriesPoints",
+                points,
+                groupingLabel: timeseriesGroupBy,
+                metric: timeseriesApiMetric,
+              });
             });
             setTimeseriesApiRows(rows);
             setTimeseriesApiLoading(false);
@@ -2063,7 +2564,14 @@ export default function SimulationRunPage() {
         const t = new Date(n.timestamp).getTime();
         if (!Number.isFinite(t)) continue;
         if (!rowMap[t]) rowMap[t] = { _t: t };
-        rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n, timeseriesApiMetric)] = n.value;
+        if (timeseriesGroupBy !== "auto") {
+          const scope = extractSeriesScopeByLabelFromNormalized(n, timeseriesGroupBy);
+          const metric = n.metric ?? timeseriesApiMetric;
+          const key = metric ? `${metric}:${scope}` : scope;
+          rowMap[t][key] = n.value;
+        } else {
+          rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n, timeseriesApiMetric)] = n.value;
+        }
       }
       const rows: ChartRow[] = Object.values(rowMap).sort((a, b) => (a._t as number) - (b._t as number));
       setTimeseriesApiRows(rows);
@@ -2073,7 +2581,7 @@ export default function SimulationRunPage() {
     } finally {
       setTimeseriesApiLoading(false);
     }
-  }, [runId, timeseriesApiMetric]);
+  }, [runId, timeseriesApiMetric, timeseriesGroupBy]);
 
   // Clear chart data, concurrent-requests, and host metrics state
   const clearChart = useCallback(() => {
@@ -2236,6 +2744,15 @@ export default function SimulationRunPage() {
   const runName = (runInfo?.metadata?.name as string | undefined) ?? runId;
   const statusStyle = STATUS_STYLES[status] ?? "text-white/60 bg-white/10 border-white/10";
   const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(status);
+  const selectedTimeseriesMetricMeta =
+    TIMESERIES_METRIC_OPTIONS.find((m) => m.value === timeseriesApiMetric) ??
+    {
+      value: timeseriesApiMetric,
+      label: timeseriesApiMetric,
+      unit: "raw" as TimeseriesMetricUnit,
+      behavior: "observation" as TimeseriesMetricBehavior,
+      description: "No metadata available for this metric.",
+    };
 
   useEffect(() => {
     if (isTerminal) setOptProgressHint(null);
@@ -2271,6 +2788,9 @@ export default function SimulationRunPage() {
 
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
+  const messagingResources = placementSource.resources;
+  const queueResources = messagingResources?.queues ?? [];
+  const topicResources = messagingResources?.topics ?? [];
 
   // Auto-fetch persisted metrics + candidates (includes best-candidate) once the run is terminal
   useEffect(() => {
@@ -3328,7 +3848,7 @@ export default function SimulationRunPage() {
         </div>
       )}
 
-      {/* Host-level metrics (host-*) from stream — CPU / memory utilization */}
+      {/* Host-level metrics from stream — CPU / memory utilization */}
       {(() => {
         const hostIds = Array.from(
           new Set([...Object.keys(hostMetrics), ...Object.keys(hostResources)]),
@@ -3429,84 +3949,134 @@ export default function SimulationRunPage() {
         </div>
       )}
 
-      {/* Optimization timeline — online optimization runs only */}
-      {optSteps.length > 0 && (
-        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">
-              Optimization timeline
-              <span className="ml-2 text-xs font-normal text-white/40">
-                {optSteps.length} step{optSteps.length !== 1 ? "s" : ""}
-              </span>
-            </h2>
-            {status === "running" && (
-              <span className="flex items-center gap-1.5 text-xs text-orange-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-                Live
-              </span>
-            )}
-          </div>
-
-          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-            {[...optSteps].reverse().map((step) => {
-              const overTarget = step.score_p95_ms > step.target_p95_ms;
-              return (
-                <div
-                  key={step.iteration_index}
-                  className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
-                >
-                  {/* Header row */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="font-mono text-white/40 shrink-0">
-                      #{step.iteration_index}
-                    </span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded font-mono font-medium ${
-                        overTarget
-                          ? "bg-red-500/15 text-red-300"
-                          : "bg-emerald-500/15 text-emerald-300"
-                      }`}
-                    >
-                      p95 {step.score_p95_ms.toFixed(1)} ms
-                    </span>
-                    <span className="text-white/30">
-                      target {step.target_p95_ms.toFixed(0)} ms
-                    </span>
-                    <span className="text-white/50 italic flex-1">{step.reason}</span>
-                  </div>
-
-                  {/* Config diff — services replicas */}
-                  {step.previous_config && step.current_config && (() => {
-                    const prev = step.previous_config.services ?? [];
-                    const curr = step.current_config.services ?? [];
-                    const changes = curr.filter((cs) => {
-                      const ps = prev.find((s) => s.id === cs.id);
-                      return ps && ps.replicas !== cs.replicas;
-                    });
-                    if (changes.length === 0) return null;
-                    return (
-                      <div className="flex flex-wrap gap-2 pt-1 border-t border-white/5">
-                        {changes.map((cs) => {
-                          const ps = prev.find((s) => s.id === cs.id)!;
-                          return (
-                            <span key={cs.id} className="font-mono text-[11px] text-white/60">
-                              {cs.id}:
-                              <span className="text-red-400 mx-1">{ps.replicas}</span>
-                              →
-                              <span className="text-emerald-400 ml-1">{cs.replicas}</span>
-                              <span className="text-white/30 ml-1">replicas</span>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
-              );
-            })}
-          </div>
+      {/* Optimizer decision replay */}
+      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white">
+            Optimizer decision replay
+            <span className="ml-2 text-xs font-normal text-white/40">
+              {optSteps.length} step{optSteps.length !== 1 ? "s" : ""}
+            </span>
+          </h2>
+          {status === "running" && (
+            <span className="flex items-center gap-1.5 text-xs text-orange-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+              Live
+            </span>
+          )}
         </div>
-      )}
+
+        {optSteps.length === 0 ? (
+          <p className="text-xs text-white/35 italic">No optimization decisions recorded for this run.</p>
+        ) : (
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {[...optSteps]
+              .slice()
+              .sort((a, b) => {
+                const ai = hasNumber(a.iteration_index) ? a.iteration_index : Number.MAX_SAFE_INTEGER;
+                const bi = hasNumber(b.iteration_index) ? b.iteration_index : Number.MAX_SAFE_INTEGER;
+                if (ai !== bi) return ai - bi;
+                const ar = String(a.reason ?? "");
+                const br = String(b.reason ?? "");
+                return ar.localeCompare(br);
+              })
+              .map((step, idx) => {
+                const overTarget = hasNumber(step.score_p95_ms) && hasNumber(step.target_p95_ms)
+                  ? step.score_p95_ms > step.target_p95_ms
+                  : undefined;
+                const blocked = isOptimizerStepBlocked(step);
+                const reasonDetails = asUnknownRecord(step.reason_details);
+                const actionLabel = getOptimizationActionLabel(reasonDetails ?? undefined);
+                const decisionReason = toStr(reasonDetails?.decision_reason);
+                const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
+                const primitiveReasonDetails = Object.entries(reasonDetails ?? {})
+                  .filter(([k, v]) =>
+                    !["type", "action", "decision_reason", "locality_hit_rate", "min_locality_hit_rate"].includes(k) &&
+                    (typeof v === "string" || typeof v === "number" || typeof v === "boolean")
+                  )
+                  .slice(0, 4);
+                return (
+                  <div
+                    key={`${step.iteration_index ?? "na"}-${actionLabel ?? step.reason ?? "step"}-${idx}`}
+                    className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-white/40 shrink-0">#{hasNumber(step.iteration_index) ? step.iteration_index : "—"}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded font-mono font-medium ${
+                          overTarget === undefined
+                            ? "bg-white/10 text-white/50"
+                            : overTarget
+                              ? "bg-red-500/15 text-red-300"
+                              : "bg-emerald-500/15 text-emerald-300"
+                        }`}
+                      >
+                        p95 {hasNumber(step.score_p95_ms) ? `${step.score_p95_ms.toFixed(1)} ms` : "—"}
+                      </span>
+                      <span className="text-white/30">
+                        target {hasNumber(step.target_p95_ms) ? `${step.target_p95_ms.toFixed(1)} ms` : "—"}
+                      </span>
+                      <span className={`font-mono ${overTarget === undefined ? "text-white/45" : overTarget ? "text-red-300" : "text-emerald-300"}`}>
+                        {formatTargetDelta(step.score_p95_ms, step.target_p95_ms)}
+                      </span>
+                      {actionLabel && (
+                        <span className="inline-flex rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 px-2 py-0.5 font-medium">
+                          {actionLabel}
+                        </span>
+                      )}
+                      {blocked && (
+                        <span className="inline-flex rounded border border-amber-500/30 bg-amber-500/10 text-amber-200 px-2 py-0.5 font-medium">
+                          guardrail/no-op
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-white/70 italic">{step.reason ?? "No reason provided"}</div>
+
+                    {(decisionReason || hasNumber(reasonDetails?.locality_hit_rate) || hasNumber(reasonDetails?.min_locality_hit_rate)) && (
+                      <div className="flex flex-wrap gap-2 text-[11px]">
+                        {decisionReason && (
+                          <span className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            decision: {decisionReason}
+                          </span>
+                        )}
+                        {hasNumber(reasonDetails?.locality_hit_rate) && (
+                          <span className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            locality hit {formatPercent(reasonDetails?.locality_hit_rate as number, 2)}
+                          </span>
+                        )}
+                        {hasNumber(reasonDetails?.min_locality_hit_rate) && (
+                          <span className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            min locality {formatPercent(reasonDetails?.min_locality_hit_rate as number, 2)}
+                          </span>
+                        )}
+                        {primitiveReasonDetails.map(([k, v]) => (
+                          <span key={k} className="rounded border border-white/10 bg-black/25 px-2 py-0.5 text-white/65">
+                            {k}: {String(v)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="pt-1 border-t border-white/5">
+                      {diffLines.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {diffLines.map((line) => (
+                            <span key={line} className="font-mono text-[11px] text-white/65 rounded border border-white/10 bg-black/25 px-2 py-0.5">
+                              {line}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-white/40 italic">no material config change</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
 
       {/* Candidates panel */}
       <div className="bg-card border border-border rounded-lg p-4 space-y-3">
@@ -3912,6 +4482,59 @@ export default function SimulationRunPage() {
                 </div>
               )}
 
+              {/* Work amplification KPI */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const ingress = s.ingress_requests;
+                const total = s.total_requests;
+                const amplification =
+                  typeof ingress === "number" && ingress > 0 && typeof total === "number"
+                    ? total / ingress
+                    : null;
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Work amplification</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Amplification</p>
+                        <p className={`text-lg font-mono font-semibold ${amplification != null ? "text-amber-300" : "text-white/50"}`}>
+                          {amplification != null ? `${amplification.toFixed(2)}x` : "—"}
+                        </p>
+                        {amplification == null && (
+                          <p className="text-[10px] text-white/35 mt-1">Requires ingress requests</p>
+                        )}
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Ingress requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {typeof ingress === "number" ? ingress.toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Internal requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {typeof s.internal_requests === "number" ? s.internal_requests.toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Retry attempts</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {typeof s.retry_attempts === "number" ? s.retry_attempts.toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Ingress error rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(s.ingress_error_rate, 2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Attempt error rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(s.attempt_error_rate, 2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Error rate / Success vs failure */}
               {displayMetrics.summary && (() => {
                 const s = displayMetrics.summary;
@@ -3977,7 +4600,7 @@ export default function SimulationRunPage() {
               {/* Per-service comparison table */}
               {displayMetrics.metrics?.service_metrics && displayMetrics.metrics.service_metrics.length > 0 && (
                 <div className="space-y-2">
-                  <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Per-service metrics</h3>
+                  <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Service bottleneck matrix</h3>
                   <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
@@ -3986,28 +4609,39 @@ export default function SimulationRunPage() {
                           <th className="px-3 py-2 font-medium text-right">Requests</th>
                           <th className="px-3 py-2 font-medium text-right">Errors</th>
                           <th className="px-3 py-2 font-medium text-right">Latency P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">Queue wait P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">Processing P95 (ms)</th>
+                          <th className="px-3 py-2 font-medium text-right">Queue length</th>
                           <th className="px-3 py-2 font-medium text-right">CPU %</th>
                           <th className="px-3 py-2 font-medium text-right">Memory %</th>
                           <th className="px-3 py-2 font-medium text-right">Concurrent</th>
                           <th className="px-3 py-2 font-medium text-right">Replicas</th>
+                          <th className="px-3 py-2 font-medium text-right">Bottleneck</th>
                         </tr>
                       </thead>
                       <tbody>
                         {displayMetrics.metrics.service_metrics.map((sm) => {
-                          const cpu = sm.cpu_utilization;
-                          const mem = sm.memory_utilization;
-                          const cpuVal = typeof cpu === "number" ? (cpu <= 1 ? (cpu * 100).toFixed(1) : cpu.toFixed(1)) : "—";
-                          const memVal = typeof mem === "number" ? (mem <= 1 ? (mem * 100).toFixed(1) : mem.toFixed(1)) : "—";
+                          const bottleneck = classifyServiceBottleneck(sm);
+                          const cpuVal = formatPercent(sm.cpu_utilization).replace("%", "");
+                          const memVal = formatPercent(sm.memory_utilization).replace("%", "");
                           return (
                             <tr key={sm.service_name} className="border-b border-border/50 last:border-0">
                               <td className="px-3 py-2 text-white font-mono truncate max-w-[160px]" title={sm.service_name}>{sm.service_name}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.request_count != null ? sm.request_count.toLocaleString() : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.error_count != null ? sm.error_count.toLocaleString() : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.latency_p95_ms != null ? sm.latency_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.queue_wait_p95_ms != null ? sm.queue_wait_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.processing_latency_p95_ms != null ? sm.processing_latency_p95_ms.toFixed(0) : "—"}</td>
+                              <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.queue_length != null ? sm.queue_length.toLocaleString() : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{cpuVal}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{memVal}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.concurrent_requests != null ? sm.concurrent_requests : "—"}</td>
                               <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{sm.active_replicas != null ? sm.active_replicas : "—"}</td>
+                              <td className="px-3 py-2 text-right">
+                                <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-medium ${bottleneckTagClasses(bottleneck)}`}>
+                                  {bottleneck}
+                                </span>
+                              </td>
                             </tr>
                           );
                         })}
@@ -4016,6 +4650,383 @@ export default function SimulationRunPage() {
                   </div>
                 </div>
               )}
+
+              {/* Endpoint triage */}
+              {(() => {
+                const rows = displayMetrics.metrics?.endpoint_request_stats;
+                if (!Array.isArray(rows) || rows.length === 0) {
+                  return (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Endpoint triage</h3>
+                      <p className="text-xs text-white/35 italic">No endpoint request stats reported for this run.</p>
+                    </div>
+                  );
+                }
+
+                const sortedRows = [...rows].sort((a, b) => {
+                  const aErr = endpointErrorRate(a.request_count, a.error_count) ?? -1;
+                  const bErr = endpointErrorRate(b.request_count, b.error_count) ?? -1;
+                  if (bErr !== aErr) return bErr - aErr;
+                  const aRoot = hasNumber(a.root_latency_p95_ms) ? a.root_latency_p95_ms : -1;
+                  const bRoot = hasNumber(b.root_latency_p95_ms) ? b.root_latency_p95_ms : -1;
+                  if (bRoot !== aRoot) return bRoot - aRoot;
+                  const aReq = hasNumber(a.request_count) ? a.request_count : -1;
+                  const bReq = hasNumber(b.request_count) ? b.request_count : -1;
+                  if (bReq !== aReq) return bReq - aReq;
+                  const svcCmp = String(a.service_name ?? "").localeCompare(String(b.service_name ?? ""));
+                  if (svcCmp !== 0) return svcCmp;
+                  return String(a.endpoint_path ?? "").localeCompare(String(b.endpoint_path ?? ""));
+                });
+
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Endpoint triage</h3>
+                    <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-white/50">
+                            <th className="px-3 py-2 font-medium">Service</th>
+                            <th className="px-3 py-2 font-medium">Endpoint</th>
+                            <th className="px-3 py-2 font-medium text-right">Requests</th>
+                            <th className="px-3 py-2 font-medium text-right">Errors</th>
+                            <th className="px-3 py-2 font-medium text-right">Error rate</th>
+                            <th className="px-3 py-2 font-medium text-right">Root p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Hop p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Queue wait p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Processing p95</th>
+                            <th className="px-3 py-2 font-medium text-right">Triage tag</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedRows.map((row, idx) => {
+                            const triage = classifyEndpointTriage(row);
+                            const errRate = endpointErrorRate(row.request_count, row.error_count);
+                            return (
+                              <tr key={`${row.service_name}:${row.endpoint_path}:${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="px-3 py-2 text-white font-mono truncate max-w-[140px]" title={row.service_name}>
+                                  {row.service_name}
+                                </td>
+                                <td className="px-3 py-2 text-white/85 font-mono truncate max-w-[220px]" title={row.endpoint_path}>
+                                  {row.endpoint_path}
+                                </td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatCount(row.request_count)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatCount(row.error_count)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatPercent(errRate, 2)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.root_latency_p95_ms)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.latency_p95_ms)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.queue_wait_p95_ms)}</td>
+                                <td className="px-3 py-2 text-white/80 text-right font-mono tabular-nums">{formatMs(row.processing_latency_p95_ms)}</td>
+                                <td className="px-3 py-2 text-right">
+                                  <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-medium ${endpointTriageTagClasses(triage)}`}>
+                                    {triage}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Messaging pressure */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const queuePressure = (s.max_queue_depth ?? 0) + (s.queue_oldest_message_age_ms ?? 0) + (s.queue_dlq_count_total ?? 0);
+                const topicPressure = (s.topic_consumer_lag_sum ?? 0) + (s.topic_oldest_message_age_ms ?? 0);
+                const messagingAggregateValues = [
+                  s.queue_depth_sum,
+                  s.max_queue_depth,
+                  s.queue_oldest_message_age_ms,
+                  s.queue_drop_rate,
+                  s.queue_redelivery_count_total,
+                  s.queue_dlq_count_total,
+                  s.topic_backlog_depth_sum,
+                  s.topic_consumer_lag_sum,
+                  s.topic_oldest_message_age_ms,
+                  s.topic_drop_rate,
+                ];
+                const hasData =
+                  queueResources.length > 0 ||
+                  topicResources.length > 0 ||
+                  messagingAggregateValues.some((v) => hasNumber(v));
+                if (!hasData) {
+                  return (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Messaging pressure</h3>
+                      <p className="text-xs text-white/35 italic">
+                        No queue/topic pressure data reported for this run.
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Messaging pressure</h3>
+                      <span className="text-[10px] text-white/45">source: {placementSource.sourceLabel}</span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+                      <div className={`rounded-lg border p-3 ${queuePressure > 0 ? "border-amber-500/30 bg-amber-500/10" : "border-border bg-black/20"}`}>
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Queue depth (sum / max)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPair(s.queue_depth_sum, s.max_queue_depth)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Queue oldest age</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.queue_oldest_message_age_ms)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Queue drop / redelivery / DLQ</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {`${formatPercent(s.queue_drop_rate, 2)} · ${formatCount(s.queue_redelivery_count_total)} · ${formatCount(s.queue_dlq_count_total)}`}
+                        </p>
+                      </div>
+                      <div className={`rounded-lg border p-3 ${topicPressure > 0 ? "border-amber-500/30 bg-amber-500/10" : "border-border bg-black/20"}`}>
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Topic backlog / lag</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {formatPair(s.topic_backlog_depth_sum, s.topic_consumer_lag_sum)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Topic oldest age / drop rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">
+                          {`${formatMs(s.topic_oldest_message_age_ms)} · ${formatPercent(s.topic_drop_rate, 2)}`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {queueResources.length > 0 && (
+                      <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-border text-white/50">
+                              <th className="px-3 py-2 font-medium">Queue</th>
+                              <th className="px-3 py-2 font-medium">Broker</th>
+                              <th className="px-3 py-2 font-medium text-right">Depth</th>
+                              <th className="px-3 py-2 font-medium text-right">In-flight</th>
+                              <th className="px-3 py-2 font-medium text-right">Max conc.</th>
+                              <th className="px-3 py-2 font-medium text-right">Consumer target</th>
+                              <th className="px-3 py-2 font-medium text-right">Oldest age</th>
+                              <th className="px-3 py-2 font-medium text-right">Drop</th>
+                              <th className="px-3 py-2 font-medium text-right">Redelivery</th>
+                              <th className="px-3 py-2 font-medium text-right">DLQ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {queueResources.map((q, idx) => {
+                              const broker = q.broker || q.broker_service || "—";
+                              return (
+                              <tr key={`${broker}-${q.topic}-${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="px-3 py-2 text-white/85 font-mono truncate max-w-[180px]" title={q.topic}>{q.topic}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{broker}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.depth != null ? q.depth.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.in_flight != null ? q.in_flight.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.max_concurrency != null ? q.max_concurrency : "—"}</td>
+                                <td className="px-3 py-2 font-mono text-white/80">{q.consumer_target != null ? q.consumer_target : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{formatMs(q.oldest_message_age_ms)}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.drop_count != null ? q.drop_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.redelivery_count != null ? q.redelivery_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{q.dlq_count != null ? q.dlq_count.toLocaleString() : "—"}</td>
+                              </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {topicResources.length > 0 && (
+                      <div className="rounded-lg border border-border bg-black/20 overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-border text-white/50">
+                              <th className="px-3 py-2 font-medium">Topic</th>
+                              <th className="px-3 py-2 font-medium">Broker</th>
+                              <th className="px-3 py-2 font-medium">Partition</th>
+                              <th className="px-3 py-2 font-medium">Subscriber</th>
+                              <th className="px-3 py-2 font-medium">Consumer group</th>
+                              <th className="px-3 py-2 font-medium text-right">Depth</th>
+                              <th className="px-3 py-2 font-medium text-right">In-flight</th>
+                              <th className="px-3 py-2 font-medium text-right">Max conc.</th>
+                              <th className="px-3 py-2 font-medium text-right">Consumer target</th>
+                              <th className="px-3 py-2 font-medium text-right">Oldest age</th>
+                              <th className="px-3 py-2 font-medium text-right">Drop</th>
+                              <th className="px-3 py-2 font-medium text-right">Redelivery</th>
+                              <th className="px-3 py-2 font-medium text-right">DLQ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {topicResources.map((t, idx) => {
+                              const broker = t.broker || t.broker_service || "—";
+                              return (
+                              <tr key={`${broker}-${t.topic}-${t.partition ?? "na"}-${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="px-3 py-2 text-white/85 font-mono truncate max-w-[180px]" title={t.topic}>{t.topic}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{broker}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{t.partition ?? "—"}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{t.subscriber ?? "—"}</td>
+                                <td className="px-3 py-2 text-white/70 font-mono">{t.consumer_group ?? "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.depth != null ? t.depth.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.in_flight != null ? t.in_flight.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.max_concurrency != null ? t.max_concurrency : "—"}</td>
+                                <td className="px-3 py-2 font-mono text-white/80">{t.consumer_target != null ? t.consumer_target : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{formatMs(t.oldest_message_age_ms)}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.drop_count != null ? t.drop_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.redelivery_count != null ? t.redelivery_count.toLocaleString() : "—"}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-white/80">{t.dlq_count != null ? t.dlq_count.toLocaleString() : "—"}</td>
+                              </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Topology / locality */}
+              {displayMetrics.summary && (() => {
+                const s = displayMetrics.summary;
+                const sameZoneCount = hasNumber(s.same_zone_request_count_total) ? s.same_zone_request_count_total : undefined;
+                const crossZoneCount = hasNumber(s.cross_zone_request_count_total) ? s.cross_zone_request_count_total : undefined;
+                const totalCount =
+                  hasNumber(sameZoneCount) && hasNumber(crossZoneCount)
+                    ? sameZoneCount + crossZoneCount
+                    : undefined;
+                const directFraction = normalizeFraction(s.cross_zone_request_fraction);
+                const derivedFraction =
+                  directFraction ??
+                  (hasNumber(totalCount) && totalCount > 0 && hasNumber(crossZoneCount)
+                    ? crossZoneCount / totalCount
+                    : undefined);
+                const localityHitRate = normalizeFraction(s.locality_hit_rate);
+                const sameZoneShare =
+                  hasNumber(totalCount) && totalCount > 0 && hasNumber(sameZoneCount)
+                    ? sameZoneCount / totalCount
+                    : hasNumber(derivedFraction)
+                      ? 1 - derivedFraction
+                      : undefined;
+                const crossZoneShare =
+                  hasNumber(totalCount) && totalCount > 0 && hasNumber(crossZoneCount)
+                    ? crossZoneCount / totalCount
+                    : derivedFraction;
+                const topologyHealth = classifyTopologyHealth(
+                  localityHitRate,
+                  derivedFraction,
+                  s.topology_latency_penalty_ms_mean,
+                );
+                const hasTopologyData = [
+                  localityHitRate,
+                  sameZoneCount,
+                  crossZoneCount,
+                  derivedFraction,
+                  s.cross_zone_latency_penalty_ms_mean,
+                  s.same_zone_latency_penalty_ms_mean,
+                  s.external_latency_ms_mean,
+                  s.topology_latency_penalty_ms_mean,
+                  s.cross_zone_latency_penalty_ms_total,
+                  s.same_zone_latency_penalty_ms_total,
+                  s.external_latency_ms_total,
+                  s.topology_latency_penalty_ms_total,
+                ].some((v) => hasNumber(v));
+                if (!hasTopologyData) {
+                  return (
+                    <div className="space-y-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Topology / locality</h3>
+                      <p className="text-xs text-white/35 italic">
+                        No topology/locality metrics reported for this run.
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-white/70 uppercase tracking-wide">Topology / locality</h3>
+                      <span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-medium ${topologyHealthClasses(topologyHealth)}`}>
+                        {topologyHealth}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Locality hit rate</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(localityHitRate, 2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Cross-zone fraction</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatPercent(derivedFraction, 2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Same-zone requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatCount(sameZoneCount)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Cross-zone requests</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatCount(crossZoneCount)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Cross-zone penalty (mean)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.cross_zone_latency_penalty_ms_mean)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Topology penalty (mean)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.topology_latency_penalty_ms_mean)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/20 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-white/40 mb-1">External penalty (mean)</p>
+                        <p className="text-sm font-mono font-semibold text-white">{formatMs(s.external_latency_ms_mean)}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-white/55">Zone flow summary</p>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-36 shrink-0 text-[11px] text-white/60">Same-zone requests</span>
+                          <div className="h-2 flex-1 rounded bg-white/10 overflow-hidden">
+                            <div
+                              className="h-2 bg-emerald-400/80"
+                              style={{ width: `${Math.max(0, Math.min(100, (sameZoneShare ?? 0) * 100))}%` }}
+                            />
+                          </div>
+                          <span className="w-20 text-right text-[11px] font-mono text-white/70">
+                            {formatPercent(sameZoneShare, 1)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-36 shrink-0 text-[11px] text-white/60">Cross-zone requests</span>
+                          <div className="h-2 flex-1 rounded bg-white/10 overflow-hidden">
+                            <div
+                              className="h-2 bg-amber-400/80"
+                              style={{ width: `${Math.max(0, Math.min(100, (crossZoneShare ?? 0) * 100))}%` }}
+                            />
+                          </div>
+                          <span className="w-20 text-right text-[11px] font-mono text-white/70">
+                            {formatPercent(crossZoneShare, 1)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          topology total: {formatMs(s.topology_latency_penalty_ms_total)}
+                        </span>
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          external total: {formatMs(s.external_latency_ms_total)}
+                        </span>
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          cross-zone total: {formatMs(s.cross_zone_latency_penalty_ms_total)}
+                        </span>
+                        <span className="rounded border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/65">
+                          same-zone total: {formatMs(s.same_zone_latency_penalty_ms_total)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Latency distribution (run-level) */}
               {displayMetrics.summary && (() => {
@@ -4156,8 +5167,22 @@ export default function SimulationRunPage() {
                     onChange={(e) => setTimeseriesApiMetric(e.target.value)}
                     className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
                   >
-                    <option value="request_latency_ms">Request latency (ms)</option>
-                    <option value="request_count">Request count</option>
+                    {TIMESERIES_METRIC_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={timeseriesGroupBy}
+                    onChange={(e) => setTimeseriesGroupBy(e.target.value)}
+                    className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
+                  >
+                    {TIMESERIES_GROUP_BY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        Group by {opt.label}
+                      </option>
+                    ))}
                   </select>
                   <button
                     type="button"
@@ -4169,24 +5194,41 @@ export default function SimulationRunPage() {
                     {timeseriesApiRows.length ? "Refresh" : "Load timeseries"}
                   </button>
                 </div>
+                <p className="text-[11px] text-white/45">
+                  <span className="text-white/60 font-medium">{selectedTimeseriesMetricMeta.label}</span>
+                  {` · ${selectedTimeseriesMetricMeta.unit} · ${selectedTimeseriesMetricMeta.behavior.replace("_", " ")}`}
+                  {selectedTimeseriesMetricMeta.behavior === "cumulative_counter" ? " (cumulative)" : ""}
+                  {selectedTimeseriesMetricMeta.description ? ` — ${selectedTimeseriesMetricMeta.description}` : ""}
+                </p>
                 {timeseriesApiError && (
                   <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">{timeseriesApiError}</p>
                 )}
                 {timeseriesApiRows.length > 0 && (() => {
-                  const services = Array.from(
+                  const seriesKeys = Array.from(
                     new Set(timeseriesApiRows.flatMap((r) => Object.keys(r).filter((k) => k !== "_t"))),
                   ).filter((s) => !isUnscopedSeriesKey(s));
                   const tMin = timeseriesApiRows[0]?._t as number | undefined;
                   const tMax = timeseriesApiRows[timeseriesApiRows.length - 1]?._t as number | undefined;
-                  const allVals = timeseriesApiRows.flatMap((r) => services.map((s) => r[s]).filter((v): v is number => typeof v === "number"));
+                  const allVals = timeseriesApiRows.flatMap((r) => seriesKeys.map((s) => r[s]).filter((v): v is number => typeof v === "number"));
                   const vMax = Math.max(...allVals, 0) * 1.2 || 1;
-                  if (services.length === 0) {
+                  if (seriesKeys.length === 0) {
                     return (
                       <p className="text-[11px] text-white/35 italic">
-                        Loaded points are unscoped only. See the unscoped metrics debug panel.
+                        No series found for grouping <span className="font-mono">{timeseriesGroupBy}</span>. Try Auto or another label.
                       </p>
                     );
                   }
+                  const yFmt = (value: number) => {
+                    if (!Number.isFinite(value)) return "—";
+                    if (selectedTimeseriesMetricMeta.unit === "ms") return `${value.toFixed(0)} ms`;
+                    if (selectedTimeseriesMetricMeta.unit === "percent") {
+                      const pct = value <= 1 ? value * 100 : value;
+                      return `${pct.toFixed(1)}%`;
+                    }
+                    if (selectedTimeseriesMetricMeta.unit === "count") return value.toLocaleString();
+                    if (selectedTimeseriesMetricMeta.unit === "rps") return `${value.toFixed(2)} rps`;
+                    return value.toFixed(2);
+                  };
                   return (
                     <div className="rounded-lg border border-border bg-black/20 p-3">
                       <ResponsiveContainer width="100%" height={220}>
@@ -4204,14 +5246,20 @@ export default function SimulationRunPage() {
                             scale="time"
                             tickCount={6}
                           />
-                          <YAxis domain={[0, vMax]} tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }} width={45} tickCount={5} />
+                          <YAxis
+                            domain={[0, vMax]}
+                            tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }}
+                            width={60}
+                            tickCount={5}
+                            tickFormatter={yFmt}
+                          />
                           <Tooltip
                             contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)" }}
                             labelFormatter={(label) => typeof label === "number" ? new Date(label).toISOString() : String(label ?? "")}
-                            formatter={(v, name) => [typeof v === "number" ? v.toFixed(2) : String(v ?? ""), String(name ?? "")]}
+                            formatter={(v, name) => [typeof v === "number" ? yFmt(v) : String(v ?? ""), String(name ?? "")]}
                           />
                           <Legend wrapperStyle={{ fontSize: 11 }} />
-                          {services.map((svc, i) => (
+                          {seriesKeys.map((svc, i) => (
                             <Line
                               key={svc}
                               dataKey={svc}
