@@ -600,14 +600,14 @@ export default function ProjectNewSimulationPage() {
     setScenarioValidationError(null);
     setScenarioValidationResult(null);
     try {
-      const result = await validateScenarioYaml(scenarioYaml);
+      const result = await validateScenarioYaml(projectId, selectedVersionId, scenarioYaml);
       setScenarioValidationResult(result);
       setLastValidatedScenarioYaml(scenarioYaml.trim());
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : "Could not validate scenario. Check simulation-core connection.";
+          : "Could not validate scenario.";
       setScenarioValidationError(message);
       setLastValidatedScenarioYaml(null);
     } finally {
