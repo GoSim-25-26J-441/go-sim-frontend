@@ -2,7 +2,11 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { ScenarioDownstreamCall, ScenarioState } from "@/lib/simulation/scenario-yaml-parse";
-import { getEndpointOptions } from "@/lib/simulation/scenario-behavior-helpers";
+import {
+  addDownstreamCallToEndpoint,
+  getEndpointOptions,
+  removeDownstreamCallFromEndpoint,
+} from "@/lib/simulation/scenario-behavior-helpers";
 
 const EXTRA_KEYS = ["probability", "mode", "kind", "timeout"] as const;
 
@@ -45,28 +49,57 @@ export function DownstreamCallsEditor({
   const svc = scenario.services[svcIndex];
   const ep = svc?.endpoints[epIndex];
   const options = getEndpointOptions(scenario);
+  const selfKey = svc && ep ? `${svc.id}:${ep.path}` : "";
   const optionValues = new Set(options.map((o) => o.value));
+  const preferredDefaultTarget =
+    options.find((o) => o.value !== selfKey)?.value ?? options[0]?.value ?? "";
 
   if (!svc || !ep) return null;
 
   const list = ep.downstream ?? [];
 
-  if (list.length === 0) {
-    return (
-      <p className="text-[11px] text-white/45">
-        No downstream calls on this endpoint. Call graph edges are owned by the upstream scenario; only
-        parameters for existing calls can be edited here.
-      </p>
-    );
-  }
-
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={!preferredDefaultTarget}
+          onClick={() =>
+            setScenario((prev) => addDownstreamCallToEndpoint(prev, svcIndex, epIndex))
+          }
+          className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Add downstream call
+        </button>
+        {!preferredDefaultTarget && (
+          <span className="text-[11px] text-amber-200/90">
+            No valid endpoint targets exist yet. Add an endpoint first.
+          </span>
+        )}
+      </div>
+      {list.length === 0 && (
+        <p className="text-[11px] text-white/45">
+          No downstream calls on this endpoint yet. Add one to define outbound behavior.
+        </p>
+      )}
       {list.map((d: ScenarioDownstreamCall, dIndex) => (
         <div
           key={`${svc.id}-${ep.path}-d-${dIndex}`}
           className="rounded border border-white/10 bg-black/35 p-3 space-y-2 text-[11px] text-white/75"
         >
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() =>
+                setScenario((prev) =>
+                  removeDownstreamCallFromEndpoint(prev, svcIndex, epIndex, dIndex)
+                )
+              }
+              className="px-2 py-1 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30"
+            >
+              Remove
+            </button>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div className="min-w-0">
               <label className="block font-medium text-white/70 mb-1">To (existing endpoint)</label>
