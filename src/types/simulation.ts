@@ -297,6 +297,25 @@ export interface ClusterPlacementResources {
   topics?: TopicResourceSnapshot[];
 }
 
+export interface RuntimeConfigurationService extends ClusterPlacementServiceResource {
+  /** UI-friendly alias provided by frontend normalization. */
+  id?: string;
+}
+
+export interface RuntimeConfigurationWorkloadItem {
+  pattern_key: string;
+  rate_rps?: number;
+  [key: string]: unknown;
+}
+
+export interface RuntimeConfiguration {
+  services?: RuntimeConfigurationService[];
+  workload?: RuntimeConfigurationWorkloadItem[];
+  hosts?: ClusterPlacementHostResource[];
+  placements?: ClusterPlacementInstance[];
+  [key: string]: unknown;
+}
+
 export interface SnapshotMetrics {
   total_requests?: number;
   ingress_requests?: number;

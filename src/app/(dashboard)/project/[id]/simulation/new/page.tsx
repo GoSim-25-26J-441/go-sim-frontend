@@ -480,8 +480,8 @@ export default function ProjectNewSimulationPage() {
     max_online_duration_ms: "",
     max_noop_intervals: "",
     scale_down_cooldown_ms: "",
-    host_drain_timeout_ms: "",
-    memory_headroom_mb: "",
+    drain_timeout_ms: "",
+    memory_downsize_headroom_mb: "",
     allow_unbounded_online: false,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -1020,10 +1020,10 @@ export default function ProjectNewSimulationPage() {
         if (mni != null && mni >= 0) extra.max_noop_intervals = mni;
         const sdc = parseOptionalInt(onlineTuning.scale_down_cooldown_ms);
         if (sdc != null && sdc >= 0) extra.scale_down_cooldown_ms = sdc;
-        const hdt = parseOptionalInt(onlineTuning.host_drain_timeout_ms);
-        if (hdt != null && hdt >= 0) extra.host_drain_timeout_ms = hdt;
-        const mh = parseOptionalInt(onlineTuning.memory_headroom_mb);
-        if (mh != null && mh >= 0) extra.memory_headroom_mb = mh;
+        const dt = parseOptionalInt(onlineTuning.drain_timeout_ms);
+        if (dt != null && dt >= 0) extra.drain_timeout_ms = dt;
+        const mdh = parseOptionalInt(onlineTuning.memory_downsize_headroom_mb);
+        if (mdh != null && mdh >= 0) extra.memory_downsize_headroom_mb = mdh;
         if (onlineTuning.allow_unbounded_online) extra.allow_unbounded_online = true;
         optimizationPayload = extra;
       }
@@ -1926,8 +1926,8 @@ export default function ProjectNewSimulationPage() {
                           ["max_online_duration_ms", "Max online duration (ms)"],
                           ["max_noop_intervals", "Max noop intervals"],
                           ["scale_down_cooldown_ms", "Scale-down cooldown (ms)"],
-                          ["host_drain_timeout_ms", "Host drain timeout (ms)"],
-                          ["memory_headroom_mb", "Memory headroom (MB)"],
+                          ["drain_timeout_ms", "Drain timeout (ms)"],
+                          ["memory_downsize_headroom_mb", "Memory downsize headroom (MB)"],
                         ] as const
                       ).map(([key, label]) => (
                         <div key={key}>

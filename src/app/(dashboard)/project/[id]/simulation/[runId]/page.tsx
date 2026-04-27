@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BarChart2, Play, Plus, RefreshCw, Square, Trash2, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, BarChart2, Clock3, Gauge, History, Lock, Play, Plus, RefreshCw, Route, Settings2, SlidersHorizontal, Square, Trash2, Wifi, WifiOff } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -44,15 +44,23 @@ import {
   resolveFinalConfigForPlacement,
   type PlacementPersistenceStatus,
 } from "@/lib/simulation/persisted-metrics-final-config";
+import {
+  buildOnlineConfigModel,
+  buildPoliciesPatchPayloadFromModel,
+  buildServicePatchPayloadFromModel,
+  buildWorkloadPatchPayloadFromModel,
+  type OnlineConfigModel,
+} from "@/lib/simulation/online-config-model";
+import { type RuntimeServiceDraft } from "@/lib/simulation/online-runtime-payload-validation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import {
+  getRunConfiguration,
+  isSimulationApiError,
   patchRunConfiguration,
   patchRunWorkload,
   renewOnlineLease,
   startSimulationRun,
   stopSimulationRun,
-  type PatchRunConfigurationBody,
-  type PatchRunConfigurationService,
   type PatchRunConfigurationWorkloadItem,
   type PatchRunConfigurationPolicies,
 } from "@/lib/api-client/simulation";
@@ -81,9 +89,45 @@ import type {
 
 /** Editable config for Live config panel; matches PATCH shape. */
 interface LiveConfig {
-  services: PatchRunConfigurationService[];
+  services: RuntimeServiceDraft[];
   workload: PatchRunConfigurationWorkloadItem[];
   policies?: PatchRunConfigurationPolicies;
+}
+
+interface ObservedServiceRuntime {
+  id: string;
+  replicas?: number;
+  cpu_cores?: number;
+  memory_mb?: number;
+  cpu_utilization?: number;
+  memory_utilization?: number;
+}
+
+interface ObservedTrafficLane {
+  pattern_key: string;
+  observed_rate_rps?: number;
+}
+
+interface AutoscalingPolicyDraft {
+  enabled?: boolean;
+  target_cpu_util?: number;
+  scale_step?: number;
+}
+
+type RuntimeOperationKind = "services" | "workload" | "autoscaling" | "lease" | "run_control";
+type RuntimeOperationStatus = "submitted" | "accepted" | "rejected" | "observed" | "stale";
+
+interface RuntimeOperationRecord {
+  id: string;
+  timestampMs: number;
+  kind: RuntimeOperationKind;
+  method: "PATCH" | "POST" | "PUT";
+  endpoint: string;
+  payload?: unknown;
+  summary: string;
+  validationOk: boolean;
+  status: RuntimeOperationStatus;
+  errorText?: string;
 }
 
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
@@ -92,13 +136,16 @@ const DEFAULT_LIVE_CONFIG: LiveConfig = {
   policies: { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } },
 };
 
+const PENDING_OBSERVATION_MAX_AGE_MS = 120_000;
+const RUNTIME_OPERATION_STALE_MS = 120_000;
+
 function configFromStep(cfg: OptimizationStepConfig | undefined): LiveConfig | null {
   if (!cfg) return null;
-  const services: PatchRunConfigurationService[] = (cfg.services ?? []).map((s) => ({
+  const services: RuntimeServiceDraft[] = (cfg.services ?? []).map((s) => ({
     id: s.id,
     replicas: s.replicas,
-    cpu_cores: typeof (s as PatchRunConfigurationService).cpu_cores === "number" ? (s as PatchRunConfigurationService).cpu_cores : undefined,
-    memory_mb: typeof (s as PatchRunConfigurationService).memory_mb === "number" ? (s as PatchRunConfigurationService).memory_mb : undefined,
+    cpu_cores: typeof (s as RuntimeServiceDraft).cpu_cores === "number" ? (s as RuntimeServiceDraft).cpu_cores : undefined,
+    memory_mb: typeof (s as RuntimeServiceDraft).memory_mb === "number" ? (s as RuntimeServiceDraft).memory_mb : undefined,
   }));
   const workload: PatchRunConfigurationWorkloadItem[] = Array.isArray(cfg.workload)
     ? cfg.workload
@@ -1727,6 +1774,10 @@ export default function SimulationRunPage() {
   const [hostResources, setHostResources] = useState<Record<string, { cpu_cores?: number; memory_gb?: number }>>({});
   const [clusterResources, setClusterResources] = useState<ClusterPlacementResources | null>(null);
   const [livePlacementStatus, setLivePlacementStatus] = useState<PlacementStatus>("unavailable");
+  const [runtimeConfigSeed, setRuntimeConfigSeed] = useState<
+    Awaited<ReturnType<typeof getRunConfiguration>> | null
+  >(null);
+  const [runtimeConfigSeedNotice, setRuntimeConfigSeedNotice] = useState<string | null>(null);
   // Timeseries from GET .../metrics/timeseries API (for line chart over time)
   const [timeseriesApiRows, setTimeseriesApiRows] = useState<ChartRow[]>([]);
   const [unscopedMetricDebug, setUnscopedMetricDebug] = useState<UnscopedMetricDebugPoint[]>([]);
@@ -1736,6 +1787,22 @@ export default function SimulationRunPage() {
   const [timeseriesApiError, setTimeseriesApiError] = useState<string | null>(null);
   // Live config (online mode) — editable form state; synced from optimization_step
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
+  const [serviceMixerDrafts, setServiceMixerDrafts] = useState<Record<string, RuntimeServiceDraft>>({});
+  const [trafficConsoleDrafts, setTrafficConsoleDrafts] = useState<
+    Record<string, { pattern_key?: string; rate_rps?: number }>
+  >({});
+  const [autoscalingPolicyDraft, setAutoscalingPolicyDraft] = useState<AutoscalingPolicyDraft>({});
+  const [pendingServiceObservationById, setPendingServiceObservationById] = useState<
+    Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number; updatedAt: number }>
+  >({});
+  const [pendingTrafficObservationByPattern, setPendingTrafficObservationByPattern] = useState<
+    Record<string, { rate_rps: number; updatedAt: number }>
+  >({});
+  const [autoscalingSubmitStatus, setAutoscalingSubmitStatus] = useState<"idle" | "submitted" | "error">("idle");
+  const [controlRoomTab, setControlRoomTab] = useState<
+    "services" | "traffic" | "autoscaling" | "lease" | "locked" | "change_log"
+  >("services");
+  const [manualLeaseRenewLoading, setManualLeaseRenewLoading] = useState(false);
   const [configUpdateLoading, setConfigUpdateLoading] = useState(false);
   const [configUpdateError, setConfigUpdateError] = useState<string | null>(null);
   /** Latest optimization_progress SSE (objective / unit clarify best_score in that stream). */
@@ -1745,10 +1812,18 @@ export default function SimulationRunPage() {
     best_score?: number;
   } | null>(null);
   const [leaseRenewError, setLeaseRenewError] = useState<string | null>(null);
+  const [leaseRenewStatus, setLeaseRenewStatus] = useState<"idle" | "ok" | "error">("idle");
+  const [lastLeaseRenewAttemptAtMs, setLastLeaseRenewAttemptAtMs] = useState<number | null>(null);
+  const [leaseClockNowMs, setLeaseClockNowMs] = useState<number>(Date.now());
+  const [runtimeOps, setRuntimeOps] = useState<RuntimeOperationRecord[]>([]);
+  const [changeLogFilter, setChangeLogFilter] = useState<"all" | "manual" | "controller" | "errors">("all");
+  const nextLeaseRenewAtRef = useRef<number | null>(null);
+  const onlineConfigModelRef = useRef<OnlineConfigModel | null>(null);
 
   const simRef = useRef<SsePanelHandle>(null);
   const fetchRunInfoRef = useRef<() => Promise<RunInfo | null>>(() => Promise.resolve(null));
   const timeseriesWorkerRef = useRef<Worker | null>(null);
+  const runtimeConfigFetchAttemptedRef = useRef<string | null>(null);
 
   // ── Run info fetch ──────────────────────────────────────────────────────────
 
@@ -2675,68 +2750,278 @@ export default function SimulationRunPage() {
 
   // ── Live config apply (online mode) ─────────────────────────────────────────
 
-  const applyServices = useCallback(async () => {
-    const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-    if (!config.services.length) return;
-    const validServices = config.services.filter((s) => (s.id ?? "").toString().trim() !== "");
-    if (validServices.length !== config.services.length) {
-      setConfigUpdateError("Service ID is required for every row. Remove empty rows or pick a service from the dropdown.");
-      return;
+  const recordRuntimeOperation = useCallback((op: Omit<RuntimeOperationRecord, "id" | "timestampMs">): string => {
+    const id = `${op.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setRuntimeOps((prev) => [{ ...op, id, timestampMs: Date.now() }, ...prev].slice(0, 24));
+    return id;
+  }, []);
+
+  const updateRuntimeOperation = useCallback((id: string, patch: Partial<RuntimeOperationRecord>) => {
+    setRuntimeOps((prev) => prev.map((op) => (op.id === id ? { ...op, ...patch } : op)));
+  }, []);
+
+  const formatRuntimeMutationError = useCallback((error: unknown): string => {
+    if (isSimulationApiError(error)) {
+      const base = error.message;
+      if (error.status === 400) return `${base} (invalid patch payload)`;
+      if (error.status === 404) return `${base} (engine run or pattern not found)`;
+      if (error.status === 409) return `${base} (conflicting runtime update)`;
+      if (error.status === 412) return `${base} (run/config is no longer available)`;
+      return base;
     }
+    if (error instanceof Error) return error.message;
+    return String(error);
+  }, []);
+
+  const applyServices = useCallback(async (
+    serviceRows?: RuntimeServiceDraft[],
+    replicasHint?: Record<string, number | undefined>,
+    pendingTargets?: Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number }>
+  ): Promise<boolean> => {
+    const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
+    const rows = serviceRows ?? config.services;
+    if (!rows.length) return false;
+    const replicasByServiceId: Record<string, number | undefined> = { ...(replicasHint ?? {}) };
+    for (const step of [...optSteps].reverse()) {
+      const services = step.current_config?.services ?? [];
+      for (const svc of services) {
+        if (typeof svc.id === "string" && typeof svc.replicas === "number" && Number.isFinite(svc.replicas)) {
+          if (replicasByServiceId[svc.id] == null) replicasByServiceId[svc.id] = svc.replicas;
+        }
+      }
+    }
+    const metricsServiceSnapshots = (liveMetricsData ?? metricsData)?.metrics?.service_metrics ?? [];
+    for (const svc of metricsServiceSnapshots) {
+      if (svc.service_name && typeof svc.active_replicas === "number" && Number.isFinite(svc.active_replicas)) {
+        if (replicasByServiceId[svc.service_name] == null) replicasByServiceId[svc.service_name] = svc.active_replicas;
+      }
+    }
+    const model = onlineConfigModelRef.current;
+    if (!model) {
+      setConfigUpdateError("Online config model is not ready yet. Please retry.");
+      return false;
+    }
+    const payload = buildServicePatchPayloadFromModel(model, rows, replicasByServiceId);
+    if (!payload.ok) {
+      setConfigUpdateError(payload.error);
+      return false;
+    }
+    const opId = recordRuntimeOperation({
+      kind: "services",
+      method: "PATCH",
+      endpoint: `/api/v1/simulation/runs/${runId}/configuration`,
+      payload: { services: payload.value },
+      summary: `Patch ${payload.value.length} service row(s)`,
+      validationOk: true,
+      status: "submitted",
+    });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      await patchRunConfiguration(runId, { services: validServices });
+      await patchRunConfiguration(runId, { services: payload.value });
+      updateRuntimeOperation(opId, { status: "accepted" });
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingServiceObservationById((prev) => {
+          const next = { ...prev };
+          const now = Date.now();
+          for (const [id, target] of Object.entries(pendingTargets)) {
+            next[id] = { ...target, updatedAt: now };
+          }
+          return next;
+        });
+      }
+      return true;
     } catch (e) {
-      setConfigUpdateError((e as Error).message);
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingServiceObservationById((prev) => {
+          const next = { ...prev };
+          for (const id of Object.keys(pendingTargets)) delete next[id];
+          return next;
+        });
+      }
+      setConfigUpdateError(formatRuntimeMutationError(e));
+      return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.services]);
+  }, [runId, liveConfig, optSteps, liveMetricsData, metricsData, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
 
-  const applyWorkload = useCallback(async () => {
+  const applyWorkload = useCallback(async (
+    workloadRows?: PatchRunConfigurationWorkloadItem[],
+    pendingTargets?: Record<string, { rate_rps: number }>
+  ): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-    if (!config.workload.length) return;
-    const emptyPattern = config.workload.find((w) => (w.pattern_key ?? "").toString().trim() === "");
-    if (emptyPattern) {
-      setConfigUpdateError("Workload pattern key is required for every row. Pick a pattern from the dropdown.");
-      return;
+    const rows = workloadRows ?? config.workload;
+    if (!rows.length) return false;
+    const model = onlineConfigModelRef.current;
+    if (!model) {
+      setConfigUpdateError("Online config model is not ready yet. Please retry.");
+      return false;
     }
-    const invalidRate = config.workload.find((w) => (w.rate_rps ?? 0) <= 0);
-    if (invalidRate) {
-      setConfigUpdateError("rate_rps must be greater than 0 for all rows.");
-      return;
+    const payload = buildWorkloadPatchPayloadFromModel(model, rows);
+    if (!payload.ok) {
+      setConfigUpdateError(payload.error);
+      return false;
     }
+    const isSingle = payload.value.length === 1;
+    const opPayload = isSingle
+      ? { pattern_key: payload.value[0].pattern_key, rate_rps: payload.value[0].rate_rps }
+      : { workload: payload.value };
+    const opId = recordRuntimeOperation({
+      kind: "workload",
+      method: "PATCH",
+      endpoint: isSingle
+        ? `/api/v1/simulation/runs/${runId}/workload`
+        : `/api/v1/simulation/runs/${runId}/configuration`,
+      payload: opPayload,
+      summary: isSingle ? "Patch one workload lane" : `Patch ${payload.value.length} workload lane(s)`,
+      validationOk: true,
+      status: "submitted",
+    });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      if (config.workload.length === 1) {
-        const { pattern_key, rate_rps } = config.workload[0];
+      if (isSingle) {
+        const { pattern_key, rate_rps } = payload.value[0];
         await patchRunWorkload(runId, { pattern_key, rate_rps });
       } else {
-        await patchRunConfiguration(runId, { workload: config.workload });
+        await patchRunConfiguration(runId, { workload: payload.value });
       }
+      updateRuntimeOperation(opId, { status: "accepted" });
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingTrafficObservationByPattern((prev) => {
+          const next = { ...prev };
+          const now = Date.now();
+          for (const [patternKey, target] of Object.entries(pendingTargets)) {
+            next[patternKey] = { ...target, updatedAt: now };
+          }
+          return next;
+        });
+      }
+      return true;
     } catch (e) {
-      setConfigUpdateError((e as Error).message);
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
+      if (pendingTargets && Object.keys(pendingTargets).length > 0) {
+        setPendingTrafficObservationByPattern((prev) => {
+          const next = { ...prev };
+          for (const patternKey of Object.keys(pendingTargets)) delete next[patternKey];
+          return next;
+        });
+      }
+      setConfigUpdateError(formatRuntimeMutationError(e));
+      return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig?.workload]);
+  }, [runId, liveConfig, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
 
-  const applyPolicies = useCallback(async () => {
+  const applyPolicies = useCallback(async (policyDraft?: AutoscalingPolicyDraft): Promise<boolean> => {
     const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-    const policies = config.policies ?? { autoscaling: { enabled: false, target_cpu_util: 70, scale_step: 1 } };
-    if (!policies.autoscaling) return;
+    const baselineAutoscaling = config.policies?.autoscaling ?? { enabled: false, target_cpu_util: 70, scale_step: 1 };
+    const draft = policyDraft ?? {};
+    const policies: PatchRunConfigurationPolicies = {
+      autoscaling: {
+        enabled: typeof draft.enabled === "boolean" ? draft.enabled : baselineAutoscaling.enabled,
+        target_cpu_util:
+          typeof draft.target_cpu_util === "number" ? draft.target_cpu_util : baselineAutoscaling.target_cpu_util,
+        scale_step: typeof draft.scale_step === "number" ? draft.scale_step : baselineAutoscaling.scale_step,
+      },
+    };
+    if (!policies.autoscaling) return false;
+    const model = onlineConfigModelRef.current;
+    if (!model) {
+      setConfigUpdateError("Online config model is not ready yet. Please retry.");
+      setAutoscalingSubmitStatus("error");
+      return false;
+    }
+    const payload = buildPoliciesPatchPayloadFromModel(model, policies);
+    if (!payload.ok) {
+      setConfigUpdateError(payload.error);
+      setAutoscalingSubmitStatus("error");
+      return false;
+    }
+    const opId = recordRuntimeOperation({
+      kind: "autoscaling",
+      method: "PATCH",
+      endpoint: `/api/v1/simulation/runs/${runId}/configuration`,
+      payload: { policies: payload.value },
+      summary: "Patch autoscaling policy",
+      validationOk: true,
+      status: "submitted",
+    });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      await patchRunConfiguration(runId, { policies });
+      await patchRunConfiguration(runId, { policies: payload.value });
+      updateRuntimeOperation(opId, { status: "accepted" });
+      setAutoscalingSubmitStatus("submitted");
+      return true;
     } catch (e) {
-      setConfigUpdateError((e as Error).message);
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
+      setConfigUpdateError(formatRuntimeMutationError(e));
+      setAutoscalingSubmitStatus("error");
+      return false;
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig]);
+  }, [runId, liveConfig, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
+
+  const handleManualLeaseRenew = useCallback(async () => {
+    if (
+      !(typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0)
+    ) {
+      setLeaseRenewError("Lease is not configured for this run.");
+      setLeaseRenewStatus("error");
+      return;
+    }
+    const opId = recordRuntimeOperation({
+      kind: "lease",
+      method: "POST",
+      endpoint: `/api/v1/simulation/runs/${runId}/online/renew-lease`,
+      payload: undefined,
+      summary: "Renew online lease",
+      validationOk: true,
+      status: "submitted",
+    });
+    setLastLeaseRenewAttemptAtMs(Date.now());
+    setManualLeaseRenewLoading(true);
+    try {
+      await renewOnlineLease(runId);
+      updateRuntimeOperation(opId, { status: "accepted" });
+      setLeaseRenewError(null);
+      setLeaseRenewStatus("ok");
+      const currentLeaseTtlMs =
+        typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0
+          ? runInfo.metadata.lease_ttl_ms
+          : undefined;
+      if (currentLeaseTtlMs != null) {
+        const period = Math.min(
+          Math.max(Math.floor(currentLeaseTtlMs * 0.45), 5_000),
+          Math.max(currentLeaseTtlMs - 2_000, 5_000),
+        );
+        nextLeaseRenewAtRef.current = Date.now() + period;
+      }
+    } catch (e) {
+      updateRuntimeOperation(opId, {
+        status: "rejected",
+        errorText: e instanceof Error ? e.message : String(e),
+      });
+      setLeaseRenewError(e instanceof Error ? e.message : String(e));
+      setLeaseRenewStatus("error");
+    } finally {
+      setManualLeaseRenewLoading(false);
+    }
+  }, [runId, runInfo?.metadata, recordRuntimeOperation, updateRuntimeOperation]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
@@ -2761,30 +3046,132 @@ export default function SimulationRunPage() {
   const isOnlineMode =
     status === "running" &&
     (runInfo?.metadata?.mode === "online" || runInfo?.metadata?.mode === "online_optimization");
+  const hasEngineAssociation = Boolean(
+    runInfo?.engine_run_id ||
+      (runInfo?.metadata &&
+        typeof runInfo.metadata === "object" &&
+        typeof (runInfo.metadata as Record<string, unknown>).engine_run_id === "string")
+  );
   const leaseTtlMs =
     typeof runInfo?.metadata?.lease_ttl_ms === "number" && runInfo.metadata.lease_ttl_ms > 0
       ? runInfo.metadata.lease_ttl_ms
       : undefined;
+  const leaseRenewIntervalMs =
+    leaseTtlMs == null
+      ? undefined
+      : Math.min(
+          Math.max(Math.floor(leaseTtlMs * 0.45), 5_000),
+          Math.max(leaseTtlMs - 2_000, 5_000),
+        );
+
+  useEffect(() => {
+    if (!isOnlineMode) return;
+    const timer = window.setInterval(() => setLeaseClockNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [isOnlineMode]);
 
   useEffect(() => {
     if (status !== "running" || !isOnlineMode || leaseTtlMs == null) {
+      nextLeaseRenewAtRef.current = null;
       return;
     }
-    const period = Math.min(
-      Math.max(Math.floor(leaseTtlMs * 0.45), 5_000),
-      Math.max(leaseTtlMs - 2_000, 5_000),
-    );
+    const period = leaseRenewIntervalMs;
+    if (period == null) return;
     const tick = () => {
+      setLastLeaseRenewAttemptAtMs(Date.now());
+      nextLeaseRenewAtRef.current = Date.now() + period;
       renewOnlineLease(runId)
-        .then(() => setLeaseRenewError(null))
+        .then(() => {
+          setLeaseRenewError(null);
+          setLeaseRenewStatus("ok");
+        })
         .catch((e: unknown) => {
           setLeaseRenewError(e instanceof Error ? e.message : String(e));
+          setLeaseRenewStatus("error");
         });
     };
     tick();
     const timer = window.setInterval(tick, period);
     return () => window.clearInterval(timer);
-  }, [runId, status, isOnlineMode, leaseTtlMs]);
+  }, [runId, status, isOnlineMode, leaseTtlMs, leaseRenewIntervalMs]);
+
+  useEffect(() => {
+    if (!isOnlineMode || status !== "running" || !hasEngineAssociation) return;
+    if (runtimeConfigFetchAttemptedRef.current === runId) return;
+    runtimeConfigFetchAttemptedRef.current = runId;
+    void (async () => {
+      try {
+        const configuration = await getRunConfiguration(runId);
+        setRuntimeConfigSeed(configuration);
+        setRuntimeConfigSeedNotice(null);
+        const runtimeHosts = Array.isArray(configuration.hosts) ? configuration.hosts : [];
+        const runtimeServices = Array.isArray(configuration.services)
+          ? configuration.services
+              .map((service) => ({
+                service_id: service.service_id || service.id || "",
+                replicas: service.replicas,
+                cpu_cores: service.cpu_cores,
+                memory_mb: service.memory_mb,
+              }))
+              .filter(
+                (service) =>
+                  typeof service.service_id === "string" && service.service_id.trim() !== ""
+              )
+          : [];
+        const runtimePlacements = Array.isArray(configuration.placements)
+          ? configuration.placements.filter(
+              (placement) =>
+                typeof placement.service_id === "string" &&
+                placement.service_id.trim() !== ""
+            )
+          : [];
+        const runtimeResources = {
+          hosts: runtimeHosts,
+          services: runtimeServices,
+          placements: runtimePlacements,
+        };
+        if (
+          runtimeResources.hosts.length > 0 ||
+          runtimeResources.services.length > 0 ||
+          runtimeResources.placements.length > 0
+        ) {
+          setClusterResources(runtimeResources);
+          setLivePlacementStatus(placementStatusFromFinalConfig(runtimeResources));
+        }
+        setLiveConfig((prev) => {
+          if (prev && (prev.services.length > 0 || prev.workload.length > 0)) return prev;
+          return {
+            services: (configuration.services ?? [])
+              .map((service) => ({
+                id: service.id || service.service_id,
+                replicas: service.replicas,
+                cpu_cores: service.cpu_cores,
+                memory_mb: service.memory_mb,
+              }))
+              .filter((service) => typeof service.id === "string" && service.id.trim() !== ""),
+            workload: (configuration.workload ?? [])
+              .map((item) => ({
+                pattern_key: item.pattern_key,
+                rate_rps:
+                  typeof item.rate_rps === "number" && Number.isFinite(item.rate_rps)
+                    ? item.rate_rps
+                    : 0,
+              }))
+              .filter((item) => typeof item.pattern_key === "string" && item.pattern_key.trim() !== ""),
+            policies: prev?.policies ?? DEFAULT_LIVE_CONFIG.policies,
+          };
+        });
+      } catch (e) {
+        if (isSimulationApiError(e) && e.status === 412) {
+          setRuntimeConfigSeedNotice("Live runtime configuration is no longer available.");
+          return;
+        }
+        setRuntimeConfigSeedNotice(
+          e instanceof Error ? `Runtime configuration seed failed: ${e.message}` : "Runtime configuration seed failed."
+        );
+      }
+    })();
+  }, [runId, isOnlineMode, status, hasEngineAssociation]);
 
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
@@ -2812,8 +3199,32 @@ export default function SimulationRunPage() {
     if (!isOnlineMode) setLiveConfig(null);
   }, [isOnlineMode]);
   useEffect(() => {
-    setLiveConfig(null);
+    if (!isOnlineMode) setControlRoomTab("services");
+  }, [isOnlineMode]);
+  useEffect(() => {
+    // Avoid carrying stale cross-tab mutation errors between control-room panels.
     setConfigUpdateError(null);
+  }, [controlRoomTab]);
+  useEffect(() => {
+    if (!configUpdateError) return;
+    // Clear stale mutation errors once the operator edits any runtime draft.
+    setConfigUpdateError(null);
+  }, [configUpdateError, serviceMixerDrafts, trafficConsoleDrafts, autoscalingPolicyDraft]);
+  useEffect(() => {
+    setLiveConfig(null);
+    setRuntimeConfigSeed(null);
+    setRuntimeConfigSeedNotice(null);
+    setServiceMixerDrafts({});
+    setTrafficConsoleDrafts({});
+    setAutoscalingPolicyDraft({});
+    setPendingServiceObservationById({});
+    setPendingTrafficObservationByPattern({});
+    setAutoscalingSubmitStatus("idle");
+    setLastLeaseRenewAttemptAtMs(null);
+    setRuntimeOps([]);
+    setConfigUpdateError(null);
+    setLeaseRenewStatus("idle");
+    setControlRoomTab("services");
   }, [runId]);
 
   // In online mode, seed default config so user can add services/workload and apply even before first optimization step
@@ -2838,6 +3249,14 @@ export default function SimulationRunPage() {
         const id = (s as { id?: string }).id;
         if (id && typeof id === "string") serviceIds.push(id);
       }
+    }
+    for (const service of runtimeConfigSeed?.services ?? []) {
+      const id = service.id || service.service_id;
+      if (id && typeof id === "string") serviceIds.push(id);
+    }
+    for (const workloadItem of runtimeConfigSeed?.workload ?? []) {
+      const key = workloadItem.pattern_key;
+      if (key && typeof key === "string") patternKeys.push(key);
     }
     // From scenario YAML (fallback when run doesn't include configuration)
     if (scenarioYaml) {
@@ -2874,7 +3293,271 @@ export default function SimulationRunPage() {
       patternKeys: Array.from(new Set(patternKeys)).sort(),
       serviceIds: Array.from(new Set(serviceIds)).sort(),
     };
-  }, [runInfo?.configuration, scenarioYaml]);
+  }, [runInfo?.configuration, scenarioYaml, runtimeConfigSeed]);
+
+  const onlineConfigModel: OnlineConfigModel = useMemo(() => {
+    const latestStepConfig =
+      [...optSteps].reverse().find((step) => step.current_config != null)?.current_config ?? null;
+    return buildOnlineConfigModel({
+      runMetadata:
+        runInfo?.metadata && typeof runInfo.metadata === "object"
+          ? (runInfo.metadata as Record<string, unknown>)
+          : null,
+      optimizationConfigMetadata:
+        runInfo?.metadata &&
+        typeof runInfo.metadata === "object" &&
+        (runInfo.metadata as Record<string, unknown>).optimization_config &&
+        typeof (runInfo.metadata as Record<string, unknown>).optimization_config === "object"
+          ? ((runInfo.metadata as Record<string, unknown>).optimization_config as Record<string, unknown>)
+          : null,
+      latestOptimizationConfig: latestStepConfig,
+      latestResources: placementSource.resources ?? null,
+      scenarioServiceIds: runDerivedOptions.serviceIds,
+      scenarioWorkloadPatternKeys: runDerivedOptions.patternKeys,
+      leaseState: {
+        autoRenewEnabled: status === "running" && isOnlineMode && leaseTtlMs != null,
+        lastRenewalStatus: leaseRenewStatus,
+        lastRenewalError: leaseRenewError,
+        nextRenewalAtMs: nextLeaseRenewAtRef.current,
+      },
+    });
+  }, [
+    optSteps,
+    runInfo?.metadata,
+    placementSource.resources,
+    runDerivedOptions.serviceIds,
+    runDerivedOptions.patternKeys,
+    status,
+    isOnlineMode,
+    leaseTtlMs,
+    leaseRenewStatus,
+    leaseRenewError,
+  ]);
+  useEffect(() => {
+    onlineConfigModelRef.current = onlineConfigModel;
+  }, [onlineConfigModel]);
+
+  const observedServicesById = useMemo<Record<string, ObservedServiceRuntime>>(() => {
+    const out: Record<string, ObservedServiceRuntime> = {};
+    const ensure = (id: string) => {
+      const key = id.trim();
+      if (!key) return;
+      if (!out[key]) out[key] = { id: key };
+    };
+    for (const id of runDerivedOptions.serviceIds) ensure(id);
+    for (const s of runInfo?.configuration?.services ?? []) {
+      if (typeof s.id === "string") ensure(s.id);
+    }
+    for (const s of runtimeConfigSeed?.services ?? []) {
+      const id = s.id || s.service_id;
+      if (typeof id === "string") ensure(id);
+      if (typeof id === "string" && typeof s.replicas === "number" && Number.isFinite(s.replicas)) out[id].replicas = s.replicas;
+      if (typeof id === "string" && typeof s.cpu_cores === "number" && Number.isFinite(s.cpu_cores)) out[id].cpu_cores = s.cpu_cores;
+      if (typeof id === "string" && typeof s.memory_mb === "number" && Number.isFinite(s.memory_mb)) out[id].memory_mb = s.memory_mb;
+    }
+    const latestStepServices =
+      [...optSteps].reverse().find((step) => Array.isArray(step.current_config?.services))?.current_config?.services ?? [];
+    for (const s of latestStepServices) {
+      if (typeof s.id !== "string") continue;
+      ensure(s.id);
+      if (typeof s.replicas === "number" && Number.isFinite(s.replicas)) out[s.id].replicas = s.replicas;
+      if (typeof s.cpu_cores === "number" && Number.isFinite(s.cpu_cores)) out[s.id].cpu_cores = s.cpu_cores;
+      if (typeof s.memory_mb === "number" && Number.isFinite(s.memory_mb)) out[s.id].memory_mb = s.memory_mb;
+    }
+    const resources = placementSource.resources;
+    const placementCounts: Record<string, number> = {};
+    for (const p of resources?.placements ?? []) {
+      if (!p.service_id) continue;
+      ensure(p.service_id);
+      placementCounts[p.service_id] = (placementCounts[p.service_id] ?? 0) + 1;
+    }
+    for (const s of resources?.services ?? []) {
+      ensure(s.service_id);
+      if (typeof s.replicas === "number" && Number.isFinite(s.replicas)) out[s.service_id].replicas = s.replicas;
+      if (typeof s.cpu_cores === "number" && Number.isFinite(s.cpu_cores)) out[s.service_id].cpu_cores = s.cpu_cores;
+      if (typeof s.memory_mb === "number" && Number.isFinite(s.memory_mb)) out[s.service_id].memory_mb = s.memory_mb;
+    }
+    for (const [id, count] of Object.entries(placementCounts)) {
+      if (out[id] && out[id].replicas == null) out[id].replicas = count;
+    }
+    for (const sm of displayMetrics?.metrics?.service_metrics ?? []) {
+      if (!sm.service_name) continue;
+      ensure(sm.service_name);
+      if (typeof sm.active_replicas === "number" && Number.isFinite(sm.active_replicas) && out[sm.service_name].replicas == null) {
+        out[sm.service_name].replicas = sm.active_replicas;
+      }
+      if (typeof sm.cpu_utilization === "number" && Number.isFinite(sm.cpu_utilization)) {
+        out[sm.service_name].cpu_utilization = sm.cpu_utilization;
+      }
+      if (typeof sm.memory_utilization === "number" && Number.isFinite(sm.memory_utilization)) {
+        out[sm.service_name].memory_utilization = sm.memory_utilization;
+      }
+    }
+    return out;
+  }, [runDerivedOptions.serviceIds, runInfo?.configuration?.services, runtimeConfigSeed?.services, optSteps, placementSource.resources, displayMetrics?.metrics?.service_metrics]);
+
+  useEffect(() => {
+    setPendingServiceObservationById((prev) => {
+      const next = { ...prev };
+      const now = Date.now();
+      for (const [id, target] of Object.entries(prev)) {
+        if (now - target.updatedAt > PENDING_OBSERVATION_MAX_AGE_MS) {
+          delete next[id];
+          continue;
+        }
+        const observed = observedServicesById[id];
+        if (!observed) continue;
+        const replicasMatch = observed.replicas === target.replicas;
+        const cpuMatch = target.cpu_cores == null || observed.cpu_cores === target.cpu_cores;
+        const memMatch = target.memory_mb == null || observed.memory_mb === target.memory_mb;
+        if (replicasMatch && cpuMatch && memMatch) delete next[id];
+      }
+      return next;
+    });
+  }, [observedServicesById]);
+
+  const observedTrafficByPattern = useMemo<Record<string, ObservedTrafficLane>>(() => {
+    const out: Record<string, ObservedTrafficLane> = {};
+    const ensure = (patternKey: string) => {
+      const key = patternKey.trim();
+      if (!key) return;
+      if (!out[key]) out[key] = { pattern_key: key };
+    };
+    for (const key of runDerivedOptions.patternKeys) ensure(key);
+    for (const w of runInfo?.configuration?.workload ?? []) {
+      if (typeof w.pattern_key !== "string") continue;
+      ensure(w.pattern_key);
+      if (typeof w.rate_rps === "number" && Number.isFinite(w.rate_rps)) {
+        out[w.pattern_key].observed_rate_rps = w.rate_rps;
+      }
+    }
+    for (const w of runtimeConfigSeed?.workload ?? []) {
+      if (typeof w.pattern_key !== "string") continue;
+      ensure(w.pattern_key);
+      if (typeof w.rate_rps === "number" && Number.isFinite(w.rate_rps)) {
+        out[w.pattern_key].observed_rate_rps = w.rate_rps;
+      }
+    }
+    const latestStepWorkload =
+      [...optSteps].reverse().find((step) => Array.isArray(step.current_config?.workload))?.current_config?.workload ?? [];
+    for (const w of latestStepWorkload) {
+      const record = asRecord(w);
+      if (!record) continue;
+      const patternKey = str(record.pattern_key);
+      const rateRps = num(record.rate_rps);
+      if (!patternKey) continue;
+      ensure(patternKey);
+      if (rateRps != null) out[patternKey].observed_rate_rps = rateRps;
+    }
+    return out;
+  }, [runDerivedOptions.patternKeys, runInfo?.configuration?.workload, runtimeConfigSeed?.workload, optSteps]);
+
+  useEffect(() => {
+    setPendingTrafficObservationByPattern((prev) => {
+      const next = { ...prev };
+      const now = Date.now();
+      for (const [patternKey, target] of Object.entries(prev)) {
+        if (now - target.updatedAt > PENDING_OBSERVATION_MAX_AGE_MS) {
+          delete next[patternKey];
+          continue;
+        }
+        const observed = observedTrafficByPattern[patternKey];
+        if (!observed || observed.observed_rate_rps == null) continue;
+        if (observed.observed_rate_rps === target.rate_rps) delete next[patternKey];
+      }
+      return next;
+    });
+  }, [observedTrafficByPattern]);
+
+  useEffect(() => {
+    const latestObservedAutoscaling = [...optSteps]
+      .reverse()
+      .map((step) => asRecord(step.current_config))
+      .map((cfg) => asRecord(cfg?.policies))
+      .map((policies) => asRecord(policies?.autoscaling))
+      .find((autoscaling) => autoscaling != null);
+    const now = Date.now();
+    setRuntimeOps((prev) => {
+      let changed = false;
+      const next = prev.map((op) => {
+        if (op.status !== "accepted") return op;
+        if (now - op.timestampMs > RUNTIME_OPERATION_STALE_MS) {
+          changed = true;
+          return { ...op, status: "stale" as RuntimeOperationStatus };
+        }
+        if (op.kind === "services") {
+          const payload = asRecord(op.payload);
+          const services = Array.isArray(payload?.services) ? payload.services : [];
+          const observed = services.every((svc) => {
+            const record = asRecord(svc);
+            if (!record) return false;
+            const id = str(record.id);
+            if (!id) return false;
+            const current = observedServicesById[id];
+            if (!current) return false;
+            const replicas = num(record.replicas);
+            const cpu = num(record.cpu_cores);
+            const mem = num(record.memory_mb);
+            if (replicas != null && current.replicas !== replicas) return false;
+            if (cpu != null && current.cpu_cores != null && current.cpu_cores !== cpu) return false;
+            if (mem != null && current.memory_mb != null && current.memory_mb !== mem) return false;
+            return true;
+          });
+          if (observed && services.length > 0) {
+            changed = true;
+            return { ...op, status: "observed" as RuntimeOperationStatus };
+          }
+          return op;
+        }
+        if (op.kind === "workload") {
+          const payload = asRecord(op.payload);
+          const rows = Array.isArray(payload?.workload)
+            ? payload.workload
+            : payload
+              ? [payload]
+              : [];
+          const observed = rows.every((row) => {
+            const record = asRecord(row);
+            if (!record) return false;
+            const key = str(record.pattern_key);
+            const rate = num(record.rate_rps);
+            if (!key || rate == null) return false;
+            const current = observedTrafficByPattern[key];
+            return current?.observed_rate_rps === rate;
+          });
+          if (observed && rows.length > 0) {
+            changed = true;
+            return { ...op, status: "observed" as RuntimeOperationStatus };
+          }
+          return op;
+        }
+        if (op.kind === "autoscaling") {
+          const payload = asRecord(op.payload);
+          const policies = asRecord(payload?.policies);
+          const autoscaling = asRecord(policies?.autoscaling);
+          if (!autoscaling || !latestObservedAutoscaling) return op;
+          const enabled = typeof autoscaling.enabled === "boolean" ? autoscaling.enabled : undefined;
+          const target = num(autoscaling.target_cpu_util);
+          const step = num(autoscaling.scale_step);
+          const obsEnabled = typeof latestObservedAutoscaling.enabled === "boolean" ? latestObservedAutoscaling.enabled : undefined;
+          const obsTarget = num(latestObservedAutoscaling.target_cpu_util);
+          const obsStep = num(latestObservedAutoscaling.scale_step);
+          const matches =
+            (enabled == null || obsEnabled === enabled) &&
+            (target == null || obsTarget === target) &&
+            (step == null || obsStep === step);
+          if (matches) {
+            changed = true;
+            return { ...op, status: "observed" as RuntimeOperationStatus };
+          }
+          return op;
+        }
+        if (op.kind === "lease") return op;
+        return op;
+      });
+      return changed ? next : prev;
+    });
+  }, [optSteps, observedServicesById, observedTrafficByPattern]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -2904,11 +3587,6 @@ export default function SimulationRunPage() {
         {stopError && (
           <span className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
             Stop failed: {stopError}
-          </span>
-        )}
-        {leaseRenewError && isOnlineMode && (
-          <span className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-            Lease renewal: {leaseRenewError}
           </span>
         )}
         {status === "pending" && (
@@ -3297,50 +3975,57 @@ export default function SimulationRunPage() {
         ) : null}
       </div>
 
-      {/* Dynamic updates — online mode only: PATCH configuration, PATCH workload, PUT run control */}
+      {/* Online Control Room — online mode only */}
       {isOnlineMode && (
         <div className="bg-card border border-border rounded-lg p-4 space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold text-white">Dynamic updates</h2>
-            <p className="text-xs text-white/40 mt-1">
-              Mid-run: PATCH configuration (services, workload, policies), PATCH workload (single rate), or end the run (PUT status).
-            </p>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Online Control Room</h2>
+              <p className="text-xs text-white/40 mt-1">Runtime controls, lease state, and locked creation settings.</p>
+            </div>
+            <div className="text-[10px] text-white/35 font-mono">run_id scoped · SSE-confirmed runtime state</div>
           </div>
           {configUpdateError && (
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
               {configUpdateError}
             </p>
           )}
-
-          {/* Run control — PUT /runs/:id (status) */}
-          <div className="rounded-lg border border-border bg-black/10 p-3 space-y-2">
-            <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Run control</h3>
-            <p className="text-xs text-white/50">End the online run. Status is sent via PUT /runs/:id.</p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => handleStop("completed")}
-                disabled={isStopping}
-                className="px-3 py-1.5 text-xs rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="End run and mark as successfully completed"
-              >
-                {isStopping ? "…" : "Complete run"}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleStop("cancelled")}
-                disabled={isStopping}
-                className="px-3 py-1.5 text-xs rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="Cancel / abort the run"
-              >
-                {isStopping ? "…" : "Cancel run"}
-              </button>
-            </div>
+          {runtimeConfigSeedNotice && (
+            <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+              {runtimeConfigSeedNotice}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: "services", label: "Services", icon: Settings2 },
+              { id: "traffic", label: "Traffic", icon: Route },
+              { id: "autoscaling", label: "Autoscaling", icon: SlidersHorizontal },
+              { id: "lease", label: "Lease", icon: Clock3 },
+              { id: "locked", label: "Locked Settings", icon: Lock },
+              { id: "change_log", label: "Change Log", icon: History },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = controlRoomTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setControlRoomTab(tab.id as typeof controlRoomTab)}
+                  className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs transition-colors ${
+                    active
+                      ? "border-white/30 bg-white/10 text-white"
+                      : "border-white/15 bg-black/20 text-white/65 hover:bg-white/5"
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
           {(() => {
             const config = liveConfig ?? DEFAULT_LIVE_CONFIG;
-            // Known service IDs: from run (GET response), scenario YAML, optimization steps, current config, and metrics
             const serviceIdsFromRun = new Set(runDerivedOptions.serviceIds);
             const serviceIdsFromSteps = new Set(
               optSteps.flatMap((step) => (step.current_config?.services ?? []).map((svc) => svc.id).filter(Boolean))
@@ -3352,7 +4037,6 @@ export default function SimulationRunPage() {
             const knownServiceIds = Array.from(
               new Set([...serviceIdsFromRun, ...serviceIdsFromSteps, ...serviceIdsFromConfig, ...serviceIdsFromMetrics])
             ).sort();
-            // Known workload pattern keys: from run (GET response), scenario YAML, optimization steps, and current config
             const patternKeysFromRun = new Set(runDerivedOptions.patternKeys);
             const patternKeysFromSteps = new Set(
               optSteps.flatMap((step) => {
@@ -3369,396 +4053,1254 @@ export default function SimulationRunPage() {
               new Set([...patternKeysFromRun, ...patternKeysFromSteps, ...patternKeysFromConfig])
             ).sort();
 
-            const servicesValid = config.services.length > 0 && config.services.every((s) => (s.id ?? "").toString().trim() !== "");
-            const workloadValid =
-              config.workload.length > 0 &&
-              config.workload.every((w) => (w.pattern_key ?? "").toString().trim() !== "" && (w.rate_rps ?? 0) > 0);
+            const latestObservedAutoscaling = [...optSteps]
+              .reverse()
+              .map((step) => asRecord(step.current_config))
+              .map((cfg) => asRecord(cfg?.policies))
+              .map((policies) => asRecord(policies?.autoscaling))
+              .find((autoscaling) => autoscaling != null);
+            const baselineAutoscaling = {
+              enabled:
+                typeof latestObservedAutoscaling?.enabled === "boolean"
+                  ? latestObservedAutoscaling.enabled
+                  : Boolean(config.policies?.autoscaling?.enabled ?? false),
+              target_cpu_util:
+                num(latestObservedAutoscaling?.target_cpu_util) ??
+                num(config.policies?.autoscaling?.target_cpu_util) ??
+                70,
+              scale_step:
+                num(latestObservedAutoscaling?.scale_step) ??
+                num(config.policies?.autoscaling?.scale_step) ??
+                1,
+            };
+            const baselineTargetCpuPercent =
+              baselineAutoscaling.target_cpu_util <= 1
+                ? baselineAutoscaling.target_cpu_util * 100
+                : baselineAutoscaling.target_cpu_util;
+            const autoscaling = {
+              enabled:
+                typeof autoscalingPolicyDraft.enabled === "boolean"
+                  ? autoscalingPolicyDraft.enabled
+                  : baselineAutoscaling.enabled,
+              target_cpu_util:
+                typeof autoscalingPolicyDraft.target_cpu_util === "number"
+                  ? autoscalingPolicyDraft.target_cpu_util
+                  : baselineTargetCpuPercent,
+              scale_step:
+                typeof autoscalingPolicyDraft.scale_step === "number"
+                  ? autoscalingPolicyDraft.scale_step
+                  : baselineAutoscaling.scale_step,
+            };
+            const targetCpuPercent = autoscaling.target_cpu_util;
+            const autoscalingDirty =
+              (autoscalingPolicyDraft.enabled ?? undefined) !== undefined && autoscaling.enabled !== baselineAutoscaling.enabled ||
+              (autoscalingPolicyDraft.target_cpu_util ?? undefined) !== undefined && autoscaling.target_cpu_util !== baselineTargetCpuPercent ||
+              (autoscalingPolicyDraft.scale_step ?? undefined) !== undefined && autoscaling.scale_step !== baselineAutoscaling.scale_step;
+            const autoscalingDraftForPatch: AutoscalingPolicyDraft = {
+              enabled: autoscaling.enabled,
+              target_cpu_util: autoscaling.target_cpu_util,
+              scale_step: autoscaling.scale_step,
+            };
+            const autoscalingValidation = buildPoliciesPatchPayloadFromModel(onlineConfigModel, {
+              autoscaling: {
+                enabled: autoscalingDraftForPatch.enabled ?? false,
+                target_cpu_util: autoscalingDraftForPatch.target_cpu_util,
+                scale_step: autoscalingDraftForPatch.scale_step,
+              },
+            });
+            const autoscalingRowError = autoscalingDirty && !autoscalingValidation.ok ? autoscalingValidation.error : undefined;
+            const cpuUtilPercentValues = (displayMetrics?.metrics?.service_metrics ?? [])
+              .map((sm) => {
+                if (!hasNumber(sm.cpu_utilization)) return undefined;
+                return sm.cpu_utilization <= 1 ? sm.cpu_utilization * 100 : sm.cpu_utilization;
+              })
+              .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+            const avgServiceCpuUtilPct =
+              cpuUtilPercentValues.length > 0
+                ? cpuUtilPercentValues.reduce((sum, value) => sum + value, 0) / cpuUtilPercentValues.length
+                : undefined;
+            const maxServiceCpuUtilPct =
+              cpuUtilPercentValues.length > 0
+                ? Math.max(...cpuUtilPercentValues)
+                : undefined;
+            const servicesAboveTargetCount = cpuUtilPercentValues.filter((value) => value > targetCpuPercent).length;
+            const cpuTargetDelta = avgServiceCpuUtilPct != null ? avgServiceCpuUtilPct - targetCpuPercent : undefined;
+            const cpuTargetStatus =
+              cpuTargetDelta == null
+                ? "No live CPU data"
+                : cpuTargetDelta > 5
+                  ? "above target"
+                  : cpuTargetDelta < -5
+                    ? "below target"
+                    : "near target";
+
+            const lockedFields = onlineConfigModel.byGroup.createTimeLocked;
+            const lockedFieldByKey = Object.fromEntries(lockedFields.map((field) => [field.key, field]));
+            const lockedBaseGroupKeys: Array<{ id: string; title: string; keys: string[] }> = [
+              {
+                id: "mode",
+                title: "Mode",
+                keys: ["mode", "objective", "real_time_mode", "optimization.online", "optimization_target_primary"],
+              },
+              {
+                id: "latency",
+                title: "Latency / controller loop",
+                keys: ["target_p95_latency_ms", "control_interval_ms"],
+              },
+              {
+                id: "host_bounds",
+                title: "Host bounds",
+                keys: ["min_hosts", "max_hosts"],
+              },
+              {
+                id: "util_targets",
+                title: "Utilization targets",
+                keys: ["target_util_high", "target_util_low"],
+              },
+              {
+                id: "scale_down_guardrails",
+                title: "Scale-down guardrails",
+                keys: [
+                  "scale_down_cpu_util_max",
+                  "scale_down_mem_util_max",
+                  "scale_down_host_cpu_util_max",
+                  "scale_down_cooldown_ms",
+                  "drain_timeout_ms",
+                  "memory_downsize_headroom_mb",
+                ],
+              },
+              {
+                id: "run_limits",
+                title: "Run limits / lease",
+                keys: [
+                  "max_controller_steps",
+                  "max_online_duration_ms",
+                  "allow_unbounded_online",
+                  "max_noop_intervals",
+                  "lease_ttl_ms",
+                ],
+              },
+            ];
+            const canonicalTopologyKeys = [
+              "min_locality_hit_rate",
+              "max_cross_zone_request_fraction",
+              "max_topology_latency_penalty_mean_ms",
+            ];
+            const discoveredTopologyKeys = lockedFields
+              .map((field) => field.key)
+              .filter((key) =>
+                /(topology|locality|zone|guardrail|penalty|cross_zone|min_locality)/i.test(key)
+              )
+              .filter((key, index, array) => array.indexOf(key) === index)
+              .sort((a, b) => a.localeCompare(b));
+            const topologyKeys = Array.from(
+              new Set([...canonicalTopologyKeys, ...discoveredTopologyKeys])
+            );
+            const lockedGroups = [
+              ...lockedBaseGroupKeys,
+              { id: "topology", title: "Topology guardrails", keys: topologyKeys },
+            ];
+            const formatLockedFieldValue = (key: string, value: unknown): string => {
+              if (value == null) return "Unavailable";
+              if (typeof value === "boolean") return value ? "true" : "false";
+              if (typeof value === "number" && Number.isFinite(value)) {
+                if (/(util|rate|fraction|hit_rate)/i.test(key)) {
+                  const pct = value <= 1 ? value * 100 : value;
+                  return `${pct.toFixed(1)}%`;
+                }
+                if (/_ms$/i.test(key)) return `${value.toLocaleString()} ms`;
+                if (/(^|_)mb$/i.test(key)) {
+                  return `${value.toLocaleString()} MB`;
+                }
+                if (Number.isInteger(value)) return value.toLocaleString();
+                return value.toFixed(2);
+              }
+              if (typeof value === "string") return value.trim() !== "" ? value : "Unavailable";
+              if (Array.isArray(value)) return value.length ? JSON.stringify(value) : "Unavailable";
+              if (typeof value === "object") return JSON.stringify(value);
+              return String(value);
+            };
+            const observedAndDraftServiceIds = Array.from(
+              new Set([...Object.keys(observedServicesById), ...Object.keys(serviceMixerDrafts)])
+            ).sort((a, b) => a.localeCompare(b));
+            const serviceReplicaHints = Object.fromEntries(
+              Object.values(observedServicesById).map((s) => [s.id, s.replicas])
+            );
+            const dirtyInvalidServiceIds = observedAndDraftServiceIds.filter((serviceId) => {
+              const observed = observedServicesById[serviceId] ?? { id: serviceId };
+              const draft = serviceMixerDrafts[serviceId] ?? {};
+              const draftId = (draft.id ?? observed.id).toString().trim();
+              const effectiveReplicas = draft.replicas ?? observed.replicas;
+              const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+              const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+              const dirty =
+                (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+              if (!dirty) return false;
+              const rowDraft: RuntimeServiceDraft = {
+                id: draftId || observed.id,
+                replicas: effectiveReplicas,
+                cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+              };
+              const rowValidation = buildServicePatchPayloadFromModel(onlineConfigModel, [rowDraft], serviceReplicaHints);
+              return !rowValidation.ok;
+            });
+            const dirtyInvalidCount = dirtyInvalidServiceIds.length;
+            const observedAndDraftPatternKeys = Array.from(
+              new Set([...Object.keys(observedTrafficByPattern), ...Object.keys(trafficConsoleDrafts)])
+            ).sort((a, b) => a.localeCompare(b));
+            const dirtyInvalidTrafficKeys = observedAndDraftPatternKeys.filter((patternKey) => {
+              const observed = observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey };
+              const draft = trafficConsoleDrafts[patternKey] ?? {};
+              const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+              const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+              const dirty =
+                (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+              if (!dirty) return false;
+              const rowDraft: PatchRunConfigurationWorkloadItem = {
+                pattern_key: draftPatternKey || observed.pattern_key,
+                rate_rps: effectiveRate ?? 0,
+              };
+              const rowValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, [rowDraft]);
+              return !rowValidation.ok;
+            });
+            const dirtyInvalidTrafficCount = dirtyInvalidTrafficKeys.length;
+            const liveThroughputRps = num(displayMetrics?.summary?.throughput_rps);
+            const liveRequestCount =
+              num(displayMetrics?.summary?.request_count) ??
+              num(displayMetrics?.summary?.total_requests);
+            const leaseAutoRenewEnabled = status === "running" && isOnlineMode && leaseTtlMs != null;
+            const leaseNextRenewInSeconds =
+              nextLeaseRenewAtRef.current != null
+                ? Math.max(0, Math.ceil((nextLeaseRenewAtRef.current - leaseClockNowMs) / 1000))
+                : undefined;
+            const formatRuntimeOpTime = (timestampMs: number) =>
+              new Date(timestampMs).toISOString().substring(11, 19);
+            const controllerChangeLogEntries = [...optSteps]
+              .sort((a, b) => (b.iteration_index ?? Number.MIN_SAFE_INTEGER) - (a.iteration_index ?? Number.MIN_SAFE_INTEGER))
+              .map((step, index) => {
+                const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
+                const blocked = isOptimizerStepBlocked(step);
+                return {
+                  id: `controller-${step.iteration_index ?? "na"}-${index}`,
+                  source: "controller" as const,
+                  status: blocked ? "stale" as RuntimeOperationStatus : "accepted" as RuntimeOperationStatus,
+                  timestampMs: -1,
+                  iteration: step.iteration_index,
+                  summary: step.reason ?? "optimizer_step",
+                  details: {
+                    target_p95_ms: step.target_p95_ms,
+                    score_p95_ms: step.score_p95_ms,
+                    diffLines,
+                    previous_config: step.previous_config,
+                    current_config: step.current_config,
+                  },
+                  hasError: false,
+                };
+              });
+            const manualChangeLogEntries = runtimeOps.map((op) => ({
+              id: op.id,
+              source: (op.kind === "lease" ? "lease" : op.kind === "run_control" ? "run" : "manual") as "manual" | "lease" | "run",
+              status: op.status,
+              timestampMs: op.timestampMs,
+              iteration: undefined as number | undefined,
+              summary: op.summary,
+              details: {
+                method: op.method,
+                endpoint: op.endpoint,
+                payload: op.payload,
+                kind: op.kind,
+                errorText: op.errorText,
+              },
+              hasError: op.status === "rejected" || Boolean(op.errorText),
+            }));
+            const unifiedChangeLogEntries = [...manualChangeLogEntries, ...controllerChangeLogEntries]
+              .filter((entry) => {
+                if (changeLogFilter === "all") return true;
+                if (changeLogFilter === "manual") return entry.source !== "controller";
+                if (changeLogFilter === "controller") return entry.source === "controller";
+                if (changeLogFilter === "errors") return entry.hasError;
+                return true;
+              })
+              .sort((a, b) => {
+                if (a.timestampMs >= 0 && b.timestampMs >= 0) return b.timestampMs - a.timestampMs;
+                if (a.timestampMs >= 0) return -1;
+                if (b.timestampMs >= 0) return 1;
+                const ai = typeof a.iteration === "number" ? a.iteration : Number.MIN_SAFE_INTEGER;
+                const bi = typeof b.iteration === "number" ? b.iteration : Number.MIN_SAFE_INTEGER;
+                return bi - ai;
+              })
+              .slice(0, 40);
+            const servicePreviewRows = observedAndDraftServiceIds
+              .map((serviceId) => {
+                const observed = observedServicesById[serviceId] ?? { id: serviceId };
+                const draft = serviceMixerDrafts[observed.id] ?? {};
+                const draftId = (draft.id ?? observed.id ?? "").toString().trim();
+                const effectiveReplicas = draft.replicas ?? observed.replicas;
+                const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+                const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+                const dirty =
+                  (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                  draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                  draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                  draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                if (!dirty) return null;
+                return {
+                  id: draftId || observed.id,
+                  replicas: effectiveReplicas,
+                  cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                  memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+                };
+              })
+              .filter((row): row is NonNullable<typeof row> => row != null);
+            const servicePreviewValidation = buildServicePatchPayloadFromModel(
+              onlineConfigModel,
+              servicePreviewRows,
+              serviceReplicaHints
+            );
+            const trafficPreviewRows: PatchRunConfigurationWorkloadItem[] = observedAndDraftPatternKeys
+              .map((patternKey) => {
+                const observed = observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey };
+                const draft = trafficConsoleDrafts[patternKey] ?? {};
+                const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+                const dirty =
+                  (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                  draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                if (!dirty) return null;
+                return {
+                  pattern_key: draftPatternKey || observed.pattern_key,
+                  rate_rps: effectiveRate ?? 0,
+                };
+              })
+              .filter((row): row is PatchRunConfigurationWorkloadItem => row != null);
+            const trafficPreviewValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, trafficPreviewRows);
+            const trafficPreviewIsSingle = trafficPreviewValidation.ok && trafficPreviewValidation.value.length === 1;
 
             return (
-            <>
-              {/* Services — PATCH /runs/:id/configuration */}
-              <div>
-                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
-                  <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setLiveConfig((prev) => {
-                        const c = prev ?? DEFAULT_LIVE_CONFIG;
-                        const firstId = knownServiceIds[0] ?? "";
-                        return { ...c, services: [...c.services, { id: firstId, replicas: 1 }] };
-                      })}
-                      className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add service
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyServices}
-                      disabled={configUpdateLoading || !servicesValid}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      title={!servicesValid && config.services.length > 0 ? "Set Service ID for every row" : undefined}
-                    >
-                      {configUpdateLoading ? "Applying…" : "Apply services"}
-                    </button>
-                  </div>
-                </div>
-                {config.services.length === 0 ? (
-                  <p className="text-xs text-white/30 italic">No services. Add one to update via PATCH /configuration.</p>
-                ) : (
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full text-xs font-mono">
-                      <thead>
-                        <tr className="border-b border-border bg-white/5 text-white/40 text-left">
-                          <th className="px-3 py-2 font-medium">Service ID</th>
-                          <th className="px-3 py-2 font-medium">Replicas</th>
-                          <th className="px-3 py-2 font-medium">CPU cores</th>
-                          <th className="px-3 py-2 font-medium">Mem (MB)</th>
-                          <th className="px-3 py-2 w-8" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {config.services.map((s, i) => {
-                          const options = [...knownServiceIds];
-                          if (s.id && !options.includes(s.id)) options.push(s.id);
-                          options.sort();
-                          return (
-                          <tr key={`${s.id}-${i}`} className="border-b border-border/50">
-                            <td className="px-3 py-2">
-                              <select
-                                value={s.id ?? ""}
-                                onChange={(e) =>
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, id: e.target.value } : svc
-                                      ),
-                                    };
-                                  })
-                                }
-                                className="w-28 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs focus:outline-none focus:ring-1 focus:ring-white/30"
-                              >
-                                {options.length === 0 && (
-                                  <option value="">Select…</option>
-                                )}
-                                {options.map((id) => (
-                                  <option key={id} value={id}>
-                                    {id || "(empty)"}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                min={0}
-                                step={1}
-                                value={s.replicas ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, replicas: Number.isFinite(v) ? v : undefined } : svc
-                                      ),
-                                    };
-                                  });
-                                }}
-                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                min={0}
-                                step={0.1}
-                                value={s.cpu_cores ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, cpu_cores: Number.isFinite(v) ? v : undefined } : svc
-                                      ),
-                                    };
-                                  });
-                                }}
-                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                min={0}
-                                step={1}
-                                value={s.memory_mb ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.map((svc, j) =>
-                                        j === i ? { ...svc, memory_mb: Number.isFinite(v) ? v : undefined } : svc
-                                      ),
-                                    };
-                                  });
-                                }}
-                                className="w-20 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setLiveConfig((prev) => {
-                                    const c = prev ?? DEFAULT_LIVE_CONFIG;
-                                    return {
-                                      ...c,
-                                      services: c.services.filter((_, j) => j !== i),
-                                    };
-                                  })
-                                }
-                                className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                                title="Remove row"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Workload — PATCH /configuration or PATCH /workload (single pattern) */}
-              <div>
-                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Workload</h3>
-                  <span className="text-[10px] text-white/30 font-mono">PATCH /workload or /configuration</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setLiveConfig((prev) => {
-                        const c = prev ?? DEFAULT_LIVE_CONFIG;
-                        const firstKey = knownPatternKeys[0] ?? "";
-                        return { ...c, workload: [...c.workload, { pattern_key: firstKey, rate_rps: 1 }] };
-                      })}
-                      className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add pattern
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyWorkload}
-                      disabled={configUpdateLoading || !workloadValid}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      title={!workloadValid && config.workload.length > 0 ? "Set pattern and rate > 0 for every row" : undefined}
-                    >
-                      {configUpdateLoading ? "Applying…" : "Apply workload"}
-                    </button>
-                  </div>
-                </div>
-                {config.workload.length === 0 ? (
-                  <p className="text-xs text-white/30 italic">No workload patterns. Add one to update via PATCH /workload or /configuration.</p>
-                ) : (
+              <>
+                {controlRoomTab === "services" && (
                   <div className="space-y-2">
-                    {config.workload.map((w, i) => {
-                      const patternOptions = [...knownPatternKeys];
-                      if (w.pattern_key && !patternOptions.includes(w.pattern_key)) patternOptions.push(w.pattern_key);
-                      patternOptions.sort();
-                      return (
-                      <div key={`${w.pattern_key}-${i}`} className="flex items-center gap-3 flex-wrap">
-                        <select
-                          value={w.pattern_key}
-                          onChange={(e) =>
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                workload: c.workload.map((item, j) =>
-                                  j === i ? { ...item, pattern_key: e.target.value } : item
-                                ),
-                              };
-                            })
-                          }
-                          className="w-36 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs focus:outline-none focus:ring-1 focus:ring-white/30"
-                        >
-                          {patternOptions.length === 0 && (
-                            <option value="">Select…</option>
-                          )}
-                          {patternOptions.map((key) => (
-                            <option key={key} value={key}>
-                              {key || "(empty)"}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          min={0.01}
-                          step={0.1}
-                          value={w.rate_rps}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value);
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                workload: c.workload.map((item, j) =>
-                                  j === i ? { ...item, rate_rps: Number.isFinite(v) ? v : 0 } : item
-                                ),
-                              };
-                            });
-                          }}
-                          className="w-24 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                          placeholder="RPS"
-                        />
-                        <span className="text-xs text-white/40">RPS</span>
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
+                      <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() =>
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                workload: c.workload.filter((_, j) => j !== i),
-                              };
-                            })
-                          }
-                          className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                          title="Remove pattern"
+                          onClick={() => {
+                            const candidate =
+                              knownServiceIds.find((id): id is string => typeof id === "string" && !serviceMixerDrafts[id]) ??
+                              (typeof knownServiceIds[0] === "string" ? knownServiceIds[0] : undefined);
+                            if (!candidate) return;
+                            setServiceMixerDrafts((prev) => ({ ...prev, [candidate]: { id: candidate, replicas: 1 } }));
+                          }}
+                          className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Plus className="w-3.5 h-3.5" /> Add service
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const observedServices = observedAndDraftServiceIds.map((serviceId) => observedServicesById[serviceId] ?? { id: serviceId });
+                            const replicasById: Record<string, number | undefined> = {};
+                            for (const svc of observedServices) replicasById[svc.id] = svc.replicas;
+                            const changedRows: RuntimeServiceDraft[] = [];
+                            const pendingTargets: Record<string, { replicas: number; cpu_cores?: number; memory_mb?: number }> = {};
+                            const invalidDirtyRows: string[] = [];
+                            for (const observed of observedServices) {
+                              const draft = serviceMixerDrafts[observed.id] ?? {};
+                              const draftId = (draft.id ?? observed.id ?? "").toString().trim();
+                              const effectiveReplicas = draft.replicas ?? observed.replicas;
+                              const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+                              const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+                              const dirty =
+                                (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                                draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                                draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                                draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                              if (!dirty) continue;
+                              const row: RuntimeServiceDraft = {
+                                id: draftId || observed.id,
+                                replicas: effectiveReplicas,
+                                cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                                memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+                              };
+                              const rowValidation = buildServicePatchPayloadFromModel(onlineConfigModel, [row], replicasById);
+                              if (!rowValidation.ok) {
+                                invalidDirtyRows.push(observed.id);
+                                continue;
+                              }
+                              changedRows.push(row);
+                              if (typeof row.id === "string" && row.id.trim() !== "" && typeof row.replicas === "number") {
+                                pendingTargets[row.id] = {
+                                  replicas: row.replicas,
+                                  cpu_cores: row.cpu_cores,
+                                  memory_mb: row.memory_mb,
+                                };
+                              }
+                            }
+                            if (invalidDirtyRows.length > 0) return;
+                            if (changedRows.length === 0) return;
+                            const ok = await applyServices(changedRows, replicasById, pendingTargets);
+                            if (ok) {
+                              setServiceMixerDrafts((prev) => {
+                                const next = { ...prev };
+                                for (const observed of observedServices) {
+                                  const draft = prev[observed.id];
+                                  if (!draft) continue;
+                                  const draftId = (draft.id ?? observed.id ?? "").toString().trim();
+                                  const dirty =
+                                    (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                                    draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                                    draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                                    draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                                  if (dirty) delete next[observed.id];
+                                }
+                                return next;
+                              });
+                            }
+                          }}
+                          disabled={configUpdateLoading || dirtyInvalidCount > 0}
+                          title={dirtyInvalidCount > 0 ? "Fix invalid dirty service rows before bulk apply." : undefined}
+                          className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {configUpdateLoading ? "Applying…" : "Apply changed services"}
                         </button>
                       </div>
-                      );
-                    })}
+                    </div>
+                    {dirtyInvalidCount > 0 && (
+                      <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                        Fix invalid dirty rows before bulk apply: {dirtyInvalidServiceIds.join(", ")}
+                      </p>
+                    )}
+                    {servicePreviewRows.length > 0 && (
+                      <details className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                        <summary className="text-[11px] text-white/65 cursor-pointer">
+                          Patch Preview · PATCH /api/v1/simulation/runs/:runId/configuration · services
+                        </summary>
+                        <p className="text-[10px] text-white/45 mt-1">
+                          {servicePreviewValidation.ok ? `Valid · ${servicePreviewValidation.value.length} row(s)` : `Invalid · ${servicePreviewValidation.error}`}
+                        </p>
+                        <pre className="mt-1 text-[10px] text-white/70 overflow-x-auto font-mono">{JSON.stringify(
+                          servicePreviewValidation.ok ? { services: servicePreviewValidation.value } : { services: servicePreviewRows },
+                          null,
+                          2
+                        )}</pre>
+                      </details>
+                    )}
+                    {observedAndDraftServiceIds.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No services observed yet. Waiting for runtime state or scenario fallback.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {observedAndDraftServiceIds.map((serviceId) => {
+                            const observed = observedServicesById[serviceId] ?? { id: serviceId };
+                            const draft = serviceMixerDrafts[observed.id] ?? {};
+                            const draftId = (draft.id ?? observed.id).toString().trim();
+                            const effectiveReplicas = draft.replicas ?? observed.replicas;
+                            const effectiveCpu = draft.cpu_cores ?? observed.cpu_cores;
+                            const effectiveMem = draft.memory_mb ?? observed.memory_mb;
+                            const dirty =
+                              (draft.id ?? undefined) !== undefined && draftId !== observed.id ||
+                              draft.replicas !== undefined && draft.replicas !== observed.replicas ||
+                              draft.cpu_cores !== undefined && draft.cpu_cores !== observed.cpu_cores ||
+                              draft.memory_mb !== undefined && draft.memory_mb !== observed.memory_mb;
+                            const rowDraft: RuntimeServiceDraft = {
+                              id: draftId || observed.id,
+                              replicas: effectiveReplicas,
+                              cpu_cores: draft.cpu_cores !== undefined ? effectiveCpu : undefined,
+                              memory_mb: draft.memory_mb !== undefined ? effectiveMem : undefined,
+                            };
+                            const rowValidation = buildServicePatchPayloadFromModel(
+                              onlineConfigModel,
+                              [rowDraft],
+                              serviceReplicaHints
+                            );
+                            const rowError = dirty && !rowValidation.ok ? rowValidation.error : undefined;
+                            const pending = pendingServiceObservationById[draftId] ?? pendingServiceObservationById[observed.id];
+                            const cpuUtilPct =
+                              typeof observed.cpu_utilization === "number"
+                                ? observed.cpu_utilization <= 1
+                                  ? observed.cpu_utilization * 100
+                                  : observed.cpu_utilization
+                                : undefined;
+                            const memUtilPct =
+                              typeof observed.memory_utilization === "number"
+                                ? observed.memory_utilization <= 1
+                                  ? observed.memory_utilization * 100
+                                  : observed.memory_utilization
+                                : undefined;
+                            return (
+                              <div key={observed.id} className="rounded border border-border bg-black/20 p-2 space-y-2">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-mono text-white">{observed.id}</span>
+                                    {dirty && (
+                                      <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                                        Dirty
+                                      </span>
+                                    )}
+                                    {pending && (
+                                      <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                                        Pending observation
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const ok = await applyServices(
+                                          [rowDraft],
+                                          { [observed.id]: observed.replicas },
+                                          typeof rowDraft.id === "string" && rowDraft.id.trim() && typeof rowDraft.replicas === "number"
+                                            ? {
+                                                [rowDraft.id]: {
+                                                  replicas: rowDraft.replicas,
+                                                  cpu_cores: rowDraft.cpu_cores,
+                                                  memory_mb: rowDraft.memory_mb,
+                                                },
+                                              }
+                                            : undefined
+                                        );
+                                        if (ok) {
+                                          setServiceMixerDrafts((prev) => {
+                                            const next = { ...prev };
+                                            delete next[observed.id];
+                                            return next;
+                                          });
+                                        }
+                                      }}
+                                      disabled={configUpdateLoading || Boolean(rowError) || !dirty}
+                                      className="px-2 py-1 text-xs rounded border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50"
+                                    >
+                                      Apply
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setServiceMixerDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[observed.id];
+                                          return next;
+                                        })
+                                      }
+                                      className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors"
+                                      title="Reset draft"
+                                    >
+                                      <RefreshCw className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                  <label className="text-[11px] text-white/60">
+                                    Service ID
+                                    <input
+                                      value={draft.id ?? observed.id}
+                                      onChange={(e) =>
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), id: e.target.value },
+                                        }))
+                                      }
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </label>
+                                  <label className="text-[11px] text-white/60">
+                                    Replicas (obs: {observed.replicas ?? "—"})
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      value={draft.replicas ?? (observed.replicas ?? "")}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseInt(e.target.value, 10);
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), replicas: Number.isFinite(v) ? v : undefined },
+                                        }));
+                                      }}
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </label>
+                                  <label className="text-[11px] text-white/60">
+                                    CPU cores (obs: {observed.cpu_cores ?? "—"})
+                                    <input
+                                      type="number"
+                                      min={0.1}
+                                      step={0.1}
+                                      value={draft.cpu_cores ?? (observed.cpu_cores ?? "")}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), cpu_cores: Number.isFinite(v) ? v : undefined },
+                                        }));
+                                      }}
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </label>
+                                  <label className="text-[11px] text-white/60">
+                                    Memory MB (obs: {observed.memory_mb ?? "—"})
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      value={draft.memory_mb ?? (observed.memory_mb ?? "")}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                        setServiceMixerDrafts((prev) => ({
+                                          ...prev,
+                                          [observed.id]: { ...(prev[observed.id] ?? {}), memory_mb: Number.isFinite(v) ? v : undefined },
+                                        }));
+                                      }}
+                                      className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                    />
+                                  </label>
+                                </div>
+                                <div className="flex flex-wrap gap-3 text-[11px] text-white/50">
+                                  <span>CPU util: {cpuUtilPct != null ? `${cpuUtilPct.toFixed(1)}%` : "—"}</span>
+                                  <span>Mem util: {memUtilPct != null ? `${memUtilPct.toFixed(1)}%` : "—"}</span>
+                                </div>
+                                {rowError && <p className="text-[11px] text-red-300">{rowError}</p>}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
 
-              {/* Policies — PATCH /configuration */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Policies</h3>
-                  <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
-                  <button
-                    type="button"
-                    onClick={applyPolicies}
-                    disabled={configUpdateLoading}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {configUpdateLoading ? "Applying…" : "Apply policies"}
-                  </button>
-                </div>
-                {(() => {
-                  const autoscaling = config.policies?.autoscaling ?? {
-                    enabled: false,
-                    target_cpu_util: 70,
-                    scale_step: 1,
-                  };
-                  return (
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="flex items-center gap-2 text-xs text-white/70">
-                        <input
-                          type="checkbox"
-                          checked={autoscaling.enabled}
-                          onChange={(e) =>
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                policies: {
-                                  autoscaling: {
-                                    ...(c.policies?.autoscaling ?? {
-                                      enabled: false,
-                                      target_cpu_util: 70,
-                                      scale_step: 1,
-                                    }),
-                                    enabled: e.target.checked,
-                                  },
-                                },
-                              };
-                            })
-                          }
-                          className="rounded border-white/20"
-                        />
-                        Autoscaling enabled
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-white/70">
-                        Target CPU %
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={autoscaling.target_cpu_util ?? 70}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10);
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                policies: {
-                                  autoscaling: {
-                                    ...(c.policies?.autoscaling ?? {
-                                      enabled: false,
-                                      target_cpu_util: 70,
-                                      scale_step: 1,
-                                    }),
-                                    target_cpu_util: Number.isFinite(v) ? v : 70,
-                                  },
-                                },
-                              };
-                            });
+                {controlRoomTab === "traffic" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Traffic</h3>
+                      <span className="text-[10px] text-white/30 font-mono">PATCH /workload or /configuration</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const candidate =
+                              knownPatternKeys.find((key): key is string => typeof key === "string" && !trafficConsoleDrafts[key]) ??
+                              (typeof knownPatternKeys[0] === "string" ? knownPatternKeys[0] : undefined);
+                            if (!candidate) return;
+                            setTrafficConsoleDrafts((prev) => ({ ...prev, [candidate]: { pattern_key: candidate, rate_rps: 1 } }));
                           }}
-                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-white/70">
-                        Scale step
-                        <input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={autoscaling.scale_step ?? 1}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10);
-                            setLiveConfig((prev) => {
-                              const c = prev ?? DEFAULT_LIVE_CONFIG;
-                              return {
-                                ...c,
-                                policies: {
-                                  autoscaling: {
-                                    ...(c.policies?.autoscaling ?? {
-                                      enabled: false,
-                                      target_cpu_util: 70,
-                                      scale_step: 1,
-                                    }),
-                                    scale_step: Number.isFinite(v) && v >= 1 ? v : 1,
-                                  },
-                                },
+                          className="px-2 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add pattern
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const observedLanes = observedAndDraftPatternKeys.map((patternKey) => observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey });
+                            const changedRows: PatchRunConfigurationWorkloadItem[] = [];
+                            const pendingTargets: Record<string, { rate_rps: number }> = {};
+                            const invalidDirtyRows: string[] = [];
+                            for (const observed of observedLanes) {
+                              const draft = trafficConsoleDrafts[observed.pattern_key] ?? {};
+                              const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                              const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+                              const dirty =
+                                (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                                draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                              if (!dirty) continue;
+                              const row: PatchRunConfigurationWorkloadItem = {
+                                pattern_key: draftPatternKey || observed.pattern_key,
+                                rate_rps: effectiveRate ?? 0,
                               };
-                            });
+                              const rowValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, [row]);
+                              if (!rowValidation.ok) {
+                                invalidDirtyRows.push(observed.pattern_key);
+                                continue;
+                              }
+                              changedRows.push(row);
+                              if (row.pattern_key && typeof row.rate_rps === "number" && row.rate_rps > 0) {
+                                pendingTargets[row.pattern_key] = { rate_rps: row.rate_rps };
+                              }
+                            }
+                            if (invalidDirtyRows.length > 0 || changedRows.length === 0) return;
+                            const ok = await applyWorkload(changedRows, pendingTargets);
+                            if (ok) {
+                              setTrafficConsoleDrafts((prev) => {
+                                const next = { ...prev };
+                                for (const observed of observedLanes) {
+                                  const draft = prev[observed.pattern_key];
+                                  if (!draft) continue;
+                                  const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                                  const dirty =
+                                    (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                                    draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                                  if (dirty) delete next[observed.pattern_key];
+                                }
+                                return next;
+                              });
+                            }
                           }}
-                          className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
-                        />
-                      </label>
+                          disabled={configUpdateLoading || dirtyInvalidTrafficCount > 0}
+                          title={dirtyInvalidTrafficCount > 0 ? "Fix invalid dirty traffic rows before bulk apply." : undefined}
+                          className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {configUpdateLoading ? "Applying…" : "Apply changed traffic"}
+                        </button>
+                      </div>
                     </div>
-                  );
-                })()}
-              </div>
-            </>
+                    {(liveThroughputRps != null || liveRequestCount != null) && (
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-white/45">
+                        {liveThroughputRps != null && <span>Live throughput: {liveThroughputRps.toFixed(2)} rps</span>}
+                        {liveRequestCount != null && <span>Live request count: {Math.round(liveRequestCount).toLocaleString()}</span>}
+                      </div>
+                    )}
+                    {dirtyInvalidTrafficCount > 0 && (
+                      <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                        Fix invalid dirty traffic rows before bulk apply: {dirtyInvalidTrafficKeys.join(", ")}
+                      </p>
+                    )}
+                    {trafficPreviewRows.length > 0 && (
+                      <details className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                        <summary className="text-[11px] text-white/65 cursor-pointer">
+                          Patch Preview · {trafficPreviewIsSingle ? "PATCH /api/v1/simulation/runs/:runId/workload" : "PATCH /api/v1/simulation/runs/:runId/configuration"} · workload
+                        </summary>
+                        <p className="text-[10px] text-white/45 mt-1">
+                          {trafficPreviewValidation.ok ? `Valid · ${trafficPreviewValidation.value.length} lane(s)` : `Invalid · ${trafficPreviewValidation.error}`}
+                        </p>
+                        <pre className="mt-1 text-[10px] text-white/70 overflow-x-auto font-mono">{JSON.stringify(
+                          trafficPreviewValidation.ok
+                            ? (trafficPreviewIsSingle
+                              ? trafficPreviewValidation.value[0]
+                              : { workload: trafficPreviewValidation.value })
+                            : { workload: trafficPreviewRows },
+                          null,
+                          2
+                        )}</pre>
+                      </details>
+                    )}
+                    {observedAndDraftPatternKeys.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No workload patterns observed yet. Waiting for optimization config or scenario fallback.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {observedAndDraftPatternKeys.map((patternKey) => {
+                          const observed = observedTrafficByPattern[patternKey] ?? { pattern_key: patternKey };
+                          const draft = trafficConsoleDrafts[observed.pattern_key] ?? {};
+                          const draftPatternKey = (draft.pattern_key ?? observed.pattern_key).toString().trim();
+                          const effectiveRate = draft.rate_rps ?? observed.observed_rate_rps;
+                          const dirty =
+                            (draft.pattern_key ?? undefined) !== undefined && draftPatternKey !== observed.pattern_key ||
+                            draft.rate_rps !== undefined && draft.rate_rps !== observed.observed_rate_rps;
+                          const rowDraft: PatchRunConfigurationWorkloadItem = {
+                            pattern_key: draftPatternKey || observed.pattern_key,
+                            rate_rps: effectiveRate ?? 0,
+                          };
+                          const rowValidation = buildWorkloadPatchPayloadFromModel(onlineConfigModel, [rowDraft]);
+                          const rowError = dirty && !rowValidation.ok ? rowValidation.error : undefined;
+                          const pending =
+                            pendingTrafficObservationByPattern[draftPatternKey] ??
+                            pendingTrafficObservationByPattern[observed.pattern_key];
+                          const baseRate = observed.observed_rate_rps ?? effectiveRate ?? 1;
+                          const sliderMin = Math.max(0.1, Number((baseRate * 0.25).toFixed(2)));
+                          const sliderMax = Math.max(sliderMin + 0.1, Number((baseRate * 5).toFixed(2)));
+                          const patternOptions = [...knownPatternKeys];
+                          if (observed.pattern_key && !patternOptions.includes(observed.pattern_key)) patternOptions.push(observed.pattern_key);
+                          if (draft.pattern_key && !patternOptions.includes(draft.pattern_key)) patternOptions.push(draft.pattern_key);
+                          patternOptions.sort();
+                          return (
+                            <div key={observed.pattern_key} className="rounded border border-border bg-black/20 p-2 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-mono text-white">{observed.pattern_key}</span>
+                                  {dirty && (
+                                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                                        Dirty
+                                    </span>
+                                  )}
+                                  {pending && (
+                                    <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                                        Pending observation
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (rowError) return;
+                                      const ok = await applyWorkload(
+                                        [rowDraft],
+                                        rowDraft.pattern_key && rowDraft.rate_rps > 0
+                                          ? { [rowDraft.pattern_key]: { rate_rps: rowDraft.rate_rps } }
+                                          : undefined
+                                      );
+                                      if (ok) {
+                                        setTrafficConsoleDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[observed.pattern_key];
+                                          return next;
+                                        });
+                                      }
+                                    }}
+                                    disabled={configUpdateLoading || Boolean(rowError) || !dirty}
+                                    className="px-2 py-1 text-xs rounded border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50"
+                                  >
+                                    Apply
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setTrafficConsoleDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[observed.pattern_key];
+                                        return next;
+                                      })
+                                    }
+                                    className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors"
+                                    title="Reset draft"
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <label className="text-[11px] text-white/60">
+                                  Pattern key
+                                  <select
+                                    value={draft.pattern_key ?? observed.pattern_key}
+                                    onChange={(e) =>
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: { ...(prev[observed.pattern_key] ?? {}), pattern_key: e.target.value },
+                                      }))
+                                    }
+                                    className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                  >
+                                    {patternOptions.length === 0 && <option value="">Select…</option>}
+                                    {patternOptions.map((key) => (
+                                      <option key={key} value={key}>{key || "(empty)"}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="text-[11px] text-white/60">
+                                  Target RPS (obs: {observed.observed_rate_rps != null ? observed.observed_rate_rps.toFixed(2) : "—"})
+                                  <input
+                                    type="number"
+                                    min={0.01}
+                                    step={0.1}
+                                    value={draft.rate_rps ?? (observed.observed_rate_rps ?? "")}
+                                    onChange={(e) => {
+                                      const value = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: {
+                                          ...(prev[observed.pattern_key] ?? {}),
+                                          rate_rps: Number.isFinite(value) ? value : undefined,
+                                        },
+                                      }));
+                                    }}
+                                    className="mt-1 w-full px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                                  />
+                                </label>
+                                <label className="text-[11px] text-white/60">
+                                  Target slider
+                                  <input
+                                    type="range"
+                                    min={sliderMin}
+                                    max={sliderMax}
+                                    step={0.1}
+                                    value={Math.min(sliderMax, Math.max(sliderMin, draft.rate_rps ?? (observed.observed_rate_rps ?? sliderMin)))}
+                                    onChange={(e) => {
+                                      const value = parseFloat(e.target.value);
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: {
+                                          ...(prev[observed.pattern_key] ?? {}),
+                                          rate_rps: Number.isFinite(value) ? value : undefined,
+                                        },
+                                      }));
+                                    }}
+                                    className="mt-2 w-full accent-cyan-400"
+                                  />
+                                </label>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {[0.5, 1, 2, 5].map((multiplier) => (
+                                  <button
+                                    key={multiplier}
+                                    type="button"
+                                    onClick={() => {
+                                      const value = Number((baseRate * multiplier).toFixed(2));
+                                      setTrafficConsoleDrafts((prev) => ({
+                                        ...prev,
+                                        [observed.pattern_key]: {
+                                          ...(prev[observed.pattern_key] ?? {}),
+                                          pattern_key: draft.pattern_key ?? observed.pattern_key,
+                                          rate_rps: value,
+                                        },
+                                      }));
+                                    }}
+                                    className="px-2 py-0.5 rounded border border-white/15 bg-white/5 text-[10px] text-white/70 hover:bg-white/10"
+                                  >
+                                    {multiplier === 1 ? "1x reset" : `${multiplier}x`}
+                                  </button>
+                                ))}
+                                {!observedTrafficByPattern[observed.pattern_key] && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setTrafficConsoleDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[observed.pattern_key];
+                                        return next;
+                                      })
+                                    }
+                                    className="p-1 rounded text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                    title="Remove draft lane"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              {rowError && <p className="text-[11px] text-red-300">{rowError}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {controlRoomTab === "autoscaling" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide flex items-center gap-1.5">
+                        <Gauge className="w-3.5 h-3.5" /> Autoscaling Gauge
+                      </h3>
+                      <span className="text-[10px] text-white/30 font-mono">PATCH /configuration · policies.autoscaling</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await applyPolicies(autoscalingDraftForPatch);
+                          if (ok) setAutoscalingPolicyDraft({});
+                        }}
+                        disabled={configUpdateLoading || Boolean(autoscalingRowError) || !autoscalingDirty}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {configUpdateLoading ? "Applying…" : "Apply autoscaling"}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      <span className={`rounded border px-1.5 py-0.5 ${autoscalingDirty ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        {autoscalingDirty ? "Dirty" : "Clean"}
+                      </span>
+                      <span className={`rounded border px-1.5 py-0.5 ${autoscalingSubmitStatus === "submitted" ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        {autoscalingSubmitStatus === "submitted" ? "Submitted" : "Idle"}
+                      </span>
+                      <span className="rounded border border-white/15 bg-white/5 text-white/60 px-1.5 py-0.5">
+                        baseline target: {baselineTargetCpuPercent.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="rounded border border-border bg-black/20 p-2 space-y-2">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs text-white/70">
+                          <input
+                            type="checkbox"
+                            checked={autoscaling.enabled}
+                            onChange={(e) => {
+                              setAutoscalingSubmitStatus("idle");
+                              setAutoscalingPolicyDraft((prev) => ({ ...prev, enabled: e.target.checked }));
+                            }}
+                            className="rounded border-white/20"
+                          />
+                          Autoscaling enabled
+                        </label>
+                        <label className="flex items-center gap-2 text-xs text-white/70">
+                          Target CPU %
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            step={1}
+                            value={targetCpuPercent}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value);
+                              setAutoscalingSubmitStatus("idle");
+                              setAutoscalingPolicyDraft((prev) => ({
+                                ...prev,
+                                target_cpu_util: Number.isFinite(value) ? value : undefined,
+                              }));
+                            }}
+                            className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs text-white/70">
+                          Scale step
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={autoscaling.scale_step ?? 1}
+                            onChange={(e) => {
+                              const value = parseInt(e.target.value, 10);
+                              setAutoscalingSubmitStatus("idle");
+                              setAutoscalingPolicyDraft((prev) => ({
+                                ...prev,
+                                scale_step: Number.isFinite(value) ? value : undefined,
+                              }));
+                            }}
+                            className="w-16 px-2 py-1 rounded bg-black/30 border border-white/10 text-white font-mono text-xs"
+                          />
+                        </label>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-white/55">
+                          <span>CPU target threshold meter</span>
+                          <span className="font-mono">{targetCpuPercent.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-2 rounded bg-white/10 overflow-hidden">
+                          <div
+                            className="h-full bg-cyan-400/80"
+                            style={{ width: `${Math.max(0, Math.min(100, targetCpuPercent))}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Avg CPU</p>
+                          <p className="text-white/80 font-mono">{avgServiceCpuUtilPct != null ? `${avgServiceCpuUtilPct.toFixed(1)}%` : "—"}</p>
+                        </div>
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Peak CPU</p>
+                          <p className="text-white/80 font-mono">{maxServiceCpuUtilPct != null ? `${maxServiceCpuUtilPct.toFixed(1)}%` : "—"}</p>
+                        </div>
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Services above target</p>
+                          <p className="text-white/80 font-mono">{cpuUtilPercentValues.length > 0 ? servicesAboveTargetCount : "—"}</p>
+                        </div>
+                        <div className="rounded border border-white/10 bg-black/25 px-2 py-1">
+                          <p className="text-white/40">Status</p>
+                          <p className="text-white/80 font-mono">{cpuTargetStatus}</p>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-white/35 font-mono">
+                        Patch Preview · PATCH /api/v1/simulation/runs/:runId/configuration ·{" "}
+                        {autoscalingValidation.ok ? JSON.stringify({ policies: autoscalingValidation.value }) : "{ invalid payload }"}
+                      </p>
+                    </div>
+                    {autoscalingRowError && <p className="text-[11px] text-red-300">{autoscalingRowError}</p>}
+                  </div>
+                )}
+
+                {controlRoomTab === "lease" && (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      <span className={`rounded border px-1.5 py-0.5 ${leaseAutoRenewEnabled ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        auto-renew: {leaseAutoRenewEnabled ? "enabled" : "disabled"}
+                      </span>
+                      <span className={`rounded border px-1.5 py-0.5 ${leaseRenewStatus === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : leaseRenewStatus === "error" ? "border-red-500/30 bg-red-500/10 text-red-300" : "border-white/15 bg-white/5 text-white/60"}`}>
+                        last result: {leaseRenewStatus}
+                      </span>
+                      <span className="rounded border border-white/15 bg-white/5 text-white/60 px-1.5 py-0.5">
+                        run status: {status}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">lease_ttl_ms</p>
+                        <p className="text-white/80 font-mono">{leaseTtlMs ?? "not configured"}</p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Renew interval</p>
+                        <p className="text-white/80 font-mono">{leaseRenewIntervalMs != null ? `${leaseRenewIntervalMs} ms` : "n/a"}</p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Next scheduled renew</p>
+                        <p className="text-white/80 font-mono">
+                          {leaseNextRenewInSeconds != null
+                            ? `${leaseNextRenewInSeconds}s (${new Date(nextLeaseRenewAtRef.current ?? 0).toISOString().substring(11, 19)})`
+                            : "—"}
+                        </p>
+                      </div>
+                      <div className="rounded border border-border bg-black/20 px-2 py-1.5">
+                        <p className="text-white/40">Last renewal attempt</p>
+                        <p className="text-white/80 font-mono">
+                          {lastLeaseRenewAttemptAtMs != null ? new Date(lastLeaseRenewAttemptAtMs).toISOString().substring(11, 19) : "—"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleManualLeaseRenew}
+                        disabled={manualLeaseRenewLoading || leaseTtlMs == null}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {manualLeaseRenewLoading ? "Renewing…" : "Renew lease now"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStop("completed")}
+                        disabled={isStopping}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                      >
+                        {isStopping ? "…" : "Complete run"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStop("cancelled")}
+                        disabled={isStopping}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        {isStopping ? "…" : "Cancel run"}
+                      </button>
+                    </div>
+                    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5 text-[10px] text-white/65 font-mono">
+                      Patch Preview · POST /api/v1/simulation/runs/:runId/online/renew-lease · no body
+                    </div>
+                    {leaseTtlMs == null && (
+                      <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
+                        Lease not configured for this run. Manual renewal is unavailable.
+                      </p>
+                    )}
+                    {leaseRenewError && (
+                      <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                        Lease renewal: {leaseRenewError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {controlRoomTab === "locked" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-white/45">Locked after run creation (requires a new run to change).</p>
+                    <div className="space-y-2">
+                      {lockedGroups.map((group) => (
+                        <div key={group.id} className="rounded border border-white/10 bg-black/20">
+                          <div className="px-2 py-1.5 border-b border-white/10 text-[11px] uppercase tracking-wide text-white/55">
+                            {group.title}
+                          </div>
+                          <div className="divide-y divide-white/5">
+                            {group.keys.map((key) => {
+                              const field = lockedFieldByKey[key];
+                              const label = field?.label ?? key;
+                              const value = field?.observedValue;
+                              return (
+                                <div key={key} className="px-2 py-1.5 flex items-start justify-between gap-3 text-xs">
+                                  <div className="min-w-0">
+                                    <p className="text-white/65 truncate">{label}</p>
+                                    <p className="text-[10px] text-white/35 font-mono">{key}</p>
+                                  </div>
+                                  <p className="text-white/80 font-mono text-right break-all">
+                                    {formatLockedFieldValue(key, value)}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      {lockedFields.length === 0 && (
+                        <p className="text-xs text-white/30 italic">No locked online settings observed for this run.</p>
+                      )}
+                    </div>
+                    {lockedFields.length > 0 && (
+                      <div className="text-[10px] text-white/35">
+                        Data source: run metadata and observed optimization/runtime state (read-only).
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {controlRoomTab === "change_log" && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-white/45">Unified runtime timeline (manual patches + controller steps).</p>
+                      <div className="flex flex-wrap gap-1">
+                        {[
+                          { id: "all", label: "All" },
+                          { id: "manual", label: "Manual" },
+                          { id: "controller", label: "Controller" },
+                          { id: "errors", label: "Errors" },
+                        ].map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => setChangeLogFilter(option.id as typeof changeLogFilter)}
+                            className={`px-2 py-0.5 rounded border text-[10px] ${
+                              changeLogFilter === option.id
+                                ? "border-white/30 bg-white/10 text-white"
+                                : "border-white/15 bg-black/20 text-white/60 hover:bg-white/5"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {unifiedChangeLogEntries.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">No runtime changes observed yet.</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {unifiedChangeLogEntries.map((entry) => (
+                          <div key={entry.id} className="rounded border border-border bg-black/20 px-2 py-1.5 text-[11px] text-white/70">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono text-white/50">
+                                  {entry.timestampMs >= 0 ? `[${formatRuntimeOpTime(entry.timestampMs)}]` : `#${entry.iteration ?? "—"}`}
+                                </span>
+                                <span className={`rounded px-1.5 py-0.5 border text-[10px] ${
+                                  entry.source === "controller"
+                                    ? "border-purple-500/30 bg-purple-500/10 text-purple-300"
+                                    : entry.source === "lease"
+                                      ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+                                      : entry.source === "run"
+                                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                        : "border-white/20 bg-white/5 text-white/70"
+                                }`}>
+                                  {entry.source === "controller" ? "Controller" : entry.source === "lease" ? "Lease" : entry.source === "run" ? "Run" : "Manual"}
+                                </span>
+                                <span className={`rounded px-1.5 py-0.5 border text-[10px] ${
+                                  entry.status === "rejected"
+                                    ? "border-red-500/30 bg-red-500/10 text-red-300"
+                                    : entry.status === "observed"
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                      : entry.status === "stale"
+                                        ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                        : "border-white/20 bg-white/5 text-white/70"
+                                }`}>
+                                  {entry.status}
+                                </span>
+                                <span>{entry.summary}</span>
+                              </div>
+                            </div>
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-[10px] text-white/45">Details</summary>
+                              {entry.source === "controller" ? (
+                                <div className="mt-1 space-y-1">
+                                  <p className="text-[10px] text-white/55">
+                                    target p95: {num((entry.details as Record<string, unknown>).target_p95_ms)?.toFixed(1) ?? "—"} ms · score p95: {num((entry.details as Record<string, unknown>).score_p95_ms)?.toFixed(1) ?? "—"} ms
+                                  </p>
+                                  {Array.isArray((entry.details as Record<string, unknown>).diffLines) && ((entry.details as Record<string, unknown>).diffLines as string[]).length > 0 ? (
+                                    <ul className="text-[10px] text-white/55 list-disc pl-4">
+                                      {((entry.details as Record<string, unknown>).diffLines as string[]).slice(0, 8).map((line, i) => (
+                                        <li key={`${entry.id}-diff-${i}`}>{line}</li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-[10px] text-white/45">No material config diff available.</p>
+                                  )}
+                                </div>
+                              ) : (
+                                <pre className="mt-1 text-[10px] text-white/65 overflow-x-auto font-mono">{JSON.stringify(entry.details, null, 2)}</pre>
+                              )}
+                            </details>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             );
           })()}
         </div>
@@ -4575,7 +6117,7 @@ export default function SimulationRunPage() {
                                 paddingAngle={0}
                                 stroke="none"
                               >
-                                {donutData.map((entry, i) => (
+                                {donutData.map((entry) => (
                                   <Cell key={entry.name} fill={entry.color} />
                                 ))}
                               </Pie>
