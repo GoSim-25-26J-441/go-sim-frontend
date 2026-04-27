@@ -20,37 +20,51 @@ export interface ScenarioValidationResult {
 
 /**
  * Validate scenario YAML without creating a run.
- * Backend: POST /v1/scenarios:validate
+ * Backend: POST /api/v1/simulation/projects/:project_id/diagram-versions/:diagram_version_id/scenario/validate
  */
-export async function validateScenarioYaml(scenarioYaml: string): Promise<ScenarioValidationResult> {
+export async function validateScenarioYaml(
+  projectId: string,
+  diagramVersionId: string,
+  scenarioYaml: string
+): Promise<ScenarioValidationResult> {
   let response: Response;
   try {
-    response = await authenticatedFetch("/v1/scenarios:validate", {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedDiagramVersionId = encodeURIComponent(diagramVersionId);
+    response = await authenticatedFetch(
+      `/api/v1/simulation/projects/${encodedProjectId}/diagram-versions/${encodedDiagramVersionId}/scenario/validate`,
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scenario_yaml: scenarioYaml }),
-    });
+      }
+    );
   } catch {
-    throw new Error("Could not validate scenario. Check simulation-core connection.");
+    throw new Error("Could not validate scenario.");
   }
 
-  const payload = (await response.json().catch(() => null)) as
-    | Partial<ScenarioValidationResult>
-    | null;
+  const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
 
   if (!payload || typeof payload !== "object") {
     throw new Error(`Scenario validation failed (${response.status}).`);
   }
 
+  const maybeNested = payload.validation;
+  const validationPayload =
+    maybeNested && typeof maybeNested === "object"
+      ? (maybeNested as Partial<ScenarioValidationResult>)
+      : (payload as Partial<ScenarioValidationResult>);
+
   const result: ScenarioValidationResult = {
-    valid: Boolean(payload.valid),
-    errors: Array.isArray(payload.errors) ? (payload.errors as ScenarioValidationIssue[]) : [],
-    warnings: Array.isArray(payload.warnings) ? (payload.warnings as ScenarioValidationIssue[]) : [],
-    summary: payload.summary,
+    valid: Boolean(validationPayload.valid),
+    errors: Array.isArray(validationPayload.errors) ? (validationPayload.errors as ScenarioValidationIssue[]) : [],
+    warnings: Array.isArray(validationPayload.warnings) ? (validationPayload.warnings as ScenarioValidationIssue[]) : [],
+    summary: validationPayload.summary,
   };
 
   if (!response.ok && !(response.status === 400 && result.valid === false)) {
-    throw new Error("Could not validate scenario. Check simulation-core connection.");
+    const backendError = typeof payload.error === "string" && payload.error.trim() ? payload.error.trim() : undefined;
+    throw new Error(backendError ?? "Could not validate scenario.");
   }
 
   return result;
