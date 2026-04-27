@@ -4,6 +4,9 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { ScenarioValidationIssue, ScenarioValidationResult } from "@/lib/api-client/simulation";
 import { type ScenarioPolicies, type ScenarioState } from "@/lib/simulation/scenario-yaml-parse";
 import {
+  addEndpointToService,
+  deleteEndpointIfUnreferenced,
+  formatEndpointReferenceSummary,
   getEndpointOptions,
   patchAutoscalingServiceRows,
 } from "@/lib/simulation/scenario-behavior-helpers";
@@ -49,6 +52,7 @@ export function ScenarioBehaviorEditor({
   const [svcIndex, setSvcIndex] = useState(0);
   const [epIndex, setEpIndex] = useState(0);
   const [wlIndex, setWlIndex] = useState(0);
+  const [endpointActionError, setEndpointActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (svcIndex >= scenario.services.length) {
@@ -60,6 +64,10 @@ export function ScenarioBehaviorEditor({
     const n = scenario.services[svcIndex]?.endpoints.length ?? 0;
     if (epIndex >= n) setEpIndex(Math.max(0, n - 1));
   }, [scenario.services, svcIndex, epIndex]);
+
+  useEffect(() => {
+    setEndpointActionError(null);
+  }, [svcIndex, epIndex]);
 
   useEffect(() => {
     if (wlIndex >= scenario.workload.length) {
@@ -76,8 +84,8 @@ export function ScenarioBehaviorEditor({
         <h1 className="text-xl font-semibold text-white">Scenario behavior</h1>
         <p className="text-xs text-white/60 mt-1 max-w-3xl">
           Tune endpoint CPU, memory, latency, and downstream call parameters, plus workload arrival patterns.
-          Topology identity and service graph structure come from the upstream pipeline and are not edited
-          here.
+          Topology is initialized from the upstream pipeline, and this editor allows endpoint/downstream
+          adjustments with validation and dependency checks.
         </p>
       </div>
 
@@ -86,8 +94,8 @@ export function ScenarioBehaviorEditor({
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-white">Endpoints</h2>
         <p className="text-xs text-white/55 max-w-3xl">
-          Pick a service, then an endpoint. Only timing, resource, and downstream call parameters are
-          editable; you cannot add or remove services, endpoints, or downstream edges from this page.
+          Pick a service, then an endpoint. Service topology is initialized upstream, and this form lets you
+          add/remove endpoints and downstream calls while enforcing dependency checks on referenced targets.
         </p>
         <div className="flex flex-col lg:flex-row gap-4 min-h-0">
           <div className="lg:w-72 shrink-0 min-w-0">
@@ -115,6 +123,58 @@ export function ScenarioBehaviorEditor({
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+            {endpointActionError && (
+              <div className="rounded border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                {endpointActionError}
+              </div>
+            )}
+            {svc && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEndpointActionError(null);
+                    setScenario((prev) => {
+                      const next = addEndpointToService(prev, svcIndex);
+                      setEpIndex(next.endpointIndex);
+                      return next.scenario;
+                    });
+                  }}
+                  className="px-3 py-1.5 text-xs rounded bg-white/10 text-white hover:bg-white/20"
+                >
+                  Add endpoint
+                </button>
+                {eps.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScenario((prev) => {
+                        const result = deleteEndpointIfUnreferenced(prev, svcIndex, epIndex);
+                        if (!result.deleted) {
+                          const service = prev.services[svcIndex];
+                          const endpoint = service?.endpoints[epIndex];
+                          const endpointLabel = service && endpoint ? `${service.id}:${endpoint.path}` : "endpoint";
+                          setEndpointActionError(
+                            `Cannot delete ${endpointLabel}. Still referenced by: ${formatEndpointReferenceSummary(
+                              result.references
+                            )}.`
+                          );
+                          return prev;
+                        }
+                        const nextEndpoints = result.scenario.services[svcIndex]?.endpoints ?? [];
+                        const nextIndex = nextEndpoints.length === 0 ? 0 : Math.max(0, epIndex - 1);
+                        setEpIndex(nextIndex);
+                        setEndpointActionError(null);
+                        return result.scenario;
+                      });
+                    }}
+                    className="px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/30"
+                  >
+                    Delete endpoint
+                  </button>
+                )}
               </div>
             )}
             {svc && eps.length > 0 ? (
