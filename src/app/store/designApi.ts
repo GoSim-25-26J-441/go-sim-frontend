@@ -25,10 +25,15 @@ export interface DesignPayload {
   [key: string]: unknown;
 }
 
+export interface SimulationPayload {
+  nodes: number;
+}
+
 export interface SaveDesignRequest {
   user_id: string;
   project_id: string;
   design: DesignPayload;
+  simulation?: SimulationPayload;
   run_id?: string;
 }
 
@@ -39,6 +44,7 @@ export interface DesignByProjectRunResponse {
   run_id?: string;
   request?: {
     design?: DesignPayload;
+    simulation?: SimulationPayload;
   };
   [key: string]: unknown;
 }
@@ -77,13 +83,24 @@ export const designApi = createApi({
 
     // Save design (POST analysis-suggestions/design)
     saveDesign: b.mutation<unknown, SaveDesignRequest>({
-      query: ({ user_id, project_id, design, run_id }) => ({
+      query: ({ user_id, project_id, design, simulation, run_id }) => ({
         url: `${env.BACKEND_BASE}/api/v1/analysis-suggestions/design`,
         method: "POST",
         headers: { "content-type": "application/json" },
         body: run_id
-          ? { user_id, project_id, run_id, design }
-          : { user_id, project_id, design },
+          ? {
+              user_id,
+              project_id,
+              run_id,
+              design,
+              ...(simulation ? { simulation } : {}),
+            }
+          : {
+              user_id,
+              project_id,
+              design,
+              ...(simulation ? { simulation } : {}),
+            },
       }),
       invalidatesTags: ["DesignByProjectRun"],
     }),
