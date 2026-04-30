@@ -121,6 +121,9 @@ export default function ClientChat({ id }: Props) {
   const [checkingThread, setCheckingThread] = useState(!urlThreadId);
   const [showDesignModal, setShowDesignModal] = useState(false);
   const [designAnswers, setDesignAnswers] = useState<Record<string, any>>({});
+  const [designSimulation, setDesignSimulation] = useState<
+    { nodes: number } | undefined
+  >(undefined);
   const [openCheckPatternsAfterDesign, setOpenCheckPatternsAfterDesign] =
     useState(false);
   const [designSuggestionDismissed, setDesignSuggestionDismissed] =
@@ -340,6 +343,16 @@ export default function ClientChat({ id }: Props) {
         ...(Object.keys(designAnswers).length > 0
           ? { design: designAnswers }
           : {}),
+        ...(designSimulation &&
+        typeof designSimulation.nodes === "number" &&
+        Number.isFinite(designSimulation.nodes) &&
+        designSimulation.nodes >= 1
+          ? {
+              simulation: {
+                nodes: Math.floor(designSimulation.nodes),
+              },
+            }
+          : {}),
         ...(diagramVersionId ? { diagram_version_id: diagramVersionId } : {}),
       };
 
@@ -432,17 +445,26 @@ export default function ClientChat({ id }: Props) {
           setShowDesignModal(false);
           setOpenCheckPatternsAfterDesign(false);
         }}
-        onSubmit={(d) => {
+        onSubmit={({ design, simulation }) => {
           designModalOpenedForAntiPatternsRef.current = false;
           clearSkippedDesignRequirements(id);
-          setDesignAnswers(d);
+          setDesignAnswers(design);
+          setDesignSimulation(simulation);
           setShowDesignModal(false);
           if (openCheckPatternsAfterDesign) {
             setShowCheckPatternsOverlay(true);
             setOpenCheckPatternsAfterDesign(false);
           }
         }}
-        onDesignLoaded={(d) => setDesignAnswers(d)}
+        onDesignLoaded={(payload) => {
+          const { design, simulation } = payload;
+          if (Object.keys(design ?? {}).length > 0) {
+            setDesignAnswers(design);
+          } else {
+            setDesignAnswers({});
+          }
+          setDesignSimulation(simulation);
+        }}
         onSkip={() => {
           setSkippedDesignRequirements(id);
           setShowDesignModal(false);
@@ -453,6 +475,7 @@ export default function ClientChat({ id }: Props) {
           }
         }}
         initialDesign={designAnswers}
+        initialSimulation={designSimulation}
         projectId={id}
         userId={userId ?? undefined}
       />

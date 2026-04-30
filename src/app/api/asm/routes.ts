@@ -223,6 +223,7 @@ export const createDesignRequest = async (
   projectId: string,
   runId: string,
   design: DesignRequirementsDTO,
+  simulation?: SimulationRequirements,
 ) => {
   try {
     const response = await fetch(
@@ -237,6 +238,11 @@ export const createDesignRequest = async (
           project_id: projectId,
           run_id: runId,
           design,
+          ...(simulation &&
+          typeof simulation.nodes === "number" &&
+          simulation.nodes >= 1
+            ? { simulation: { nodes: Math.floor(simulation.nodes) } }
+            : {}),
         }),
       },
     );
