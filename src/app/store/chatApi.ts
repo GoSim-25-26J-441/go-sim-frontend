@@ -34,6 +34,8 @@ export interface SendMessageArg {
   mode?: "thinking" | "default" | "instant";
   detail?: string;
   design?: Record<string, unknown>;
+  /** Host/node count for analysis-suggestions; sibling of design, not nested inside it */
+  simulation?: { nodes: number };
   /** When set, sent to backend so the first turns can bind to a concrete saved diagram version */
   diagram_version_id?: string;
 }
@@ -180,6 +182,7 @@ export const chatApi = createApi({
         mode,
         detail,
         design,
+        simulation,
         diagram_version_id,
       }) => ({
         url: `/api/projects/${projectId}/chats/${threadId}/messages`,
@@ -190,6 +193,12 @@ export const chatApi = createApi({
           mode: mode ?? "default",
           ...(mode === "thinking" && detail ? { detail } : {}),
           ...(design && Object.keys(design).length > 0 ? { design } : {}),
+          ...(simulation &&
+          typeof simulation.nodes === "number" &&
+          Number.isFinite(simulation.nodes) &&
+          simulation.nodes >= 1
+            ? { simulation: { nodes: Math.floor(simulation.nodes) } }
+            : {}),
           ...(diagram_version_id
             ? { diagram_version_id: diagram_version_id }
             : {}),

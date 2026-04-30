@@ -9,11 +9,12 @@ import {
   MemoryStick,
   Users,
   DollarSign,
+  Boxes,
   Loader2,
   ChevronRight,
   AlertCircle,
 } from "lucide-react";
-import type { Question } from "@/app/store/designApi";
+import type { DesignByProjectRunResponse, Question } from "@/app/store/designApi";
 import {
   useGetRequirementsQuestionsQuery,
   useSaveDesignMutation,
@@ -28,13 +29,23 @@ interface DesignAnswers {
   [key: string]: number | undefined;
 }
 
+export interface DesignModalSubmitPayload {
+  design: Record<string, any>;
+  simulation?: { nodes: number };
+}
+
 interface DesignQuestionsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (design: DesignAnswers) => void;
+  onSubmit: (payload: DesignModalSubmitPayload) => void;
   onSkip: () => void;
-  onDesignLoaded?: (design: Record<string, any>) => void;
+  onDesignLoaded?: (payload: {
+    design: Record<string, any>;
+    simulation?: { nodes: number };
+  }) => void;
   initialDesign?: Record<string, any>;
+  /** Prefill host/node count when reopening before refetch completes */
+  initialSimulation?: { nodes?: number };
   projectId?: string;
   userId?: string;
 }
@@ -103,6 +114,49 @@ function answersFromDesign(design: Record<string, any> | undefined, questions: Q
   return init;
 }
 
+/**
+ * When the saved request includes only `simulation` (no `design` key), we must
+ * not merge `initialDesign` after fetch settles — that would hide host count and
+ * show stale design fields. While the by-project-run query is loading, keep
+ * merging `initialDesign` so locally applied values stay visible.
+ */
+function pickDesignForModal(
+  userId: string | undefined,
+  projectId: string | undefined,
+  designLoading: boolean,
+  designByRunData: DesignByProjectRunResponse | undefined,
+  initialDesign: Record<string, any> | undefined,
+): Record<string, any> | undefined {
+  const awaitingFetch = Boolean(userId && projectId && designLoading);
+
+  if (awaitingFetch) {
+    return (
+      (designByRunData?.request?.design as Record<string, any> | undefined) ??
+      initialDesign ??
+      undefined
+    );
+  }
+
+  if (!userId || !projectId) {
+    return initialDesign ?? undefined;
+  }
+
+  const request = designByRunData?.request;
+  if (request == null) {
+    return initialDesign ?? undefined;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(request, "design")) {
+    return undefined;
+  }
+
+  const d = request.design;
+  if (d == null || typeof d !== "object" || Array.isArray(d)) {
+    return undefined;
+  }
+  return d as Record<string, any>;
+}
+
 export default function DesignQuestionsModal({
   isOpen,
   onClose,
@@ -110,10 +164,14 @@ export default function DesignQuestionsModal({
   onSkip,
   onDesignLoaded,
   initialDesign,
+  initialSimulation,
   projectId,
   userId,
 }: DesignQuestionsModalProps) {
   const [answers, setAnswers] = useState<DesignAnswers>({});
+  const [simulationNodes, setSimulationNodes] = useState<number | undefined>(
+    undefined,
+  );
   const [enabled, setEnabled] = useState(false);
 
   const { data: questionsData, isLoading: questionsLoading } =
@@ -154,19 +212,71 @@ export default function DesignQuestionsModal({
     fetchDesignByProjectRun({ userId, projectId });
   }, [isOpen, userId, projectId, fetchDesignByProjectRun]);
 
-  // Populate answers: prefer designByRunData, then initialDesign, else empty
+  // Populate answers and host count independently; design prefill must not
+  // swallow simulation-only saves (see pickDesignForModal).
   useEffect(() => {
     if (questions.length === 0) return;
-    const design =
-      designByRunData?.request?.design ??
-      initialDesign ??
+    const design = pickDesignForModal(
+      userId,
+      projectId,
+      designLoading,
+      designByRunData,
+      initialDesign,
+    );
+    const rawNodes =
+      designByRunData?.request?.simulation?.nodes ??
+      initialSimulation?.nodes ??
       undefined;
+    const normalizedNodes =
+      typeof rawNodes === "number" &&
+      Number.isFinite(rawNodes) &&
+      rawNodes >= 1
+        ? Math.floor(rawNodes)
+        : undefined;
+
     setAnswers(answersFromDesign(design, questions));
-    // Notify parent when design is loaded from DB so Design info badge can show
-    if (design && Object.keys(design).length > 0 && onDesignLoaded) {
-      onDesignLoaded(design);
+    setSimulationNodes(normalizedNodes);
+
+    const simulationFromRequest = designByRunData?.request?.simulation;
+    const mergedDesign = design ?? {};
+    const shouldNotify =
+      Object.keys(mergedDesign).length > 0 ||
+      (typeof simulationFromRequest?.nodes === "number" &&
+        simulationFromRequest.nodes >= 1);
+
+    const deferNotifyPendingFetch = Boolean(userId && projectId && designLoading);
+
+    if (!deferNotifyPendingFetch && shouldNotify && onDesignLoaded) {
+      onDesignLoaded({
+        design: mergedDesign,
+        simulation:
+          typeof simulationFromRequest?.nodes === "number" &&
+          simulationFromRequest.nodes >= 1
+            ? { nodes: Math.floor(simulationFromRequest.nodes) }
+            : undefined,
+      });
     }
-  }, [questions, designByRunData?.request?.design, initialDesign, onDesignLoaded]);
+  }, [
+    questions,
+    designByRunData,
+    initialDesign,
+    initialSimulation?.nodes,
+    designLoading,
+    userId,
+    projectId,
+    onDesignLoaded,
+  ]);
+
+  const handleSimulationNodesChange = (value: string) => {
+    if (value === "") {
+      setSimulationNodes(undefined);
+      return;
+    }
+    if (!/^\d+$/.test(value)) return;
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return;
+    setSimulationNodes(n >= 1 ? n : undefined);
+  };
 
   const handleChange = (questionId: string, value: string, type: string) => {
     if (type === "number") {
@@ -193,6 +303,12 @@ export default function DesignQuestionsModal({
 
   const handleSubmit = async () => {
     const design = buildDesignFromAnswers(answers);
+    const simulation =
+      simulationNodes !== undefined &&
+      simulationNodes >= 1 &&
+      Number.isFinite(simulationNodes)
+        ? { nodes: Math.floor(simulationNodes) }
+        : undefined;
 
     // Save to backend if we have user and project
     if (userId && projectId) {
@@ -201,20 +317,25 @@ export default function DesignQuestionsModal({
           user_id: userId,
           project_id: projectId,
           design,
+          ...(simulation ? { simulation } : {}),
         }).unwrap();
       } catch {
         // Save failed – still proceed with onSubmit per requirements
       }
     }
 
-    onSubmit(design);
+    onSubmit({ design, ...(simulation ? { simulation } : {}) });
     onClose();
   };
 
-  const filledCount = Object.values(answers).filter(
-    (v) => v !== undefined && v !== null,
-  ).length;
-  const totalCount = questions.length;
+  const hostFieldFilled =
+    simulationNodes !== undefined &&
+    simulationNodes >= 1 &&
+    Number.isFinite(simulationNodes);
+  const filledCount =
+    Object.values(answers).filter((v) => v !== undefined && v !== null).length +
+    (hostFieldFilled ? 1 : 0);
+  const totalCount = questions.length + 1;
 
   if (!isOpen) return null;
 
@@ -460,6 +581,73 @@ export default function DesignQuestionsModal({
                   </div>
                 );
               })}
+
+              <div className="rounded-xl overflow-hidden transition-all duration-200">
+                <div className="flex items-center gap-2.5 pt-3 pb-1">
+                  <span
+                    style={{
+                      color: hostFieldFilled
+                        ? "rgba(255,255,255,0.6)"
+                        : "rgba(255,255,255,0.25)",
+                    }}
+                  >
+                    <Boxes className="w-4 h-4" />
+                  </span>
+                  <label
+                    className={`text-xs font-semibold uppercase tracking-wider ${
+                      hostFieldFilled ? "text-white/30" : "text-white"
+                    }`}
+                  >
+                    Host count
+                  </label>
+                  {hostFieldFilled && (
+                    <span
+                      className="ml-auto text-xs px-1.5 py-0.5 rounded-md"
+                      style={{
+                        backgroundColor: "rgba(52,211,153,0.1)",
+                        color: "#6ee7b7",
+                        border: "1px solid rgba(52,211,153,0.2)",
+                      }}
+                    >
+                      ✓
+                    </span>
+                  )}
+                </div>
+                <p className="pb-2 text-xs text-white/60">
+                  Number of hosts or cluster nodes to model (integer, minimum 1).
+                </p>
+                <div className="relative flex items-center pb-3">
+                  <div className="relative flex items-center w-full">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={
+                        simulationNodes !== undefined
+                          ? String(simulationNodes)
+                          : ""
+                      }
+                      onChange={(e) =>
+                        handleSimulationNodesChange(e.target.value)
+                      }
+                      placeholder="e.g. 3"
+                      className="w-full rounded-lg px-3 py-2.5 text-sm focus:outline-none placeholder:text-white/15"
+                      style={{
+                        backgroundColor: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.07)",
+                        color: "#fff",
+                        paddingRight: "3.5rem",
+                      }}
+                    />
+                    <span
+                      className="absolute right-3 text-xs font-mono pointer-events-none"
+                      style={{ color: "rgba(255,255,255,0.25)" }}
+                    >
+                      nodes
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
