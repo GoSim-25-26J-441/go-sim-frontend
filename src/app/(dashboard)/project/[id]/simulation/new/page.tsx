@@ -44,6 +44,12 @@ import {
 } from "@/lib/simulation/sample-scenarios";
 import { env } from "@/lib/env";
 
+function routeSegmentParam(param: string | string[] | undefined): string {
+  if (typeof param === "string") return param;
+  if (Array.isArray(param)) return param[0] ?? "";
+  return "";
+}
+
 function draftStatusFromResponse(data: Record<string, unknown>): string | null {
   const s = data.status ?? data.draft_status ?? data.source;
   if (typeof s === "string" && s.trim()) return s.trim();
@@ -225,7 +231,7 @@ export default function ProjectNewSimulationPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const projectId = params.id as string | undefined;
+  const projectId = routeSegmentParam(params.id);
   const versionFromQuery = searchParams.get("version");
 
   // Version/diagram selector phase (shown before the multi-step form)
