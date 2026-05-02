@@ -20,6 +20,13 @@ type State = {
   patternsGraphFullscreen: boolean;
   setPatternsGraphFullscreen: (v: boolean) => void;
 
+  /** Guided highlights (? markers + welcome) on AMG-APD patterns — not persisted. */
+  patternsGuidesEnabled: boolean;
+  setPatternsGuidesEnabled: (v: boolean) => void;
+  togglePatternsGuides: () => void;
+  /** Set true only when enabling guides via the Guides toggle — PatternsView consumes for welcome intro. */
+  patternsGuidesWelcomeOnEnable: boolean;
+
   /**
    * Last “committed” graph + YAML (after load, successful generate, version switch, or apply).
    * Not persisted — used only to reset canvas edits in-session.
@@ -49,6 +56,22 @@ export const useAmgApdStore = create<State>()(
       patternsGraphFullscreen: false,
       setPatternsGraphFullscreen: (v: boolean) =>
         set({ patternsGraphFullscreen: v }),
+
+      patternsGuidesEnabled: false,
+      patternsGuidesWelcomeOnEnable: false,
+      setPatternsGuidesEnabled: (v: boolean) =>
+        set({
+          patternsGuidesEnabled: v,
+          patternsGuidesWelcomeOnEnable: false,
+        }),
+      togglePatternsGuides: () =>
+        set((s) => {
+          const next = !s.patternsGuidesEnabled;
+          return {
+            patternsGuidesEnabled: next,
+            patternsGuidesWelcomeOnEnable: next,
+          };
+        }),
 
       baselineLast: undefined,
       baselineEditedYaml: undefined,

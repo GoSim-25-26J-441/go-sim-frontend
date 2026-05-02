@@ -22,6 +22,13 @@ const getDiagramImageUrl = (key: string): string => {
   return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
 };
 
+const resolveImageSrc = (img: ProjectDiagramImage): string => {
+  if (typeof img.image_url === "string" && img.image_url.trim().length > 0) {
+    return img.image_url;
+  }
+  return getDiagramImageUrl(img.image_object_key);
+};
+
 export function DiagramImagesModal({
   projectId,
   isOpen,
@@ -36,6 +43,12 @@ export function DiagramImagesModal({
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
+
+  const clampZoom = (value: number) => Math.min(5, Math.max(1, value));
 
   if (!isOpen) return null;
 
@@ -64,11 +77,15 @@ export function DiagramImagesModal({
   const handlePrev = () => {
     if (focusedIndex === null) return;
     setFocusedIndex((focusedIndex - 1 + images.length) % images.length);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
   };
 
   const handleNext = () => {
     if (focusedIndex === null) return;
     setFocusedIndex((focusedIndex + 1) % images.length);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
   };
 
   const handleFocusKeyDown = (e: React.KeyboardEvent) => {
@@ -125,7 +142,11 @@ export function DiagramImagesModal({
                 {images.map((img, index) => (
                   <button
                     key={img.id}
-                    onClick={() => setFocusedIndex(index)}
+                    onClick={() => {
+                      setFocusedIndex(index);
+                      setZoom(1);
+                      setPan({ x: 0, y: 0 });
+                    }}
                     className="group flex flex-col gap-1.5 rounded-sm bg-white p-2 text-left transition-colors focus:outline-none cursor-pointer"
                   >
                     <div
@@ -133,7 +154,7 @@ export function DiagramImagesModal({
                       style={{ height: "96px" }}
                     >
                       <img
-                        src={getDiagramImageUrl(img.image_object_key)}
+                        src={resolveImageSrc(img)}
                         alt={img.title || "Diagram snapshot"}
                         className="max-h-full max-w-full object-contain transition-opacity group-hover:opacity-80"
                       />
@@ -219,6 +240,41 @@ export function DiagramImagesModal({
                 <p className="text-[10px] text-slate-500 mt-0.5">
                   Click the edit icon to rename
                 </p>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setZoom((z) => clampZoom(z - 0.2))}
+                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-slate-500"
+                    disabled={zoom <= 1}
+                  >
+                    -
+                  </button>
+                  <span className="w-14 text-center text-[11px] text-slate-300">
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setZoom((z) => clampZoom(z + 0.2))}
+                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-slate-500"
+                    disabled={zoom >= 5}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZoom(1);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300 hover:border-slate-500"
+                    disabled={zoom === 1}
+                  >
+                    Reset
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Use mouse wheel to zoom.
+                </p>
               </div>
 
               <button
@@ -231,7 +287,43 @@ export function DiagramImagesModal({
 
             <div
               className="relative flex items-center justify-center bg-white overflow-hidden"
-              style={{ minHeight: "320px", maxHeight: "60vh" }}
+              onWheel={(e) => {
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 0.15 : -0.15;
+                setZoom((z) => {
+                  const next = clampZoom(Number((z + delta).toFixed(2)));
+                  if (next === 1) {
+                    setPan({ x: 0, y: 0 });
+                  }
+                  return next;
+                });
+              }}
+              onMouseDown={(e) => {
+                if (zoom <= 1) return;
+                e.preventDefault();
+                setIsPanning(true);
+                setPanStart({ x: e.clientX, y: e.clientY });
+              }}
+              onMouseMove={(e) => {
+                if (!isPanning || !panStart || zoom <= 1) return;
+                const dx = e.clientX - panStart.x;
+                const dy = e.clientY - panStart.y;
+                setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+                setPanStart({ x: e.clientX, y: e.clientY });
+              }}
+              onMouseUp={() => {
+                setIsPanning(false);
+                setPanStart(null);
+              }}
+              onMouseLeave={() => {
+                setIsPanning(false);
+                setPanStart(null);
+              }}
+              style={{
+                minHeight: "320px",
+                maxHeight: "60vh",
+                cursor: zoom > 1 ? (isPanning ? "grabbing" : "grab") : "default",
+              }}
             >
               {images.length > 1 && (
                 <button
@@ -243,10 +335,15 @@ export function DiagramImagesModal({
               )}
 
               <img
-                src={getDiagramImageUrl(focusedImage.image_object_key)}
+                src={resolveImageSrc(focusedImage)}
                 alt={focusedImage.title || "Diagram snapshot"}
-                className="max-h-full max-w-full object-contain py-4 px-12"
-                style={{ maxHeight: "60vh" }}
+                className="max-h-full max-w-full object-contain py-4 px-12 transition-transform duration-100 ease-out"
+                style={{
+                  maxHeight: "60vh",
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transformOrigin: "center center",
+                }}
+                draggable={false}
               />
 
               {images.length > 1 && (

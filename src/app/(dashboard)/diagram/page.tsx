@@ -324,6 +324,14 @@ function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
   if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
     return data;
   }
+  // Prefer AMG-APD graph payload when present; legacy arrays may be lossy.
+  const graph = data.graph;
+  if (isRecord(graph) && Array.isArray(graph.edges)) {
+    const nodesObj = graph.nodes;
+    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
+      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
+    }
+  }
   const deps = data.dependencies;
   const hasLegacyDeps = Array.isArray(deps);
   const hasLegacyNodes =
@@ -332,13 +340,6 @@ function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
     Array.isArray(data.topics);
   if (hasLegacyDeps && hasLegacyNodes) {
     return data;
-  }
-  const graph = data.graph;
-  if (isRecord(graph) && Array.isArray(graph.edges)) {
-    const nodesObj = graph.nodes;
-    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
-      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
-    }
   }
   throw new Error(
     "Unrecognized diagram JSON. Expected { nodes, edges }, legacy { services, datastores?, dependencies }, or { graph: { nodes, edges } }."
@@ -431,6 +432,28 @@ export default function DrawDiagram() {
     const fromId = typeof p?.id === "string" ? p.id : undefined;
     return fromPublicId ?? fromId ?? null;
   }, [summary]);
+
+  /** Row whose diagram_json we paint — matches ?diagramVersion= when set, else latest. */
+  const diagramRowForLoad = useMemo(() => {
+    type Row = { id?: string; diagram_json?: unknown };
+    const latest = summary?.latest_diagram_version as Row | undefined;
+    const others = (summary?.other_diagram_versions ?? []) as Row[];
+    const want = diagramVersionFromQuery?.trim();
+
+    if (!latest?.id && others.length === 0) return undefined;
+
+    if (!want) return latest;
+
+    if (latest?.id === want) return latest;
+    const hit = others.find((v) => v?.id === want);
+    if (hit) return hit;
+
+    return latest;
+  }, [
+    diagramVersionFromQuery,
+    summary?.latest_diagram_version,
+    summary?.other_diagram_versions,
+  ]);
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
@@ -1195,30 +1218,34 @@ export default function DrawDiagram() {
     void refetchProjectSummary();
   }, [projectId, reloadFlag, refetchProjectSummary]);
 
+  // Re-load when URL diagram version changes (same project)
+  useEffect(() => {
+    setDiagramLoaded(false);
+  }, [diagramVersionFromQuery, projectId]);
+
   // Load diagram from summary when available
   useEffect(() => {
+    const diagramJson = diagramRowForLoad?.diagram_json;
+
     if (
       !projectId ||
       loadingSummary ||
       diagramLoaded ||
       projectId !== lastLoadedProjectId ||
       (summaryProjectId !== null && summaryProjectId !== projectId) ||
-      !summary?.latest_diagram_version?.diagram_json
+      !diagramJson ||
+      typeof diagramJson !== "object"
     ) {
       return;
     }
 
-    const diagramJson = summary.latest_diagram_version.diagram_json;
-    if (diagramJson && typeof diagramJson === "object") {
-      try {
-        console.log("Loading diagram from summary:", diagramJson);
-        loadDiagramFromJson(diagramJson as any);
-        setLastLoadedProjectId(projectId);
-      } catch (error) {
-        console.error("Failed to load diagram from summary:", error);
-      }
-    } else {
-      console.log("No diagram_json found in summary:", summary);
+    try {
+      console.log("Loading diagram from summary:", diagramJson);
+      const normalized = normalizeDiagramJsonForLoader(diagramJson as Record<string, unknown>);
+      loadDiagramFromJson(normalized as any);
+      setLastLoadedProjectId(projectId);
+    } catch (error) {
+      console.error("Failed to load diagram from summary:", error);
     }
   }, [
     projectId,
@@ -1228,6 +1255,7 @@ export default function DrawDiagram() {
     diagramLoaded,
     loadDiagramFromJson,
     lastLoadedProjectId,
+    diagramRowForLoad,
   ]);
 
   useEffect(() => {
@@ -1559,6 +1587,7 @@ export default function DrawDiagram() {
           projectId,
           versionId: diagramVersionIdForSave,
           diagram_json: diagramJson,
+          spec_summary: backendFormat.spec_summary,
           ...(imageObjectKey ? { image_object_key: imageObjectKey } : {}),
         }).unwrap()) as Record<string, unknown>;
       } else {

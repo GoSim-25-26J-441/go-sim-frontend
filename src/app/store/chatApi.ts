@@ -115,7 +115,8 @@ export const chatApi = createApi({
       providesTags: ["ChatThreads"],
     }),
 
-    getProjectThreadId: builder.query<string | null, string>({
+    /** Project's main chat thread (binding + pinned diagram) for this project_public_id */
+    getProjectThread: builder.query<Thread | null, string>({
       query: () => ({
         url: "/api/projects/chats",
         method: "GET",
@@ -125,9 +126,12 @@ export const chatApi = createApi({
           throw new Error(res?.error || "Failed to get threads");
         }
         const thread = res.threads.find((t) => t.project_public_id === projectId);
-        return thread?.id ?? null;
+        return thread ?? null;
       },
-      providesTags: ["ChatThreads"],
+      providesTags: (result, err, projectId) => [
+        { type: "ChatThreads", id: projectId },
+        "ChatThreads",
+      ],
     }),
 
     getMessages: builder.query<
@@ -212,6 +216,8 @@ export const chatApi = createApi({
       },
       invalidatesTags: (_result, _err, arg) => [
         { type: "ChatMessages", id: `${arg.projectId}-${arg.threadId}` },
+        "ChatThreads",
+        { type: "ChatThreads", id: arg.projectId },
       ],
     }),
   }),
@@ -220,7 +226,7 @@ export const chatApi = createApi({
 export const {
   useGetThreadsQuery,
   useLazyGetThreadsQuery,
-  useGetProjectThreadIdQuery,
+  useGetProjectThreadQuery,
   useGetMessagesQuery,
   useSendMessageMutation,
 } = chatApi;

@@ -37,6 +37,7 @@ export type ProjectDiagramImage = {
   id: string;
   title?: string;
   image_object_key: string;
+  image_url?: string;
   created_at?: string;
   [key: string]: unknown;
 };

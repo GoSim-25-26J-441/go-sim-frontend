@@ -73,6 +73,8 @@ export interface AmgApdVersionSummary {
   id: string;
   version_number: number;
   title: string;
+  /** e.g. amg_apd | canvas_json — absent on older API responses (treated as amg_apd). */
+  source?: string;
   created_at: string;
 }
 

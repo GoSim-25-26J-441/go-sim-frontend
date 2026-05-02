@@ -44,8 +44,9 @@ type Props = {
   onResetCanvas?: () => void;
   resetDisabled?: boolean;
 
-  newDesignerTourEnabled?: boolean;
-  onNewDesignerTourEnabledChange?: (v: boolean) => void;
+  /** Toggle guided highlights (welcome + ? markers). */
+  guidesActive?: boolean;
+  onGuidesToggle?: () => void;
 };
 
 export default function ControlPanel({
@@ -61,8 +62,6 @@ export default function ControlPanel({
   fullscreenButton,
   onResetCanvas,
   resetDisabled = false,
-  newDesignerTourEnabled,
-  onNewDesignerTourEnabledChange,
 }: Props) {
   const {
     services,
@@ -75,10 +74,6 @@ export default function ControlPanel({
     edges,
     detections,
   } = stats;
-
-  const showDesignerSwitch =
-    typeof newDesignerTourEnabled === "boolean" &&
-    typeof onNewDesignerTourEnabledChange === "function";
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
@@ -170,43 +165,6 @@ export default function ControlPanel({
                     ? "Exit fullscreen"
                     : "Fullscreen"}
                 </button>
-
-                {showDesignerSwitch && (
-                  <div
-                    className="inline-flex h-7 items-center gap-2 rounded-md border border-black/10 bg-white px-2 text-black transition-colors duration-150 hover:bg-gray-200"
-                    data-amg-designer={AMG_DESIGNER.newDesignerSwitch}
-                  >
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={newDesignerTourEnabled}
-                      title={
-                        newDesignerTourEnabled
-                          ? "New Designer hints and preset explanations on"
-                          : "New Designer hints and preset explanations off"
-                      }
-                      onClick={() =>
-                        onNewDesignerTourEnabledChange(!newDesignerTourEnabled)
-                      }
-                      className={`relative h-[18px] w-[34px] shrink-0 rounded-full border transition-colors duration-200 ${
-                        newDesignerTourEnabled
-                          ? "border-neutral-800 bg-neutral-950 shadow-inner shadow-black/20"
-                          : "border-neutral-400/80 bg-neutral-200"
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-px left-px h-4 w-4 rounded-full shadow-sm transition-[transform,background-color] duration-200 ease-out ${
-                          newDesignerTourEnabled
-                            ? "translate-x-4 bg-neutral-200 ring-1 ring-black/10"
-                            : "translate-x-0 bg-neutral-950 ring-1 ring-black/10"
-                        }`}
-                      />
-                    </button>
-                    <span className="text-[10px] font-medium tracking-wide whitespace-nowrap">
-                      New Designer
-                    </span>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -214,43 +172,44 @@ export default function ControlPanel({
       </div>
 
       <div
-        className="flex flex-wrap items-center gap-2 text-[11px] pt-0.5 border-t border-white/10"
+        className="flex flex-wrap items-center gap-2 text-[11px] pt-0.5 border-t border-gray-700"
         data-amg-designer={AMG_DESIGNER.stats}
       >
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        {/** Match Topbar user menu: bg-[#1F1F1F] + border-gray-700 */}
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Services:{" "}
           <strong className="font-semibold text-white">{services}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Gateways:{" "}
           <strong className="font-semibold text-white">{gateways}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Topics:{" "}
           <strong className="font-semibold text-white">{eventTopics}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Databases:{" "}
           <strong className="font-semibold text-white">{databases}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           External:{" "}
           <strong className="font-semibold text-white">
             {externalSystems}
           </strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Clients:{" "}
           <strong className="font-semibold text-white">{clients}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Actors:{" "}
           <strong className="font-semibold text-white">{userActors}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Edges: <strong className="font-semibold text-white">{edges}</strong>
         </span>
-        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+        <span className="mt-2 rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-1.5 text-gray-300">
           Anti-patterns:{" "}
           <strong className="font-semibold text-white">{detections}</strong>
         </span>

@@ -161,7 +161,20 @@ export default function VersionSidebar({
     }
   }
 
+  function versionDeletableInDesigner(v: AmgApdVersionSummary) {
+    const s = v.source?.trim();
+    return !s || s === "amg_apd";
+  }
+
   async function handleDelete(id: string) {
+    const row = versions.find((x) => x.id === id);
+    if (row && !versionDeletableInDesigner(row)) {
+      showToast(
+        "This version is the main diagram snapshot; it cannot be removed from this list.",
+        "info",
+      );
+      return;
+    }
     if (versions.length <= 1) {
       setLastVersionBlockOpen(true);
       return;
@@ -193,6 +206,13 @@ export default function VersionSidebar({
   }
 
   function startRename(v: AmgApdVersionSummary) {
+    if (!versionDeletableInDesigner(v)) {
+      showToast(
+        "Rename this version from the diagram page or project settings.",
+        "info",
+      );
+      return;
+    }
     setEditingId(v.id);
     setEditingTitle(
       v.title || `diagramV${v.version_number}`,
@@ -385,6 +405,11 @@ export default function VersionSidebar({
                           title={v.title}
                         >
                           #{v.version_number} {v.title || "Untitled"}
+                          {v.source === "canvas_json" ? (
+                            <span className="ml-1.5 text-[10px] font-normal text-white/45">
+                              (canvas)
+                            </span>
+                          ) : null}
                         </div>
                         <div className="text-[10px] text-white/50 mt-1">
                           {formatDate(v.created_at)}
@@ -400,29 +425,33 @@ export default function VersionSidebar({
                           >
                             Move to this version
                           </button>
-                          <button
-                            type="button"
-                            data-amg-designer={
-                              idx === 0 ? AMG_DESIGNER.versionRename : undefined
-                            }
-                            onClick={() => startRename(v)}
-                            className="flex items-center gap-2 transition-all duration-150 text-white mx-4"
-                            title="Rename version"
-                          >
-                            <PenLine className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            data-amg-designer={
-                              idx === 0 ? AMG_DESIGNER.versionDelete : undefined
-                            }
-                            onClick={() => handleDelete(v.id)}
-                            disabled={deletingId === v.id}
-                            className="flex items-center transition-all duration-150 text-red-800"
-                            title="Delete version"
-                          >
-                            <Trash className="w-4 h-4" />
-                          </button>
+                          {versionDeletableInDesigner(v) ? (
+                            <button
+                              type="button"
+                              data-amg-designer={
+                                idx === 0 ? AMG_DESIGNER.versionRename : undefined
+                              }
+                              onClick={() => startRename(v)}
+                              className="flex items-center gap-2 transition-all duration-150 text-white mx-4"
+                              title="Rename version"
+                            >
+                              <PenLine className="w-4 h-4" />
+                            </button>
+                          ) : null}
+                          {versionDeletableInDesigner(v) ? (
+                            <button
+                              type="button"
+                              data-amg-designer={
+                                idx === 0 ? AMG_DESIGNER.versionDelete : undefined
+                              }
+                              onClick={() => handleDelete(v.id)}
+                              disabled={deletingId === v.id}
+                              className="flex items-center transition-all duration-150 text-red-800"
+                              title="Delete version"
+                            >
+                              <Trash className="w-4 h-4" />
+                            </button>
+                          ) : null}
                         </div>
                       </>
                     )}
