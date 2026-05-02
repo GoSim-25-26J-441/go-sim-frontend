@@ -12,6 +12,7 @@ import {
   isSimulationApiError,
   putDiagramScenarioDraft,
   regenerateDiagramScenario,
+  type DiagramScenarioDraftResponse,
   type ScenarioValidationResult,
   validateScenarioYaml,
 } from "@/lib/api-client/simulation";
@@ -56,6 +57,56 @@ function scenarioDraftHttpMessage(e: unknown, fallback: string): string {
     return d ? `${base}\n${d}` : base;
   }
   return e instanceof Error ? e.message : fallback;
+}
+
+/** Fields returned by GET/PUT/regenerate diagram scenario when persisted metadata exists */
+type ScenarioDraftMetadata = {
+  scenario_hash?: string;
+  source?: string;
+  source_hash?: string;
+  s3_path?: string;
+  updated_at?: string;
+};
+
+function extractScenarioDraftMetadata(
+  data: DiagramScenarioDraftResponse | Record<string, unknown>,
+): ScenarioDraftMetadata | null {
+  const scenario_hash =
+    typeof data.scenario_hash === "string" ? data.scenario_hash.trim() : "";
+  const source = typeof data.source === "string" ? data.source.trim() : "";
+  const source_hash =
+    typeof data.source_hash === "string" ? data.source_hash.trim() : "";
+  const s3_path = typeof data.s3_path === "string" ? data.s3_path.trim() : "";
+  const updated_at =
+    typeof data.updated_at === "string" ? data.updated_at.trim() : "";
+  if (!scenario_hash && !source && !source_hash && !s3_path && !updated_at) {
+    return null;
+  }
+  return {
+    ...(scenario_hash ? { scenario_hash } : {}),
+    ...(source ? { source } : {}),
+    ...(source_hash ? { source_hash } : {}),
+    ...(s3_path ? { s3_path } : {}),
+    ...(updated_at ? { updated_at } : {}),
+  };
+}
+
+function shortenHashDisplay(hash: string, maxLen = 12): string {
+  if (hash.length <= maxLen) return hash;
+  return `${hash.slice(0, maxLen)}…`;
+}
+
+function formatScenarioUpdatedAt(raw: string): string {
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? raw : d.toLocaleString();
+}
+
+function scenarioDraftMetadataHasFields(m: ScenarioDraftMetadata | null): m is ScenarioDraftMetadata {
+  if (!m) return false;
+  return Object.keys(m).some((k) => {
+    const v = m[k as keyof ScenarioDraftMetadata];
+    return typeof v === "string" && v.length > 0;
+  });
 }
 
 /** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
@@ -195,6 +246,8 @@ export default function ProjectNewSimulationPage() {
   const [scenarioDraftStatusLabel, setScenarioDraftStatusLabel] = useState<string | null>(null);
   /** Last YAML persisted on the server for this diagram version (dirty detection). Null = sample or fallback/local-only. */
   const [savedScenarioYaml, setSavedScenarioYaml] = useState<string | null>(null);
+  /** Server-returned hashes/path/time for the diagram scenario draft (non-sample only). Cleared on sample/fallback/errors. */
+  const [scenarioDraftMetadata, setScenarioDraftMetadata] = useState<ScenarioDraftMetadata | null>(null);
   const [usedLocalScenarioFallback, setUsedLocalScenarioFallback] = useState(false);
   const [saveScenarioBusy, setSaveScenarioBusy] = useState(false);
   const [regenerateBusy, setRegenerateBusy] = useState(false);
@@ -308,6 +361,7 @@ export default function ProjectNewSimulationPage() {
     setScenarioDraftError(null);
     setScenarioDraftStatusLabel(null);
     setSavedScenarioYaml(null);
+    setScenarioDraftMetadata(null);
     setUsedLocalScenarioFallback(false);
     setSampleScenarioReady(false);
     setScenario(createInitialScenarioEditorState());
@@ -349,6 +403,7 @@ export default function ProjectNewSimulationPage() {
         setScenario(amgApdTemplateToScenarioState(amg));
         setScenarioError(null);
         setSavedScenarioYaml(null);
+        setScenarioDraftMetadata(null);
         setScenarioDraftStatusLabel(null);
         setUsedLocalScenarioFallback(true);
         setScenarioDraftError(
@@ -365,6 +420,7 @@ export default function ProjectNewSimulationPage() {
       setScenarioDraftError(null);
       setUsedLocalScenarioFallback(false);
       setSavedScenarioYaml(null);
+      setScenarioDraftMetadata(null);
       setScenarioDraftStatusLabel(null);
       setScenario(createInitialScenarioEditorState());
       setScenarioError(null);
@@ -374,17 +430,20 @@ export default function ProjectNewSimulationPage() {
         const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
         if (!yaml.trim()) {
           setScenarioDraftError("The simulation service returned an empty scenario for this diagram version.");
+          setScenarioDraftMetadata(null);
           return;
         }
         const parsed = parseSimulationScenarioYaml(yaml);
         if (!parsed.ok) {
           setScenarioDraftError(`Could not parse scenario YAML: ${parsed.error}`);
+          setScenarioDraftMetadata(null);
           return;
         }
         setScenario(parsed.state as ScenarioState);
         setScenarioError(null);
         setSavedScenarioYaml(yaml.trim());
         setScenarioDraftStatusLabel(draftStatusFromResponse(data as Record<string, unknown>));
+        setScenarioDraftMetadata(extractScenarioDraftMetadata(data));
       } catch (e) {
         if (cancelled) return;
         const canTryFallback =
@@ -395,6 +454,7 @@ export default function ProjectNewSimulationPage() {
         if (isClientError) {
           setScenarioDraftError(scenarioDraftHttpMessage(e, "Failed to load scenario draft"));
           setSavedScenarioYaml(null);
+          setScenarioDraftMetadata(null);
           return;
         }
         if (canTryFallback && (await tryLocalAmgFallback())) return;
@@ -403,6 +463,7 @@ export default function ProjectNewSimulationPage() {
             (canTryFallback ? " No local diagram fallback was available." : "")
         );
         setSavedScenarioYaml(null);
+        setScenarioDraftMetadata(null);
       } finally {
         if (!cancelled) setScenarioDraftLoading(false);
       }
@@ -527,18 +588,22 @@ export default function ProjectNewSimulationPage() {
     return scenarioYaml.trim() === canonicalSavedScenarioYaml;
   }, [isSampleScenario, canonicalSavedScenarioYaml, scenarioYaml]);
 
-  const applyDraftResponseToEditor = (data: { scenario_yaml?: string } & Record<string, unknown>) => {
+  const applyDraftResponseToEditor = (
+    data: DiagramScenarioDraftResponse | Record<string, unknown>,
+  ) => {
     const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
     if (!yaml.trim()) return;
     const parsed = parseSimulationScenarioYaml(yaml);
     if (!parsed.ok) {
       setScenarioDraftError(`Could not parse scenario YAML: ${parsed.error}`);
+      setScenarioDraftMetadata(null);
       return;
     }
     setScenario(parsed.state as ScenarioState);
     setScenarioError(null);
     setSavedScenarioYaml(yaml.trim());
-    const label = draftStatusFromResponse(data);
+    setScenarioDraftMetadata(extractScenarioDraftMetadata(data));
+    const label = draftStatusFromResponse(data as Record<string, unknown>);
     if (label) setScenarioDraftStatusLabel(label);
   };
 
@@ -553,8 +618,18 @@ export default function ProjectNewSimulationPage() {
       });
       const y = scenarioYaml.trim();
       setSavedScenarioYaml(y);
-      if (res && typeof res === "object" && "scenario_yaml" in res && res.scenario_yaml) {
-        applyDraftResponseToEditor(res as Record<string, unknown>);
+      if (res && typeof res === "object") {
+        const yamlStr =
+          typeof (res as { scenario_yaml?: string }).scenario_yaml === "string"
+            ? (res as { scenario_yaml: string }).scenario_yaml
+            : "";
+        if (yamlStr.trim()) {
+          applyDraftResponseToEditor(res as DiagramScenarioDraftResponse);
+        } else {
+          const meta = extractScenarioDraftMetadata(res as Record<string, unknown>);
+          if (meta) setScenarioDraftMetadata(meta);
+          setScenarioDraftStatusLabel("edited");
+        }
       } else {
         setScenarioDraftStatusLabel("edited");
       }
@@ -573,8 +648,18 @@ export default function ProjectNewSimulationPage() {
             });
             const y = scenarioYaml.trim();
             setSavedScenarioYaml(y);
-            if (res && typeof res === "object" && "scenario_yaml" in res && res.scenario_yaml) {
-              applyDraftResponseToEditor(res as Record<string, unknown>);
+            if (res && typeof res === "object") {
+              const yamlStr =
+                typeof (res as { scenario_yaml?: string }).scenario_yaml === "string"
+                  ? (res as { scenario_yaml: string }).scenario_yaml
+                  : "";
+              if (yamlStr.trim()) {
+                applyDraftResponseToEditor(res as DiagramScenarioDraftResponse);
+              } else {
+                const meta = extractScenarioDraftMetadata(res as Record<string, unknown>);
+                if (meta) setScenarioDraftMetadata(meta);
+                setScenarioDraftStatusLabel("edited");
+              }
             } else {
               setScenarioDraftStatusLabel("edited");
             }
@@ -2022,45 +2107,106 @@ export default function ProjectNewSimulationPage() {
               )}
 
               {!isSampleScenario && (
-                <div className="flex flex-wrap items-center gap-2 justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
-                    {scenarioDraftLoading ? (
-                      <span className="flex items-center gap-2 text-white/60">
-                        <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-                        Loading scenario from simulation service…
-                      </span>
-                    ) : (
-                      <>
-                        {scenarioDraftStatusLabel && (
-                          <span className="rounded bg-white/10 px-2 py-0.5 font-medium text-white/90 capitalize">
-                            {scenarioDraftStatusLabel}
-                          </span>
-                        )}
-                        {!scenarioDraftLoading && !isDiagramScenarioSynced && (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
+                      {scenarioDraftLoading ? (
+                        <span className="flex items-center gap-2 text-white/60">
+                          <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                          Loading scenario from simulation service…
+                        </span>
+                      ) : (
+                        <>
+                          {scenarioDraftStatusLabel && (
+                            <span className="rounded bg-white/10 px-2 py-0.5 font-medium text-white/90 capitalize">
+                              {scenarioDraftStatusLabel}
+                            </span>
+                          )}
+                          {!scenarioDraftLoading && !isDiagramScenarioSynced && (
                             <span className="text-amber-200/90">Unsaved changes</span>
                           )}
-                      </>
-                    )}
+                        </>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={diagramScenarioDraftBlocked || saveScenarioBusy || isSampleScenario}
+                        onClick={() => void handleSaveDiagramScenario()}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/10 text-white hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {saveScenarioBusy ? "Saving…" : "Save scenario"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={scenarioDraftLoading || regenerateBusy || isSampleScenario}
+                        onClick={() => void handleRegenerateDiagramScenario()}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-sky-500/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {regenerateBusy ? "Regenerating…" : "Regenerate from diagram"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={diagramScenarioDraftBlocked || saveScenarioBusy || isSampleScenario}
-                      onClick={() => void handleSaveDiagramScenario()}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/10 text-white hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {saveScenarioBusy ? "Saving…" : "Save scenario"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={scenarioDraftLoading || regenerateBusy || isSampleScenario}
-                      onClick={() => void handleRegenerateDiagramScenario()}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-sky-500/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {regenerateBusy ? "Regenerating…" : "Regenerate from diagram"}
-                    </button>
-                  </div>
-                </div>
+
+                  {scenarioDraftMetadataHasFields(scenarioDraftMetadata) && (
+                    <div className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-white/45 mb-1.5">
+                        Saved scenario
+                      </div>
+                      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] leading-snug">
+                        {scenarioDraftMetadata.source ? (
+                          <>
+                            <dt className="text-white/40 shrink-0">Source</dt>
+                            <dd className="text-white/85 font-medium truncate" title={scenarioDraftMetadata.source}>
+                              {scenarioDraftMetadata.source}
+                            </dd>
+                          </>
+                        ) : null}
+                        {scenarioDraftMetadata.scenario_hash ? (
+                          <>
+                            <dt className="text-white/40 shrink-0">Scenario hash</dt>
+                            <dd
+                              className="font-mono text-white/80 truncate"
+                              title={scenarioDraftMetadata.scenario_hash}
+                            >
+                              {shortenHashDisplay(scenarioDraftMetadata.scenario_hash)}
+                            </dd>
+                          </>
+                        ) : null}
+                        {scenarioDraftMetadata.source_hash ? (
+                          <>
+                            <dt className="text-white/40 shrink-0">Source hash</dt>
+                            <dd
+                              className="font-mono text-white/80 truncate"
+                              title={scenarioDraftMetadata.source_hash}
+                            >
+                              {shortenHashDisplay(scenarioDraftMetadata.source_hash)}
+                            </dd>
+                          </>
+                        ) : null}
+                        {scenarioDraftMetadata.s3_path ? (
+                          <>
+                            <dt className="text-white/40 shrink-0">S3 path</dt>
+                            <dd
+                              className="font-mono text-white/75 truncate min-w-0"
+                              title={scenarioDraftMetadata.s3_path}
+                            >
+                              {scenarioDraftMetadata.s3_path}
+                            </dd>
+                          </>
+                        ) : null}
+                        {scenarioDraftMetadata.updated_at ? (
+                          <>
+                            <dt className="text-white/40 shrink-0">Updated</dt>
+                            <dd className="text-white/85 truncate" title={scenarioDraftMetadata.updated_at}>
+                              {formatScenarioUpdatedAt(scenarioDraftMetadata.updated_at)}
+                            </dd>
+                          </>
+                        ) : null}
+                      </dl>
+                    </div>
+                  )}
+                </>
               )}
 
               <ScenarioBehaviorEditor
