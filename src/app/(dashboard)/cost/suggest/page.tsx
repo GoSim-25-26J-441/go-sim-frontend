@@ -84,12 +84,16 @@ function delay(ms: number): Promise<void> {
     });
 }
 
-function mapRunCandidatesToSuggest(candidates: RunCandidateItem[]): Candidate[] {
+function mapRunCandidatesToSuggest(
+    candidates: RunCandidateItem[],
+    nodeCount: number,
+): Candidate[] {
+    const normalizedNodes = nodeCount > 0 ? nodeCount : 1;
     return candidates.map((c) => ({
         id: c.id,
         spec: {
-            vcpu: c.spec.vcpu,
-            memory_gb: c.spec.memory_gb,
+            vcpu: c.spec.vcpu / normalizedNodes,
+            memory_gb: c.spec.memory_gb / normalizedNodes,
             label: c.spec.label ?? c.id,
         },
         metrics: {
@@ -145,8 +149,10 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     console.log('[cost/suggest] fetchRunCandidates:result', runData);
                     if (cancelled) return;
 
+                    const initialNodes = runData.simulation?.nodes ?? 1;
                     let mappedCandidates = mapRunCandidatesToSuggest(
                         runData.candidates ?? [],
+                        initialNodes,
                     );
                     let emptyPolls = 0;
                     while (
@@ -165,6 +171,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                         if (cancelled) return;
                         mappedCandidates = mapRunCandidatesToSuggest(
                             runData.candidates ?? [],
+                            runData.simulation?.nodes ?? initialNodes,
                         );
                         emptyPolls += 1;
                     }
