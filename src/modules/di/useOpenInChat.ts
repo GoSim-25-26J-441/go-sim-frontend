@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { getFirebaseIdToken } from "@/lib/firebase/auth";
 import { getProjectThreadId } from "./getProjectThread";
+import { pinProjectChatThreadToDiagramVersion } from "./pinProjectChatThread";
 
 type OpenChatFromDiagramOpts = {
   onLoadingChange?: (loading: boolean, message?: string) => void;
@@ -36,19 +37,28 @@ export function useOpenInChat() {
 
     opts?.onLoadingChange?.(true, "Checking for existing chat...");
 
+    const diagramVersionIdTrimmed = opts?.diagramVersionId?.trim() || undefined;
+
     try {
       // Step 1: Check if thread already exists for this project
       const existingThreadId = await getProjectThreadId(projectId);
       
       if (existingThreadId) {
         console.log("Found existing thread:", existingThreadId);
+        if (diagramVersionIdTrimmed) {
+          opts?.onLoadingChange?.(true, "Pinning chat to this diagram version…");
+          await pinProjectChatThreadToDiagramVersion(
+            projectId,
+            existingThreadId,
+            diagramVersionIdTrimmed,
+          );
+        }
         opts?.onLoadingChange?.(false);
-        // Same as before unless we need to pass a freshly saved diagram version
-        if (opts?.diagramVersionId) {
+        if (diagramVersionIdTrimmed) {
           router.push(
             chatQueryFromThread(projectId, existingThreadId, {
               fromDiagram: true,
-              diagramVersionId: opts.diagramVersionId,
+              diagramVersionId: diagramVersionIdTrimmed,
             }),
           );
         } else {
@@ -86,12 +96,12 @@ export function useOpenInChat() {
       const threadData = await createThreadRes.json();
       console.log("Thread creation response:", threadData);
       
-      // Try multiple possible response formats
-      const newThreadId = 
-        threadData?.thread_id || 
-        threadData?.id || 
-        threadData?.threadId ||
+      // Try multiple possible response formats (backend returns { ok, thread: { id } })
+      const newThreadId =
         threadData?.thread?.id ||
+        threadData?.thread_id ||
+        threadData?.id ||
+        threadData?.threadId ||
         threadData?.thread?.thread_id ||
         threadData?.data?.id ||
         threadData?.data?.thread_id;
@@ -103,13 +113,22 @@ export function useOpenInChat() {
       
       console.log("Extracted thread ID:", newThreadId);
 
+      if (diagramVersionIdTrimmed) {
+        opts?.onLoadingChange?.(true, "Pinning chat to this diagram version…");
+        await pinProjectChatThreadToDiagramVersion(
+          projectId,
+          newThreadId,
+          diagramVersionIdTrimmed,
+        );
+      }
+
       opts?.onLoadingChange?.(false);
 
       // Navigate to chat — user will send their own first message
       router.push(
         chatQueryFromThread(projectId, newThreadId, {
           fromDiagram: true,
-          diagramVersionId: opts?.diagramVersionId,
+          diagramVersionId: diagramVersionIdTrimmed,
         }),
       );
       
