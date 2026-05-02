@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { RotateCcw, X } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
@@ -21,11 +22,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 import { fetchLatestProjectDiagramVersionId } from "@/modules/di/fetchLatestProjectDiagramVersionId";
 import { fetchMaxDiagramVersionNumberForProject } from "@/modules/di/fetchMaxDiagramVersionNumberForProject";
-import type {
-  AnalysisResult,
-  AmgApdVersionSummary,
-  Graph,
-} from "@/app/features/amg-apd/types";
+import type { AnalysisResult, Graph } from "@/app/features/amg-apd/types";
 import {
   nodeLayoutPayloadFromGraph,
   type NodeLayoutPayload,
@@ -36,12 +33,18 @@ type PatternsViewProps = {
   onReturnToChat?: () => void;
   /** When false, versions / downloads / legend strip scrolls with the page. */
   stickyToolbar?: boolean;
+  /** Opens the simulation version picker (parent page modal). Used by guides tour. */
+  onRequestOpenSimulationModal?: () => void;
+  /** Close parent simulation modal when a tour chapter ends. */
+  onCloseSimulationModal?: () => void;
 };
 
 export default function PatternsView({
   projectId,
   onReturnToChat,
   stickyToolbar = true,
+  onRequestOpenSimulationModal,
+  onCloseSimulationModal,
 }: PatternsViewProps) {
   const router = useRouter();
   const last = useAmgApdStore((s) => s.last);
@@ -72,11 +75,7 @@ export default function PatternsView({
   const [err, setErr] = useState<string | null>(null);
   const [graphVersion, setGraphVersion] = useState(0);
   const [versionCount, setVersionCount] = useState<number | null>(null);
-  const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [versionsRefreshTrigger, setVersionsRefreshTrigger] = useState(0);
-  const [simulationModalOpen, setSimulationModalOpen] = useState(false);
-  const [simulationSelectedVersion, setSimulationSelectedVersion] =
-    useState("");
   const [duplicateNameForModal, setDuplicateNameForModal] = useState<
     string | null
   >(null);
@@ -85,7 +84,16 @@ export default function PatternsView({
     null | "generating" | "success"
   >(null);
 
-  const [newDesignerTourEnabled, setNewDesignerTourEnabled] = useState(true);
+  const newDesignerTourEnabled = useAmgApdStore(
+    (s) => s.patternsGuidesEnabled,
+  );
+  const setNewDesignerTourEnabled = useAmgApdStore(
+    (s) => s.setPatternsGuidesEnabled,
+  );
+  const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
+  const patternsGuidesWelcomeOnEnable = useAmgApdStore(
+    (s) => s.patternsGuidesWelcomeOnEnable,
+  );
   const [designerTourVersionsNonce, setDesignerTourVersionsNonce] =
     useState(0);
   const [designerTourWorkspaceNonce, setDesignerTourWorkspaceNonce] =
@@ -95,7 +103,6 @@ export default function PatternsView({
   const [designerTourSuggestionPreviewExpandNonce, setDesignerTourSuggestionPreviewExpandNonce] =
     useState(0);
   const [designerWelcomeOpen, setDesignerWelcomeOpen] = useState(false);
-  const dismissedDesignerWelcomeRef = useRef(false);
   const [designerResetAckOpen, setDesignerResetAckOpen] = useState(false);
 
   const openVersionsForTour = useCallback(() => {
@@ -110,33 +117,27 @@ export default function PatternsView({
   const expandSuggestionFirstPreviewForTour = useCallback(() => {
     setDesignerTourSuggestionPreviewExpandNonce((n) => n + 1);
   }, []);
-  const openSimulationModalForTour = useCallback(() => {
-    setSimulationModalOpen(true);
-  }, []);
-
   const dismissDesignerWelcome = useCallback(() => {
-    dismissedDesignerWelcomeRef.current = true;
     setDesignerWelcomeOpen(false);
   }, []);
 
   const handleTourChapterClose = useCallback(() => {
     setOpen(false);
-    setSimulationModalOpen(false);
-  }, []);
+    onCloseSimulationModal?.();
+  }, [onCloseSimulationModal]);
 
   useEffect(() => {
     if (!newDesignerTourEnabled) {
-      dismissedDesignerWelcomeRef.current = false;
       setDesignerWelcomeOpen(false);
     }
   }, [newDesignerTourEnabled]);
 
+  /** Welcome intro only when user turns guides on via Guides toggle — not on every visit. */
   useEffect(() => {
-    if (!newDesignerTourEnabled || !last?.graph || dismissedDesignerWelcomeRef.current) {
-      return;
-    }
+    if (!patternsGuidesWelcomeOnEnable || !newDesignerTourEnabled) return;
     setDesignerWelcomeOpen(true);
-  }, [newDesignerTourEnabled, last?.graph]);
+    useAmgApdStore.setState({ patternsGuidesWelcomeOnEnable: false });
+  }, [patternsGuidesWelcomeOnEnable, newDesignerTourEnabled]);
 
   useEffect(() => {
     setPatternsGraphFullscreen(fullscreenOpen);
@@ -234,7 +235,6 @@ export default function PatternsView({
       if (!res.ok) return;
       const data = await res.json();
       const list = data?.versions ?? [];
-      setVersions(list);
       setVersionCount(list.length);
     } catch {
       // ignore
@@ -326,11 +326,9 @@ export default function PatternsView({
         if (!res.ok) return;
         const data = await res.json();
         const list = data?.versions ?? [];
-        setVersions(list);
         setVersionCount(list.length);
       } catch {
         setVersionCount(null);
-        setVersions([]);
       }
     })();
   }, [last?.graph, projectId]);
@@ -353,18 +351,6 @@ export default function PatternsView({
     } else {
       showToast("Return to Chat is not available here", "info");
     }
-  }
-
-  function handleSimulationConfirm() {
-    if (projectId && simulationSelectedVersion) {
-      router.push(
-        `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
-      );
-    } else {
-      showToast("Please select a version first", "warning");
-    }
-    setSimulationModalOpen(false);
-    setSimulationSelectedVersion("");
   }
 
   function handleDownloadYaml() {
@@ -645,82 +631,6 @@ export default function PatternsView({
           : "mx-auto flex min-h-0 w-full max-w-400 flex-col space-y-2 overflow-x-hidden pb-6"
       }
     >
-      {simulationModalOpen && (
-        <div
-          className="fixed inset-0 z-99999 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md"
-          onClick={(e) =>
-            e.target === e.currentTarget && setSimulationModalOpen(false)
-          }
-        >
-          <div
-            data-amg-designer={AMG_DESIGNER.simulationModal}
-            className="w-full max-w-md overflow-hidden rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-white/10 bg-slate-900/80 px-6 py-5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
-                Performance simulation
-              </p>
-              <h3 className="mt-1.5 text-lg font-semibold tracking-tight text-white">
-                Continue to simulator
-              </h3>
-              <p className="mt-2 text-sm leading-relaxed text-white/60">
-                Pick a saved diagram version. The simulator loads that snapshot so results match what you see in
-                patterns.
-              </p>
-            </div>
-
-            <div className="px-6 py-5">
-              <div
-                className="flex flex-col gap-2"
-                data-amg-designer={AMG_DESIGNER.simulationVersionSelect}
-              >
-                <label
-                  htmlFor="simulation-version-select"
-                  className="text-[11px] font-semibold uppercase tracking-wider text-slate-400"
-                >
-                  Version
-                </label>
-                <select
-                  id="simulation-version-select"
-                  className="rounded-xl border border-white/15 bg-slate-900/90 px-4 py-3 text-sm text-white shadow-inner shadow-black/20 transition-colors focus:border-sky-500/50 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
-                  value={simulationSelectedVersion}
-                  onChange={(e) => setSimulationSelectedVersion(e.target.value)}
-                >
-                  <option value="">Select a version…</option>
-                  {versions.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      #{v.version_number} {v.title || "Untitled"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div
-              className="flex justify-end gap-2 border-t border-white/10 bg-slate-900/70 px-6 py-4"
-              data-amg-designer={AMG_DESIGNER.simulationModalFooter}
-            >
-              <button
-                type="button"
-                onClick={() => setSimulationModalOpen(false)}
-                className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-white/85 transition-colors hover:border-white/25 hover:bg-white/10"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSimulationConfirm}
-                disabled={!simulationSelectedVersion}
-                className="rounded-lg border border-emerald-500/40 bg-emerald-600/90 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500/95 disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                Proceed
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <SuggestionModal
         open={open}
         loading={loadingSug}
@@ -742,7 +652,7 @@ export default function PatternsView({
         hasSuggestionsTour={hasDetections && !!editedYaml}
         onRunSuggestionsForTour={openSuggestions}
         onRequestExpandSuggestionFirstPreview={expandSuggestionFirstPreviewForTour}
-        onRequestOpenSimulationModal={openSimulationModalForTour}
+        onRequestOpenSimulationModal={onRequestOpenSimulationModal}
         hasReturnToChatTour={!onReturnToChat}
         welcomeIntroOpen={designerWelcomeOpen}
         onDismissWelcomeIntro={dismissDesignerWelcome}
@@ -845,7 +755,7 @@ export default function PatternsView({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-3 pt-2">
             <div
               className="min-w-0"
               data-amg-designer={AMG_DESIGNER.legend}
@@ -854,17 +764,6 @@ export default function PatternsView({
                 versionCount={versionCount ?? undefined}
                 showNodeTypes={false}
               />
-            </div>
-
-            <div className="shrink-0">
-              <button
-                type="button"
-                data-amg-designer={AMG_DESIGNER.simulator}
-                onClick={() => setSimulationModalOpen(true)}
-                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
-              >
-                Proceed to Performance Simulator
-              </button>
             </div>
           </div>
         </div>
@@ -931,7 +830,8 @@ export default function PatternsView({
                 isFullscreen: fullscreenOpen,
               }}
               newDesignerTourEnabled={newDesignerTourEnabled}
-              onNewDesignerTourEnabledChange={setNewDesignerTourEnabled}
+              guidesActive={newDesignerTourEnabled}
+              onGuidesToggle={togglePatternsGuides}
               designerTourWorkspaceNonce={designerTourWorkspaceNonce}
               designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
             />
@@ -1016,41 +916,82 @@ export default function PatternsView({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md"
+            className="fixed inset-0 z-220000 flex items-center justify-center bg-black/10 p-4 backdrop-blur-md"
             onClick={(e) => {
               if (e.target === e.currentTarget) setDesignerResetAckOpen(false);
             }}
           >
             <div
-              className="w-full max-w-md rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
+              className="relative mx-4 flex w-full max-w-md flex-col overflow-hidden rounded-md shadow-xl bg-[#1F1F1F]"
               onClick={(e) => e.stopPropagation()}
               role="dialog"
               aria-modal="true"
               aria-labelledby="designer-reset-ack-title"
+              aria-describedby="designer-reset-ack-desc"
             >
-              <div className="border-b border-white/10 px-5 py-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
-                  New Designer
-                </p>
-                <h2
-                  id="designer-reset-ack-title"
-                  className="mt-1 text-base font-semibold text-white"
+              <div
+                className="absolute top-0 right-0 left-0 h-px"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)",
+                }}
+              />
+
+              <div
+                className="flex items-center justify-between px-5 py-4"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <RotateCcw
+                    className="h-6 w-6 shrink-0 text-white"
+                    aria-hidden
+                  />
+                  <div className="min-w-0">
+                    <h2
+                      id="designer-reset-ack-title"
+                      className="mt-0.5 text-base font-semibold leading-none text-white"
+                    >
+                      Canvas reset
+                    </h2>
+                    <span
+                      className="mt-0.5 block text-xs"
+                      style={{ color: "rgba(255,255,255,0.35)" }}
+                    >
+                      Baseline restored · edits discarded
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDesignerResetAckOpen(false)}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+                  aria-label="Close"
                 >
-                  Canvas reset
-                </h2>
-                <p className="mt-2 text-[12px] leading-relaxed text-white/65">
-                  Your unsaved edits on the graph were discarded. The canvas and
-                  live YAML were restored to the last saved baseline — the same
-                  snapshot you get after a successful generate, loading a
+                  <X className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
+
+              <div className="px-5 py-4">
+                <p
+                  id="designer-reset-ack-desc"
+                  className="text-[12px] leading-relaxed text-white/70"
+                >
+                  Your unsaved edits on the graph were discarded. The canvas
+                  and live YAML were restored to the last saved baseline — the
+                  same snapshot you get after a successful generate, loading a
                   version, or applying suggestions — so you can keep exploring
                   from a clean, known-good state.
                 </p>
               </div>
-              <div className="border-t border-white/10 px-5 py-4">
+
+              <div
+                className="px-4 pt-3 pb-4"
+                style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
+              >
                 <button
                   type="button"
                   onClick={() => setDesignerResetAckOpen(false)}
-                  className="w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+                  className="w-full rounded-full bg-white py-2.5 text-sm font-medium text-black transition-all duration-150 hover:bg-white/80"
                 >
                   Got it
                 </button>

@@ -75,16 +75,16 @@ export default function LiveGraphExportPreview({
   const display = tab === "json" ? jsonStr : yamlStr;
 
   return (
-    <div className="space-y-2">
-      <div className="flex rounded-lg border border-white/10 bg-gray-900/80 p-0.5 gap-0.5">
+    <div className="space-y-2 text-xs">
+      <div className="flex gap-1">
         <button
           type="button"
           onClick={() => setTab("json")}
           className={[
-            "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors",
+            "flex-1 rounded px-2 py-1 text-[11px] font-semibold transition-colors",
             tab === "json"
-              ? "bg-[#9AA4B2] text-white shadow-sm"
-              : "text-white/60 hover:text-white/90 hover:bg-white/5",
+              ? "bg-slate-800 text-slate-100"
+              : "text-slate-500 hover:bg-slate-800/80 hover:text-slate-300",
           ].join(" ")}
         >
           JSON
@@ -93,16 +93,16 @@ export default function LiveGraphExportPreview({
           type="button"
           onClick={() => setTab("yaml")}
           className={[
-            "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors",
+            "flex-1 rounded px-2 py-1 text-[11px] font-semibold transition-colors",
             tab === "yaml"
-              ? "bg-[#9AA4B2] text-white shadow-sm"
-              : "text-white/60 hover:text-white/90 hover:bg-white/5",
+              ? "bg-slate-800 text-slate-100"
+              : "text-slate-500 hover:bg-slate-800/80 hover:text-slate-300",
           ].join(" ")}
         >
           YAML
         </button>
       </div>
-      <pre className="rounded-lg border border-white/10 bg-gray-950/90 p-2.5 text-[10px] font-mono text-white/85 whitespace-pre-wrap wrap-break-word overflow-x-auto leading-relaxed">
+      <pre className="max-h-40 overflow-auto rounded border border-slate-800 bg-slate-900 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap wrap-break-word text-slate-100">
         {display}
       </pre>
     </div>

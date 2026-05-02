@@ -34,30 +34,32 @@ export default function CollapsibleDetailsSection({
   }, [forceExpandKey]);
 
   return (
-    <div
-      className={`w-full shrink-0 rounded-xl border border-slate-600/50 bg-slate-800/90 shadow-sm ring-1 ring-white/6 ${className}`}
-    >
+    <div className={`w-full shrink-0 ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="group flex w-full min-h-12 items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-slate-700/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg px-1 py-2 text-left transition-colors hover:bg-slate-800/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
         aria-expanded={open}
       >
-        <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-slate-50">
+        <span className="min-w-0 flex-1 text-xs font-semibold leading-snug text-slate-200 sm:text-[13px]">
           {open ? expandedTitle : collapsedLabel}
         </span>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-500/40 bg-slate-900/60 text-slate-300 group-hover:border-slate-400/50 group-hover:bg-slate-900/80">
-          {open ? (
-            <ChevronUp className="h-4 w-4" strokeWidth={2.5} aria-hidden />
-          ) : (
-            <ChevronDown className="h-4 w-4" strokeWidth={2.5} aria-hidden />
-          )}
-        </span>
+        {open ? (
+          <ChevronUp
+            className="h-4 w-4 shrink-0 text-slate-400"
+            strokeWidth={2.5}
+            aria-hidden
+          />
+        ) : (
+          <ChevronDown
+            className="h-4 w-4 shrink-0 text-slate-400"
+            strokeWidth={2.5}
+            aria-hidden
+          />
+        )}
       </button>
       {open && (
-        <div className="border-t border-slate-600/40 bg-slate-900/35 px-3 py-3">
-          {children}
-        </div>
+        <div className="mt-1 border-t border-slate-800 pt-3">{children}</div>
       )}
     </div>
   );
