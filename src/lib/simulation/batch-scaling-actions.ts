@@ -1,7 +1,8 @@
 /**
- * Batch `allowed_actions`: JSON array of protobuf enum **integers** (simulationv1.BatchScalingAction).
- * Standard Go encoding/json unmarshals these as numeric ordinals. Each dimension implies both directions
- * (e.g. replica scale-in and scale-out) when the backend implements it that way.
+ * Batch `allowed_actions`: JSON array of protobuf enum values for simulation `BatchScalingAction`.
+ * This repo sends **numeric ordinals** (1–6) as historically consumed by Go `encoding/json`.
+ * Some gateways accept protobuf JSON enum **names** instead (e.g. `BATCH_SCALING_ACTION_SCALE_REPLICAS`);
+ * confirm against your simulation-core / BFF contract before switching formats.
  */
 export type BatchScalingActionFlags = {
   allow_replica_scaling: boolean;

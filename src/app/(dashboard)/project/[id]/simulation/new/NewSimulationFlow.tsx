@@ -33,6 +33,10 @@ import {
   type BatchRecommendationFormState,
 } from "./BatchRecommendationFields";
 import { ScenarioBehaviorEditor } from "./scenario-behavior/ScenarioBehaviorEditor";
+import {
+  buildBatchRecommendationOptimizationPayload,
+  resolveBatchRecommendationObjective,
+} from "@/lib/simulation/batch-recommendation-optimization-payload";
 import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
 import {
   getSampleScenarioYaml,
@@ -81,51 +85,6 @@ interface SimulationFormData {
 }
 
 type RunMode = "standard" | "batch_recommendation" | "batch_legacy" | "online_optimization";
-
-function buildBatchRecommendationOptimizationPayload(br: BatchRecommendationFormState): Record<string, unknown> {
-  const objective =
-    env.NEXT_PUBLIC_BATCH_OPTIMIZATION_OBJECTIVE === "recommended_config"
-      ? "recommended_config"
-      : "cpu_utilization";
-  const maxP99Ms =
-    br.ui_mode === "quick" ? Math.max(1000, Math.round(br.max_p95_latency_ms * 2)) : br.max_p99_latency_ms;
-  return {
-    objective,
-    online: false,
-    evaluation_duration_ms: br.evaluation_duration_ms,
-    max_evaluations: br.max_evaluations,
-    batch: {
-      max_p95_latency_ms: br.max_p95_latency_ms,
-      max_p99_latency_ms: maxP99Ms,
-      max_error_rate: br.max_error_rate,
-      min_throughput_rps: br.min_throughput_rps,
-      service_cpu_utilization_band: { low: br.service_cpu_low, high: br.service_cpu_high },
-      service_memory_utilization_band: { low: br.service_mem_low, high: br.service_mem_high },
-      host_cpu_utilization_band: { low: br.host_cpu_low, high: br.host_cpu_high },
-      host_memory_utilization_band: { low: br.host_mem_low, high: br.host_mem_high },
-      min_hosts: br.min_hosts,
-      max_hosts: br.max_hosts,
-      min_replicas_per_service: br.min_replicas_per_service,
-      max_replicas_per_service: br.max_replicas_per_service,
-      min_cpu_cores_per_instance: br.min_cpu_cores_per_instance,
-      max_cpu_cores_per_instance: br.max_cpu_cores_per_instance,
-      min_memory_mb_per_instance: br.min_memory_mb_per_instance,
-      max_memory_mb_per_instance: br.max_memory_mb_per_instance,
-      min_host_cpu_cores: br.min_host_cpu_cores,
-      max_host_cpu_cores: br.max_host_cpu_cores,
-      min_host_memory_gb: br.min_host_memory_gb,
-      max_host_memory_gb: br.max_host_memory_gb,
-      beam_width: br.beam_width,
-      max_search_depth: br.max_search_depth,
-      max_neighbors_per_state: br.max_neighbors_per_state,
-      reevaluations_per_candidate: br.reevaluations_per_candidate,
-      infeasible_beam_width: br.infeasible_beam_width,
-      freeze_workload: br.freeze_workload,
-      freeze_policies: br.freeze_policies,
-      allowed_actions: allowedActionsFromFlags(br),
-    },
-  };
-}
 
 const SAMPLE_DROPDOWN_AS_DIAGRAM_VERSIONS: DiagramVersion[] = SAMPLE_SCENARIO_DROPDOWN_OPTIONS.map((o) => ({
   id: o.id,
@@ -985,8 +944,14 @@ export function NewSimulationFlow({
       };
 
       let optimizationPayload: Record<string, unknown> | undefined;
+      const batchRecommendationObjective = resolveBatchRecommendationObjective(
+        env.NEXT_PUBLIC_BATCH_OPTIMIZATION_OBJECTIVE
+      );
       if (runMode === "batch_recommendation") {
-        optimizationPayload = buildBatchRecommendationOptimizationPayload(batchRecommendation);
+        optimizationPayload = buildBatchRecommendationOptimizationPayload(
+          batchRecommendation,
+          batchRecommendationObjective
+        );
       } else if (runMode === "batch_legacy") {
         const isUtilObjective =
           optimization.objective === "cpu_utilization" || optimization.objective === "memory_utilization";
@@ -1052,9 +1017,9 @@ export function NewSimulationFlow({
           project_id: projectId,
           source: "frontend-scenario-editor",
           ...(runMode === "batch_recommendation"
-            ? { mode: "batch_recommendation" as const }
+            ? { mode: "batch_recommendation" as const, objective: batchRecommendationObjective }
             : runMode === "batch_legacy"
-              ? { mode: "batch" as const }
+              ? { mode: "batch" as const, objective: optimization.objective }
               : runMode === "online_optimization"
                 ? { mode: "online_optimization" as const }
                 : {}),
@@ -2250,7 +2215,14 @@ export function NewSimulationFlow({
                       Developer: full optimization JSON (as submitted)
                     </summary>
                     <pre className="mt-2 p-2 rounded border border-amber-500/20 bg-black/40 overflow-x-auto max-h-56 text-[10px] font-mono text-amber-100/80">
-                      {JSON.stringify(buildBatchRecommendationOptimizationPayload(batchRecommendation), null, 2)}
+                      {JSON.stringify(
+                        buildBatchRecommendationOptimizationPayload(
+                          batchRecommendation,
+                          resolveBatchRecommendationObjective(env.NEXT_PUBLIC_BATCH_OPTIMIZATION_OBJECTIVE)
+                        ),
+                        null,
+                        2
+                      )}
                     </pre>
                   </details>
                 </div>
