@@ -126,7 +126,12 @@ export const designApi = createApi({
         if (data?.design != null)
           return {
             ...data,
-            request: { design: data.design },
+            request: {
+              design: data.design as DesignPayload,
+              ...(data.simulation != null
+                ? { simulation: data.simulation as SimulationPayload }
+                : {}),
+            },
           } as DesignByProjectRunResponse;
         return data as DesignByProjectRunResponse;
       },

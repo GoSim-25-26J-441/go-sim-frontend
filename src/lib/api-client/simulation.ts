@@ -100,6 +100,10 @@ export interface DiagramScenarioDraftResponse {
   status?: string;
   draft_status?: string;
   source?: string;
+  scenario_hash?: string;
+  source_hash?: string;
+  s3_path?: string;
+  updated_at?: string;
   [key: string]: unknown;
 }
 
