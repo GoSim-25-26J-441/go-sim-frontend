@@ -25,9 +25,12 @@ export { validateScenarioYaml } from "./scenario-validation";
  * Known fields are typed; extra engine/proto keys are allowed via index signature.
  *
  * Offline hill-climbing: use objective, max_iterations, step_size, etc. — leave `batch` empty/absent.
- * Batch beam search: set `batch` to a non-empty object and `online: false` (do not combine with online: true).
+ * Fleet / batch beam search (BFF): set `mode: "batch"` (stripped before simulation-core),
+ * `online: false`, top-level `objective`, and `batch` (may be `{}` when relying on backend inference).
  */
 export interface CreateProjectRunOptimization {
+  /** BFF-only routing hint for fleet/batch optimization; not forwarded to simulation-core as-is. */
+  mode?: "batch" | string;
   objective?:
     | "recommended_config"
     | "p95_latency_ms"
