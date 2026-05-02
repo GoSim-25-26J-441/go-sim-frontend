@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { DragEvent as ReactDragEvent } from "react";
 import { createPortal } from "react-dom";
 import CytoscapeComponent from "react-cytoscapejs";
@@ -75,12 +82,7 @@ import {
   getGraphStatsFromCy,
   recomputeStats,
 } from "@/app/features/amg-apd/components/graph/recomputeStats";
-import {
-  ChevronLeft,
-  ChevronRight,
-  PanelRightClose,
-  Info,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
 import { ANTI_PATTERN_TOUR_HELP } from "@/app/features/amg-apd/components/patternsDesignerTour/antiPatternTourCopy";
@@ -95,6 +97,16 @@ const PHASE_TICK_MS = 900;
 
 /** Canvas + sidebars share this height so the graph area stays fixed; Details scrolls inside its column. */
 const GRAPH_WORK_AREA_HEIGHT_CLASS = "h-[min(600px,70vh)] shrink-0";
+
+/** Match diagram canvas (`diagram/page.tsx`): white paper + square grid + rounded-xl frame */
+const DIAGRAM_CANVAS_GRID_STYLE: CSSProperties = {
+  backgroundImage: `
+    linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+    linear-gradient(to bottom, #e2e8f0 1px, transparent 1px)
+  `,
+  backgroundSize: "24px 24px",
+  backgroundPosition: "0 0",
+};
 
 function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   if (!cy) return false;
@@ -147,7 +159,7 @@ async function exportCyToCanvasWithNodeLabels(
     const pngDataUrl = cy.png({
       full: true,
       scale: 2,
-      bg: "#f9fafb",
+      bg: "#ffffff",
     });
 
     return await new Promise<HTMLCanvasElement | null>((resolve) => {
@@ -194,7 +206,7 @@ async function captureGraphRegionHtmlToCanvas(
   try {
     const { default: html2canvas } = await import("html2canvas");
     return await html2canvas(wrap, {
-      backgroundColor: "#f9fafb",
+      backgroundColor: "#ffffff",
       scale: 2,
       useCORS: true,
       allowTaint: true,
@@ -335,7 +347,8 @@ type GraphCanvasProps = {
     isFullscreen: boolean;
   };
   newDesignerTourEnabled?: boolean;
-  onNewDesignerTourEnabledChange?: (v: boolean) => void;
+  guidesActive?: boolean;
+  onGuidesToggle?: () => void;
   /** Incremented by Patterns designer tour to enter edit mode and expand side panels */
   designerTourWorkspaceNonce?: number;
   /** Incremented to expand all collapsible detail sections */
@@ -367,7 +380,8 @@ function GraphCanvasInner({
   onResetCanvas,
   fullscreenButton,
   newDesignerTourEnabled,
-  onNewDesignerTourEnabledChange,
+  guidesActive,
+  onGuidesToggle,
   designerTourWorkspaceNonce = 0,
   designerTourExpandDetailsNonce = 0,
 }: GraphCanvasProps & { data: AnalysisResult }) {
@@ -1278,8 +1292,8 @@ function GraphCanvasInner({
         onResetCanvas={onResetCanvas}
         resetDisabled={isGenerating}
         fullscreenButton={fullscreenButton}
-        newDesignerTourEnabled={newDesignerTourEnabled}
-        onNewDesignerTourEnabledChange={onNewDesignerTourEnabledChange}
+        guidesActive={guidesActive}
+        onGuidesToggle={onGuidesToggle}
       />
 
       <div
@@ -1369,7 +1383,7 @@ function GraphCanvasInner({
         <div
           ref={containerRef}
           data-amg-designer={AMG_DESIGNER.canvas}
-          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-slate-50 z-0 shadow-inner ${workAreaHeightClass}`}
+          className={`relative flex-1 min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-white z-0 ${workAreaHeightClass}`}
           onContextMenu={(e) => {
             e.preventDefault();
           }}
@@ -1426,6 +1440,12 @@ function GraphCanvasInner({
             clearToolDragState();
           }}
         >
+          <div
+            className="pointer-events-none absolute inset-0 z-0 bg-white"
+            aria-hidden
+            style={DIAGRAM_CANVAS_GRID_STYLE}
+          />
+          <div className="absolute inset-0 z-[1] min-h-0 min-w-0">
           <CytoscapeComponent
             cy={(c) => {
               if (mountedCyRef.current === c) return;
@@ -1444,7 +1464,7 @@ function GraphCanvasInner({
             style={{
               width: "100%",
               height: "100%",
-              backgroundColor: "#f9fafb",
+              backgroundColor: "transparent",
             }}
             minZoom={0.2}
             maxZoom={3}
@@ -1455,6 +1475,7 @@ function GraphCanvasInner({
           <GraphTooltip tooltip={tooltip} containerEl={containerRef.current} />
           <NodeDualLineLabels cy={cy} containerEl={containerRef.current} />
           <NodeColorIndicators cy={cy} containerEl={containerRef.current} />
+          </div>
 
           {contextMenu && (
             <div
@@ -1563,37 +1584,44 @@ function GraphCanvasInner({
               data-amg-designer={AMG_DESIGNER.details}
               onClick={() => setRightPanelCollapsed(false)}
               title="Show details"
-              className={`w-10 shrink-0 flex flex-col items-center justify-start gap-2 pt-3 rounded-xl border border-white/10 bg-gray-900/80 hover:bg-gray-800/90 text-white/50 hover:text-white/90 transition-colors ${workAreaHeightClass}`}
+              aria-label="Show details"
+              className={`flex w-9 shrink-0 flex-col items-center rounded-lg border border-slate-800 bg-slate-950/60 py-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 ${workAreaHeightClass}`}
             >
-              <Info className="h-4 w-4 shrink-0" />
-              <ChevronLeft className="h-3.5 w-3.5 shrink-0 opacity-80" />
+              <ChevronLeft className="h-4 w-4 shrink-0" />
+              <span
+                className="mt-2 text-[9px] text-slate-500"
+                style={{ writingMode: "vertical-rl" }}
+              >
+                Details
+              </span>
             </button>
           ) : (
             <aside
               data-amg-designer={AMG_DESIGNER.details}
-              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/90 backdrop-blur-sm shadow-xl shadow-black/25 ${workAreaHeightClass}`}
+              className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950/60 p-2 sm:p-3 ${workAreaHeightClass}`}
             >
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900/80 px-3 py-2.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-200">
+              <div className="mb-2 flex shrink-0 items-center justify-between gap-1">
+                <span className="truncate text-xs font-semibold text-slate-200 sm:text-sm">
                   Details
                 </span>
                 <button
                   type="button"
                   onClick={() => setRightPanelCollapsed(true)}
                   title="Minimize details"
-                  className="rounded-md p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100"
+                  aria-label="Hide details"
+                  className="shrink-0 rounded p-0.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
                 >
-                  <PanelRightClose className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
-              {/* Single scroll surface for the whole panel (like Edit Tools); subsections do not scroll on their own */}
-              <div className="isolate flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 pr-2 [scrollbar-gutter:stable] scrollbar-toolbox">
+              {/* Single scroll surface — matches main diagram Inspector */}
+              <div className="isolate flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1 [scrollbar-gutter:stable] scrollbar-toolbox">
                 {!readOnly && effectiveEditMode && (
                   <div
-                    className="rounded-xl border border-white/10 bg-gray-900/55 px-2.5 py-2.5"
+                    className="space-y-2 text-xs"
                     data-amg-designer={AMG_DESIGNER.connectionTools}
                   >
-                    <div className="mb-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/65">
+                    <div className="text-[11px] text-slate-400">
                       Connection tools
                     </div>
                     <ConnectionsToolsPanel
@@ -1645,7 +1673,6 @@ function GraphCanvasInner({
                     collapsedLabel="Show anti-pattern details"
                     expandedTitle="Anti-pattern details"
                     forceExpandKey={antiPatternExpandNonce}
-                    className="!border-white/10 !bg-gray-900/55 !shadow-none !ring-1 !ring-white/10"
                   >
                     <AntiPatternDetailsPanel
                       data={analysis}
@@ -1690,7 +1717,7 @@ function GraphCanvasInner({
           >
             <div className="border-b border-white/10 px-5 py-4">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
-                New Designer
+                Guides
               </p>
               <h2
                 id="anti-preset-drop-title"

@@ -24,7 +24,7 @@ export const AMG_DESIGNER = {
   generate: "amg-designer-generate",
   reset: "amg-designer-reset",
   fullscreen: "amg-designer-fullscreen",
-  newDesignerSwitch: "amg-designer-new-designer",
+  guides: "amg-designer-guides",
   toolbox: "amg-designer-toolbox",
   editToolboxSearch: "amg-designer-edit-toolbox-search",
   editToolboxNodes: "amg-designer-edit-toolbox-nodes",

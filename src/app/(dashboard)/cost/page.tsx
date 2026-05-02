@@ -12,12 +12,14 @@ import {
   MemoryStick,
   CheckCircle,
   CalendarDays,
-  FileText,
   Circle,
   ChevronRight,
   FolderOpen,
   ArrowLeft,
+  Upload,
+  Loader2,
 } from "lucide-react";
+import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 interface Run {
   id: string;
@@ -62,6 +64,7 @@ type CostPageProps = {
 export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDiagramImagesModal, setShowDiagramImagesModal] = useState(false);
   const router = useRouter();
   const { userId: firebaseUid } = useAuth();
 
@@ -148,13 +151,8 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex flex-col items-center justify-center min-h-[60vh]">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-border mb-4"></div>
-            <p className="text-lg opacity-70">Loading runs...</p>
-          </div>
-        </div>
+      <div className="flex min-h-[400px] items-center justify-center p-6">
+        <Loader2 className="h-8 w-8 animate-spin text-white" />
       </div>
     );
   }
@@ -164,63 +162,71 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
   );
 
   return (
-    <div className="p-6 space-y-4">
-      {/* Header Section */}
+    <div className="flex min-h-0 w-full flex-1 flex-col p-6">
       <div
-        className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
+        className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2.5"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
       >
-        <button
-          onClick={() => router.back()}
-          className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-
-        <div>
-          <h1 className="text-md font-bold text-white flex items-center gap-2">
-            Cost Analysis
-          </h1>
-          <p className="opacity-60 text-xs">
-            Select a run to view detailed cost breakdown
-          </p>
+        <div className="flex min-w-0 items-start gap-3 sm:items-center">
+          <button
+            type="button"
+            onClick={() => router.push(`/project/${projectId}/summary`)}
+            className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80 sm:mt-0"
+            aria-label="Back to project summary"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-2 text-md font-bold text-white">
+              Cost Analysis
+            </h1>
+            <p className="text-xs text-white/60">
+              Select a run to view detailed cost breakdown
+            </p>
+          </div>
         </div>
-
-        {/* <Link
-              href="/cost/suggest"
-              className="rounded-xl border border-border px-6 py-3 font-medium flex items-center gap-2 hover:bg-surface transition-colors"
-            >
-              <BarChart3 className="w-5 h-5" />
-              Metrices Analysis
-            </Link> */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowDiagramImagesModal(true)}
+            className="flex items-center gap-2 rounded-lg px-4 py-2 text-white/80 shadow-md transition-colors hover:bg-gray-800/50 hover:text-white"
+          >
+            <Upload className="h-4 w-4" />
+            <span className="text-sm font-normal">
+              Show Diagram and resource images
+            </span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Runs list */}
-        <div className="mb-8">
-          {runsWithRunId.length === 0 ? (
-            <div className="text-center py-16 border-2 border-dashed border-border rounded-2xl bg-card">
-              <FileText className="w-16 h-16 opacity-50 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold opacity-80 mb-3">
-                No runs found
-              </h3>
-              <p className="opacity-60 max-w-md mx-auto text-sm">
+      <DiagramImagesModal
+        projectId={projectId}
+        isOpen={showDiagramImagesModal}
+        onClose={() => setShowDiagramImagesModal(false)}
+      />
+
+      <div className="mt-6 flex min-h-0 flex-1 flex-col space-y-6">
+        {runsWithRunId.length === 0 ? (
+          <div className="flex min-h-[min(560px,calc(100vh-14rem))] flex-1 flex-col items-center justify-center py-8">
+            <div className="max-w-md space-y-4 px-4 text-center">
+              <p className="text-base text-white/80">No runs found yet.</p>
+              <p className="text-sm text-white/50">
                 Run metrics analysis to add runs and analyze infrastructure
                 costs.
               </p>
             </div>
-          ) : (
-            <div>
-              <h3 className=" mb-4 flex items-center gap-2 text-2xl font-bold">
-                <FolderOpen className="w-5 h-5 opacity-70" />
+          </div>
+        ) : (
+          <div className="mx-auto w-full max-w-7xl px-4">
+            <div className="mb-8">
+              <h3 className="mb-4 flex items-center gap-2 text-2xl font-bold">
+                <FolderOpen className="h-5 w-5 opacity-70" />
                 Project: {projectId}
               </h3>
-              <div className="flex items-center justify-between mb-6">
+              <div className="mb-6 flex items-center justify-between">
                 <h2 className="text-2xl font-bold">Runs</h2>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                 {runs
                   .filter((run) => run.run_id != null && run.run_id !== "")
                   .map((run, index) => (
@@ -342,21 +348,21 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                   ))}
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Footer Note */}
-        <div className="mt-12 pt-6 border-t border-border">
-          <div className="text-center">
-            <p className="text-sm opacity-60">
-              Showing {runsWithRunId.length} run{runsWithRunId.length !== 1 ? "s" : ""}
-            </p>
-            <p className="text-xs opacity-50 mt-2">
-              Select any run to analyze cloud provider costs, compare pricing
-              options, and optimize your infrastructure
-            </p>
+            <div className="mt-12 pt-6">
+              <div className="text-center">
+                <p className="text-sm text-white/60">
+                  Showing {runsWithRunId.length} run
+                  {runsWithRunId.length !== 1 ? "s" : ""}
+                </p>
+                <p className="mt-2 text-xs text-white/50">
+                  Select any run to analyze cloud provider costs, compare
+                  pricing options, and optimize your infrastructure
+                </p>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

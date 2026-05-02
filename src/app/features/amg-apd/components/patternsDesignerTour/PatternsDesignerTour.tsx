@@ -8,9 +8,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import {
   AMG_DESIGNER,
   type AmgDesignerAnchor,
@@ -35,11 +36,17 @@ const DESIGNER_WELCOME_GLEAM_Z = 19;
 /** Sticky toolbar band from viewport top (px) — used with pip position to hide scrolled-under workspace */
 const STICKY_TOOLBAR_GUARD_PX = 108;
 
+/** Same visual as Legend “Anti-patterns: ?” help control (Legend.tsx). */
+const GUIDE_MARKER_INTERACTIVE =
+  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15 hover:text-white";
+const GUIDE_MARKER_STATIC =
+  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90";
+
 type ChapterMeta = {
   id: string;
   markerAnchor: AmgDesignerAnchor;
   title: string;
-  /** Multiple sparkles can open the same step list (e.g. canvas + details → one surface tour). */
+  /** Multiple guide markers can open the same step list (e.g. canvas + details → one surface tour). */
   stepGroupKey?: string;
 };
 
@@ -122,6 +129,81 @@ function getRectFromSelector(selector: string): DOMRect | null {
   return el.getBoundingClientRect();
 }
 
+function getVisibleGuidesControlRect(): DOMRect | null {
+  const sel = qs(AMG_DESIGNER.guides);
+  const nodes = document.querySelectorAll(sel);
+  for (let i = 0; i < nodes.length; i++) {
+    const el = nodes[i];
+    if (!(el instanceof HTMLElement)) continue;
+    const style = getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return r;
+  }
+  return null;
+}
+
+const GUIDES_INTRO_POPOVER_GAP = 12;
+const GUIDES_INTRO_POPOVER_MARGIN = 12;
+const GUIDES_INTRO_MAX_W_PX = 352;
+/** Rough minimum vertical space desired below anchor before flipping above */
+const GUIDES_INTRO_MIN_SPACE_BELOW = 168;
+
+function welcomeIntroPanelStyle(anchor: DOMRect | null): CSSProperties {
+  const vw =
+    typeof window !== "undefined" ? window.innerWidth : GUIDES_INTRO_MAX_W_PX;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 600;
+  const maxW = Math.min(GUIDES_INTRO_MAX_W_PX, vw - GUIDES_INTRO_POPOVER_MARGIN * 2);
+
+  if (!anchor || anchor.width <= 0) {
+    return {
+      position: "fixed",
+      zIndex: 30,
+      right: GUIDES_INTRO_POPOVER_MARGIN + 6,
+      bottom: GUIDES_INTRO_POPOVER_MARGIN + 8,
+      left: "auto",
+      top: "auto",
+      width: maxW,
+      maxWidth: maxW,
+    };
+  }
+
+  let left = anchor.left;
+  left = Math.max(
+    GUIDES_INTRO_POPOVER_MARGIN,
+    Math.min(left, vw - GUIDES_INTRO_POPOVER_MARGIN - maxW),
+  );
+
+  const topBelow = anchor.bottom + GUIDES_INTRO_POPOVER_GAP;
+  const spaceBelow = vh - topBelow - GUIDES_INTRO_POPOVER_MARGIN;
+  const spaceAbove = anchor.top - GUIDES_INTRO_POPOVER_MARGIN * 2;
+  const placeAbove =
+    spaceBelow < GUIDES_INTRO_MIN_SPACE_BELOW && spaceAbove > spaceBelow;
+
+  if (placeAbove) {
+    return {
+      position: "fixed",
+      zIndex: 30,
+      left,
+      bottom: vh - anchor.top + GUIDES_INTRO_POPOVER_GAP,
+      top: "auto",
+      width: maxW,
+      maxWidth: maxW,
+      maxHeight: Math.min(0.55 * vh, anchor.top - GUIDES_INTRO_POPOVER_GAP * 2),
+    };
+  }
+
+  return {
+    position: "fixed",
+    zIndex: 30,
+    left,
+    top: topBelow,
+    width: maxW,
+    maxWidth: maxW,
+    maxHeight: Math.min(0.55 * vh, vh - topBelow - GUIDES_INTRO_POPOVER_MARGIN),
+  };
+}
+
 function waitForSelector(
   selector: string,
   timeoutMs = 3500,
@@ -181,16 +263,6 @@ function SpotlightCutout({ rect, pad = 8 }: { rect: DOMRect; pad?: number }) {
         className="pointer-events-none fixed bg-slate-950/70 backdrop-blur-[1px]"
         style={{ zIndex: ACTIVE_TOUR_Z, top: b, left: 0, right: 0, bottom: 0 }}
       />
-      <div
-        className="pointer-events-none fixed rounded-xl border border-sky-400/55 shadow-[0_0_20px_rgba(56,189,248,0.22)]"
-        style={{
-          zIndex: ACTIVE_TOUR_Z + 1,
-          top: t,
-          left: l,
-          width: r - l,
-          height: b - t,
-        }}
-      />
     </>
   );
 }
@@ -237,20 +309,20 @@ function DesignerHintPip({
     <button
       type="button"
       title={title}
-      aria-label={`Designer guide: ${title}`}
+      aria-label={`Guide: ${title}`}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
         onClick();
       }}
-      className="animate-designer-tour-pip fixed flex h-5.5 w-5.5 items-center justify-center rounded-full border border-sky-500/35 bg-slate-950/92 text-sky-200/95 shadow-[0_2px_12px_rgba(0,0,0,0.35)] transition-[border-color] hover:border-sky-400/70 active:scale-95"
+      className={`${GUIDE_MARKER_INTERACTIVE} fixed active:scale-95`}
       style={{
         zIndex: DESIGNER_PIP_Z,
         left,
         top,
       }}
     >
-      <Sparkles className="h-3 w-3 opacity-90" strokeWidth={2} aria-hidden />
+      <span aria-hidden>?</span>
     </button>
   );
 }
@@ -271,12 +343,12 @@ function DesignerWelcomeGleam({
   if (hideDesignerMarkerForStickyOverlap(rect)) return null;
   return (
     <div
-      className="animate-designer-tour-welcome-gleam pointer-events-none fixed flex h-6 w-6 items-center justify-center rounded-full border border-sky-400/50 bg-slate-950/95 text-sky-200"
+      className={`${GUIDE_MARKER_STATIC} pointer-events-none fixed`}
       style={{ zIndex: DESIGNER_WELCOME_GLEAM_Z, left: left - 1, top: top - 1 }}
       title={title}
       aria-hidden
     >
-      <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
+      ?
     </div>
   );
 }
@@ -540,7 +612,7 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.simulator,
         title: "Performance simulator",
-        body: "Use this when you want to stress-test or profile a saved snapshot. The next step opens the confirmation dialog to review each control.",
+        body: "Use Simulation in the page header when you want to stress-test or profile a saved snapshot. The next step opens the confirmation dialog to review each control.",
       },
       {
         anchor: AMG_DESIGNER.simulationModal,
@@ -950,6 +1022,9 @@ export default function PatternsDesignerTour({
     Partial<Record<AmgDesignerAnchor, DOMRect>>
   >({});
   const [welcomeRects, setWelcomeRects] = useState<DOMRect[]>([]);
+  const [guidesButtonRect, setGuidesButtonRect] = useState<DOMRect | null>(
+    null,
+  );
 
   const chapterList = useMemo(() => {
     let list = CHAPTER_BASE.filter(
@@ -1001,6 +1076,11 @@ export default function PatternsDesignerTour({
     setSpotRect(null);
   }, [onTourChapterClose]);
 
+  /** When guides are off, parent may pass new function refs each render; only react to real enabled toggles. */
+  const prevEnabledRef = useRef<boolean | null>(null);
+  const onTourChapterCloseRef = useRef(onTourChapterClose);
+  onTourChapterCloseRef.current = onTourChapterClose;
+
   const startChapter = useCallback(
     (id: string) => {
       if (!enabled) return;
@@ -1027,27 +1107,6 @@ export default function PatternsDesignerTour({
   useEffect(() => {
     if (!chapterId) setCardDrag({ x: 0, y: 0 });
   }, [chapterId]);
-
-  /** Pulse ring on the active legend chip (per-kind steps). */
-  useEffect(() => {
-    if (!activeStep?.anchorSelector?.includes("legend-kind")) return;
-    const el = document.querySelector(activeStep.anchorSelector);
-    if (!(el instanceof HTMLElement)) return;
-    el.classList.add(
-      "ring-2",
-      "ring-sky-400/75",
-      "ring-offset-2",
-      "ring-offset-slate-950",
-    );
-    return () => {
-      el.classList.remove(
-        "ring-2",
-        "ring-sky-400/75",
-        "ring-offset-2",
-        "ring-offset-slate-950",
-      );
-    };
-  }, [activeStep]);
 
   useLayoutEffect(() => {
     if (!chapterId || !activeStep) {
@@ -1144,9 +1203,35 @@ export default function PatternsDesignerTour({
     };
   }, [enabled, welcomeIntroOpen, chapterId, chapterList]);
 
+  useLayoutEffect(() => {
+    if (!enabled || !welcomeIntroOpen || chapterId) {
+      setGuidesButtonRect(null);
+      return;
+    }
+    const measure = () => {
+      setGuidesButtonRect(getVisibleGuidesControlRect());
+    };
+    measure();
+    const id = window.setInterval(measure, 400);
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [enabled, welcomeIntroOpen, chapterId]);
+
   useEffect(() => {
-    if (!enabled) closeChapter();
-  }, [enabled, closeChapter]);
+    const wasEnabled = prevEnabledRef.current;
+    if (wasEnabled === true && !enabled) {
+      onTourChapterCloseRef.current?.();
+      setChapterId(null);
+      setStepIndex(0);
+      setSpotRect(null);
+    }
+    prevEnabledRef.current = enabled;
+  }, [enabled]);
 
   useEffect(() => {
     if (!chapterId || !activeStep) return;
@@ -1178,24 +1263,45 @@ export default function PatternsDesignerTour({
             );
           })}
           <div
-            className="pointer-events-auto fixed left-1/2 top-1/2 w-[min(92vw,22rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/12 bg-slate-950/98 p-5 shadow-2xl shadow-black/50 backdrop-blur-md"
-            style={{ zIndex: 25 }}
+            role="dialog"
+            aria-labelledby="designer-welcome-intro-title"
+            aria-describedby="designer-welcome-intro-desc"
+            className="pointer-events-auto flex min-h-0 flex-col gap-2 overflow-hidden rounded-md bg-white/95 px-3 py-2.5 text-black shadow-xl ring-1 ring-black/10 backdrop-blur-sm sm:min-w-[min(18rem,calc(100vw-1.5rem))]"
+            style={welcomeIntroPanelStyle(guidesButtonRect)}
           >
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-300/90">
-              New Designer
-            </p>
-            <h3 className="mt-1 text-base font-semibold text-white">
-              Guided highlights
-            </h3>
-            <p className="mt-3 text-[13px] leading-relaxed text-white/70">
-              Sparkle markers appear on the main areas of this page (versions,
-              exports, legend, layout, editor, and more). Click any sparkle
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-black/55">
+                  Guides
+                </p>
+                <h3
+                  id="designer-welcome-intro-title"
+                  className="mt-0.5 text-sm font-semibold leading-snug text-black"
+                >
+                  Guided highlights
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => onDismissWelcomeIntro?.()}
+                className="rounded p-0.5 text-black/60 transition-colors hover:bg-black/10 hover:text-black shrink-0"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+            <p
+              id="designer-welcome-intro-desc"
+              className="min-h-0 flex-1 overflow-y-auto text-xs leading-relaxed text-black/80 pr-0.5"
+            >
+              Help (?) markers appear on the main areas of this page (versions,
+              exports, legend, layout, editor, and more). Click any marker
               whenever you want a short guided tour for that topic.
             </p>
             <button
               type="button"
               onClick={() => onDismissWelcomeIntro?.()}
-              className="mt-5 w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+              className="mt-1 w-full rounded-md bg-black py-2 text-xs font-semibold text-white transition-colors hover:bg-black/90"
             >
               Got it
             </button>
@@ -1227,7 +1333,7 @@ export default function PatternsDesignerTour({
         >
           {spotRect && <SpotlightCutout rect={spotRect} />}
           <div
-            className={`pointer-events-auto fixed bottom-5 left-4 w-auto overflow-hidden rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/60 backdrop-blur-md sm:left-auto sm:right-6 ${
+            className={`pointer-events-auto fixed bottom-5 left-4 w-auto overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl sm:left-auto sm:right-6 ${
               isLegendReadingIntro
                 ? "right-4 max-h-[min(88vh,680px)] sm:w-[min(100vw-2rem,34rem)]"
                 : "right-4 max-h-[min(72vh,520px)] max-w-md sm:w-[min(100vw-2rem,26rem)]"
@@ -1238,7 +1344,7 @@ export default function PatternsDesignerTour({
             }}
           >
             <div
-              className="cursor-grab select-none border-b border-white/10 bg-slate-900/90 px-4 py-2.5 active:cursor-grabbing"
+              className="cursor-grab select-none border-b border-gray-700 px-4 py-3 active:cursor-grabbing"
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
                 if ((e.target as HTMLElement).closest("button")) return;
@@ -1266,15 +1372,15 @@ export default function PatternsDesignerTour({
                 e.preventDefault();
               }}
             >
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-300/90">
-                Designer guide
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                Guides
               </p>
-              <p className="text-[9px] font-normal normal-case text-white/45">
+              <p className="text-[11px] font-normal normal-case text-gray-500">
                 Drag this bar to move the card.
               </p>
             </div>
             <div
-              className={`overflow-y-auto p-4 pt-3 ${
+              className={`overflow-y-auto px-4 py-3 ${
                 isLegendReadingIntro
                   ? "max-h-[min(76vh,600px)]"
                   : "max-h-[min(60vh,440px)]"
@@ -1289,39 +1395,39 @@ export default function PatternsDesignerTour({
                 <button
                   type="button"
                   onClick={closeChapter}
-                  className="rounded-lg border border-white/15 p-1.5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                  className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
                   aria-label="Close guide"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
               {!spotRect && (
-                <p className="mb-2 text-[11px] text-amber-200/90">
+                <p className="mb-2 text-[11px] text-amber-400/95">
                   The highlight is not visible yet. Try leaving fullscreen or
                   expanding any collapsed panels, then open this guide again.
                 </p>
               )}
-              <div className="text-[12px] leading-relaxed text-white/70">
+              <div className="text-[12px] leading-relaxed text-gray-400">
                 {typeof activeStep.body === "string" ? (
                   <p className="whitespace-pre-line">{activeStep.body}</p>
                 ) : (
                   activeStep.body
                 )}
               </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-gray-700 pt-3">
                 <button
                   type="button"
                   onClick={() => onEnabledChange(false)}
-                  className="text-[11px] font-medium text-white/45 hover:text-white/75"
+                  className="text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-300"
                 >
-                  Turn off “New Designer”
+                  Hide guides
                 </button>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     disabled={stepIndex <= 0}
                     onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-                    className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-white/85 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-35"
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition-colors hover:bg-gray-700/50 disabled:cursor-not-allowed disabled:opacity-35"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
                     Back
@@ -1335,7 +1441,7 @@ export default function PatternsDesignerTour({
                         setStepIndex((i) => i + 1);
                       }
                     }}
-                    className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-600/85 px-2.5 py-1.5 text-[11px] font-medium text-white shadow-sm transition-colors hover:bg-sky-500/90"
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-600 bg-gray-700/80 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-gray-600"
                   >
                     {stepIndex >= activeSteps.length - 1 ? "Done" : "Next"}
                     {stepIndex < activeSteps.length - 1 && (

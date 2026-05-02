@@ -37,7 +37,7 @@ function ServiceRow({ svc }: { svc: ScenarioService }) {
 export function ReadonlyTopologySummary({ scenario }: { scenario: ScenarioState }) {
   const epCount = countEndpoints(scenario);
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-4">
+    <div className="rounded-lg bg-white/5 p-4 space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-white">Topology source</h2>
         <p className="text-xs text-white/60 mt-1">

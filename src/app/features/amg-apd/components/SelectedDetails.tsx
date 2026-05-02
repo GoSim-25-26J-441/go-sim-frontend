@@ -57,43 +57,37 @@ export function ConnectionsToolsPanel({
   if (!editMode || !onToolChange || !onDefaultCallChange) return null;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-gray-800/60 px-3 py-3 space-y-3">
+    <div className="space-y-3 text-xs">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
-          Connections
-        </div>
-        <span className="text-[10px] text-white/40">Edit mode tools</span>
+        <span className="text-[11px] text-slate-400">Connections</span>
+        <span className="text-[10px] text-slate-500">Edit mode</span>
       </div>
 
       <button
         type="button"
         className={[
-          "w-full rounded-lg px-3 py-1.5 text-[11px] flex items-center justify-between border transition-colors",
+          "flex w-full items-center justify-between rounded border px-2 py-1.5 text-[11px] transition-colors",
           currentTool === "connect-calls"
-            ? "bg-[#9AA4B2]/30 text-white border-[#9AA4B2]/50 shadow-sm"
-            : "bg-gray-900/80 text-white/90 border-white/10 hover:bg-white/5",
+            ? "border-amber-400 bg-amber-500/20 text-amber-100"
+            : "border-slate-600 bg-slate-900 text-slate-200 hover:border-sky-400 hover:text-sky-100",
         ].join(" ")}
         onClick={() =>
           onToolChange(currentTool === "connect-calls" ? "select" : "connect-calls")
         }
       >
         <span className="font-medium">Calls tool</span>
-        <span className="text-[10px] opacity-80">
+        <span className="text-[10px] opacity-90">
           {currentTool === "connect-calls" ? "Active" : "Activate"}
         </span>
       </button>
 
       {currentTool === "connect-calls" && (
-        <div className="mt-2 rounded-lg border border-white/10 bg-gray-900/80 p-2.5 space-y-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
-            New call defaults
-          </div>
-          <div>
-            <label className="block text-[10px] text-white/50 mb-0.5">
-              Protocol
-            </label>
+        <div className="space-y-2 pt-1">
+          <div className="text-[11px] text-slate-400">New call defaults</div>
+          <div className="space-y-1">
+            <label className="block text-[11px] text-slate-400">Protocol</label>
             <select
-              className="w-full rounded-lg border border-white/15 bg-gray-900 px-2 py-1.5 text-[11px] text-white focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+              className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-50 outline-none focus:border-sky-500"
               value={defaultCallProtocol}
               onChange={(e) =>
                 onDefaultCallChange(
@@ -111,7 +105,7 @@ export function ConnectionsToolsPanel({
             <input
               id="default-call-sync-panel"
               type="checkbox"
-              className="h-3 w-3 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
+              className="h-3 w-3 rounded border-slate-600 bg-slate-900"
               checked={defaultCallSync}
               onChange={(e) =>
                 onDefaultCallChange(defaultCallProtocol, e.target.checked)
@@ -119,7 +113,7 @@ export function ConnectionsToolsPanel({
             />
             <label
               htmlFor="default-call-sync-panel"
-              className="text-[11px] text-white/70 cursor-pointer"
+              className="cursor-pointer text-[11px] text-slate-300"
             >
               Synchronous (uncheck for async)
             </label>
@@ -265,15 +259,8 @@ export function SelectionDetailsMain({
 
   if (!selected) {
     return (
-      <div className="rounded-xl border border-white/10 bg-gray-800/60 px-4 py-4 text-sm text-white/90 space-y-3">
-        <p className="text-white/80 leading-relaxed">
-          Click on a <strong className="font-semibold text-white">node</strong> or{" "}
-          <strong className="font-semibold text-white">connection</strong> in the graph
-          to see more details here.
-        </p>
-        <p className="text-[11px] text-white/50">
-          Select a service, database, or edge to view its properties.
-        </p>
+      <div className="mb-1 text-xs text-slate-500">
+        Select a node or connection on the canvas to edit or inspect it.
       </div>
     );
   }
@@ -283,24 +270,21 @@ export function SelectionDetailsMain({
     const nodeColor = NODE_KIND_COLOR[nodeKind] ?? "#9AA4B2";
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-3 text-xs">
         <div
-          className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
-          style={{
-            borderLeftWidth: "4px",
-            borderLeftColor: nodeColor,
-          }}
+          className="space-y-2 border-l-4 pl-3"
+          style={{ borderLeftColor: nodeColor }}
         >
           <div className="mb-0 flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2] mb-1">
+              <div className="text-[11px] uppercase tracking-wide text-slate-400">
                 {NODE_KIND_LABEL[nodeKind] ?? nodeKind}
               </div>
               {showRename ? (
                 <div className="flex min-w-0 flex-1">
                   <input
                     ref={renameInputRef}
-                    className="min-w-0 max-w-full flex-1 rounded-lg border border-white/15 bg-gray-900 px-2.5 py-1.5 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                    className="min-w-0 max-w-full flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-50 outline-none placeholder:text-slate-500 focus:border-sky-500"
                     value={name}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -325,51 +309,47 @@ export function SelectionDetailsMain({
                   />
                 </div>
               ) : (
-                <div className="text-sm font-semibold text-white">{toDisplayName(name)}</div>
+                <div className="text-xs font-semibold text-slate-200">
+                  {toDisplayName(name)}
+                </div>
               )}
             </div>
-            <div className="text-[10px] text-white/50 font-mono shrink-0">ID: {nodeId}</div>
+            <div className="shrink-0 font-mono text-[10px] text-slate-500">
+              ID: {nodeId}
+            </div>
           </div>
         </div>
 
         {nodeConnectionSummary && (
-          <div
-            className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
-            style={{
-              borderLeftWidth: "4px",
-              borderLeftColor: nodeColor,
-            }}
-          >
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-              Overview
-            </div>
-            <p className="text-[11px] text-white/75 leading-relaxed mb-2">
-              <span className="font-semibold text-white">{antiPatternCountLabel}</span>
+          <div className="space-y-2 border-t border-slate-800 pt-3">
+            <div className="text-[11px] text-slate-400">Overview</div>
+            <p className="text-[11px] leading-relaxed text-slate-300">
+              <span className="font-semibold text-slate-100">{antiPatternCountLabel}</span>
               {detections.length > 0
                 ? " reference this node (see list below)."
                 : "."}
             </p>
-            <p className="text-[11px] text-white/70 leading-relaxed mb-2">
+            <p className="text-[11px] leading-relaxed text-slate-400">
               In the saved graph,{" "}
-              <span className="text-white/90 font-medium">
+              <span className="font-medium text-slate-200">
                 {toDisplayName(nodeConnectionSummary.displayName)}
               </span>{" "}
               has{" "}
-              <span className="font-semibold text-[#9AA4B2]">
+              <span className="font-semibold text-slate-300">
                 {nodeConnectionSummary.outgoingCount}
               </span>{" "}
               outgoing and{" "}
-              <span className="font-semibold text-[#9AA4B2]">
+              <span className="font-semibold text-slate-300">
                 {nodeConnectionSummary.incomingCount}
               </span>{" "}
               incoming dependencies (edges).
             </p>
             {nodeConnectionSummary.uniqOut.length > 0 && (
               <div className="mb-1.5">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/45 mb-0.5">
+                <div className="mb-0.5 text-[11px] text-slate-400">
                   Calls / depends toward
                 </div>
-                <p className="text-[11px] text-white/65 leading-snug">
+                <p className="text-[11px] leading-snug text-slate-500">
                   {nodeConnectionSummary.uniqOut.slice(0, 10).map((t, i) => (
                     <span key={`o-${t}-${i}`}>
                       {i > 0 ? ", " : ""}
@@ -382,10 +362,8 @@ export function SelectionDetailsMain({
             )}
             {nodeConnectionSummary.uniqIn.length > 0 && (
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/45 mb-0.5">
-                  Incoming from
-                </div>
-                <p className="text-[11px] text-white/65 leading-snug">
+                <div className="mb-0.5 text-[11px] text-slate-400">Incoming from</div>
+                <p className="text-[11px] leading-snug text-slate-500">
                   {nodeConnectionSummary.uniqIn.slice(0, 10).map((t, i) => (
                     <span key={`i-${t}-${i}`}>
                       {i > 0 ? ", " : ""}
@@ -398,7 +376,7 @@ export function SelectionDetailsMain({
             )}
             {nodeConnectionSummary.uniqOut.length === 0 &&
               nodeConnectionSummary.uniqIn.length === 0 && (
-                <p className="text-[11px] text-white/45 italic">
+                <p className="text-[11px] italic text-slate-500">
                   No edges reference this node in the last saved graph (canvas-only
                   connections appear after you generate).
                 </p>
@@ -406,23 +384,15 @@ export function SelectionDetailsMain({
           </div>
         )}
 
-        <div
-          className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
-          style={{
-            borderLeftWidth: "4px",
-            borderLeftColor: nodeColor,
-          }}
-        >
+        <div className="space-y-2 border-t border-slate-800 pt-3">
           {Object.keys(nodeAttrs).length > 0 && (
-            <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-              <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-                Extra information
-              </div>
+            <div className="space-y-1">
+              <div className="text-[11px] text-slate-400">Extra information</div>
               <ul className="space-y-1">
                 {Object.entries(nodeAttrs).map(([k, v]) => (
-                  <li key={k} className="text-xs">
-                    <span className="font-medium text-white/80">{k}:</span>{" "}
-                    <span className="text-white/60">
+                  <li key={k} className="text-[11px]">
+                    <span className="font-medium text-slate-300">{k}:</span>{" "}
+                    <span className="text-slate-500">
                       {typeof v === "string" ? v : JSON.stringify(v)}
                     </span>
                   </li>
@@ -431,7 +401,9 @@ export function SelectionDetailsMain({
             </div>
           )}
           {Object.keys(nodeAttrs).length === 0 && (
-            <div className="text-[11px] text-white/45 italic">No extra attributes on this node.</div>
+            <div className="text-[11px] italic text-slate-500">
+              No extra attributes on this node.
+            </div>
           )}
         </div>
       </div>
@@ -494,28 +466,31 @@ export function SelectionDetailsMain({
     : null;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-gray-800/80 px-4 py-3 shadow-lg shadow-black/20 overflow-hidden"
+    <div
+      className={`space-y-3 text-xs${firstDetectionColor ? " border-l-4 pl-3" : ""}`}
       style={
         firstDetectionColor
-          ? { borderLeftWidth: "4px", borderLeftColor: firstDetectionColor }
+          ? { borderLeftColor: firstDetectionColor }
           : undefined
       }
     >
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">Edge</div>
-      <div className="mb-2 text-sm font-semibold text-white">
-        {toDisplayName(fromName)} → {toDisplayName(toName)}
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-slate-400">
+          Connection
+        </div>
+        <div className="text-[11px] text-slate-300">
+          {toDisplayName(fromName)} → {toDisplayName(toName)}
+        </div>
       </div>
 
-      <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-          Overview
-        </div>
-        <p className="text-[11px] text-white/75 leading-relaxed">
+      <div className="space-y-2 border-t border-slate-800 pt-3">
+        <div className="text-[11px] text-slate-400">Overview</div>
+        <p className="text-[11px] leading-relaxed text-slate-300">
           {detections.length === 0 ? (
             <>No anti-patterns flagged for this connection.</>
           ) : (
             <>
-              <span className="font-semibold text-white">
+              <span className="font-semibold text-slate-100">
                 {detections.length === 1
                   ? "1 anti-pattern"
                   : `${detections.length} anti-patterns`}
@@ -525,36 +500,34 @@ export function SelectionDetailsMain({
           )}
         </p>
         {edgeParallelSummary && edgeParallelSummary.betweenCount > 1 && (
-          <p className="text-[11px] text-white/65 mt-1.5 leading-relaxed">
+          <p className="text-[11px] leading-relaxed text-slate-400">
             The saved graph has{" "}
-            <span className="font-semibold text-[#9AA4B2]">
+            <span className="font-semibold text-slate-300">
               {edgeParallelSummary.betweenCount}
             </span>{" "}
             parallel edges (same source → target).
           </p>
         )}
-        <p className="text-[11px] text-white/60 mt-1.5 leading-relaxed">
-          Models a <span className="text-white/85">{kind}</span> dependency from{" "}
-          <span className="text-white/85">{toDisplayName(fromName)}</span> to{" "}
-          <span className="text-white/85">{toDisplayName(toName)}</span>.
+        <p className="text-[11px] leading-relaxed text-slate-500">
+          Models a <span className="text-slate-300">{kind}</span> dependency from{" "}
+          <span className="text-slate-300">{toDisplayName(fromName)}</span> to{" "}
+          <span className="text-slate-300">{toDisplayName(toName)}</span>.
         </p>
       </div>
 
-      <div className="mb-3 text-[11px] text-white/70">
-        Kind: <span className="font-semibold text-[#9AA4B2]">{kind}</span>
+      <div className="text-[11px] text-slate-400">
+        Kind: <span className="font-semibold text-slate-300">{kind}</span>
       </div>
 
       {kind === "CALLS" && (
-        <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-            Call type
-          </div>
+        <div className="space-y-2 border-t border-slate-800 pt-3">
+          <div className="text-[11px] text-slate-400">Call type</div>
           {editMode && onUpdateEdge ? (
             <div className="space-y-2">
-              <div>
-                <label className="block text-[10px] text-white/60 mb-0.5">Protocol</label>
+              <div className="space-y-1">
+                <label className="block text-[11px] text-slate-400">Protocol</label>
                 <select
-                  className="w-full rounded-lg border border-white/15 bg-gray-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
+                  className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-50 outline-none focus:border-sky-500"
                   value={callProtocol}
                   onChange={(e) => {
                     const k = e.target.value as CallProtocol;
@@ -570,48 +543,44 @@ export function SelectionDetailsMain({
                 <input
                   id="edge-sync-edit-main"
                   type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-white/20 bg-gray-900 accent-[#9AA4B2]"
+                  className="h-3 w-3 rounded border-slate-600 bg-slate-900"
                   checked={callSync}
                   onChange={(e) =>
                     onUpdateEdge(selected.data.id as string, { kind: callProtocol, sync: e.target.checked })
                   }
                 />
-                <label htmlFor="edge-sync-edit-main" className="text-[11px] text-white/80 cursor-pointer">
+                <label htmlFor="edge-sync-edit-main" className="cursor-pointer text-[11px] text-slate-300">
                   Synchronous (uncheck for async)
                 </label>
               </div>
             </div>
           ) : (
-            <div className="text-[11px] text-white/70 space-y-0.5">
-              <div><span className="font-medium text-white/80">Protocol:</span> {protocolLabel}</div>
-              <div><span className="font-medium text-white/80">Timing:</span> {callSync ? "Synchronous" : "Asynchronous"}</div>
+            <div className="space-y-0.5 text-[11px] text-slate-500">
+              <div><span className="font-medium text-slate-300">Protocol:</span> {protocolLabel}</div>
+              <div><span className="font-medium text-slate-300">Timing:</span> {callSync ? "Synchronous" : "Asynchronous"}</div>
             </div>
           )}
         </div>
       )}
 
       {hasCallMeta && (
-        <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-            Call details
-          </div>
+        <div className="space-y-1 border-t border-slate-800 pt-3">
+          <div className="text-[11px] text-slate-400">Call details</div>
           {endpoints.length > 0 && (
-            <div className="mb-1 text-[11px] text-white/70">
-              <span className="font-medium text-white/80">Endpoints:</span>{" "}
+            <div className="text-[11px] text-slate-500">
+              <span className="font-medium text-slate-300">Endpoints:</span>{" "}
               {endpoints.join(", ")}
             </div>
           )}
-          <div className="text-[11px] text-white/70">
-            <span className="font-medium text-white/80">Rate per minute:</span> {rpm}
+          <div className="text-[11px] text-slate-500">
+            <span className="font-medium text-slate-300">Rate per minute:</span> {rpm}
           </div>
         </div>
       )}
 
       {Object.keys(attrs).length > 0 && (
-        <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
-            Extra information
-          </div>
+        <div className="space-y-1 border-t border-slate-800 pt-3">
+          <div className="text-[11px] text-slate-400">Extra information</div>
           <ul className="space-y-1">
             {Object.entries(attrs).map(([k, v]) => {
               if (
@@ -620,9 +589,9 @@ export function SelectionDetailsMain({
               )
                 return null;
               return (
-                <li key={k} className="text-xs">
-                  <span className="font-medium text-white/80">{k}:</span>{" "}
-                  <span className="text-white/60">
+                <li key={k} className="text-[11px]">
+                  <span className="font-medium text-slate-300">{k}:</span>{" "}
+                  <span className="text-slate-500">
                     {typeof v === "string" ? v : JSON.stringify(v)}
                   </span>
                 </li>
@@ -650,7 +619,7 @@ export function AntiPatternDetailsPanel({ data, selected }: AntiProps) {
   return (
     <div className="space-y-2">
       {!selected && (
-        <p className="text-[11px] leading-relaxed text-white/50">
+        <p className="text-[11px] leading-relaxed text-slate-500">
           Anti-patterns detected across the whole graph. Select a node or connection to filter to that item.
         </p>
       )}
@@ -668,7 +637,7 @@ function DetectionsList({
 }) {
   if (!detections.length) {
     return (
-      <div className="text-[11px] text-white/50 italic">
+      <div className="text-[11px] italic text-slate-500">
         {scope === "all"
           ? "No anti-patterns detected in this analysis."
           : "No anti-patterns directly linked to this item."}
@@ -682,11 +651,9 @@ function DetectionsList({
       : "Anti-patterns affecting this item";
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-2.5">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/55">
-          {heading}
-        </span>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] text-slate-400">{heading}</span>
         <span className="flex flex-wrap gap-1">
           {detections.map((d, idx) => {
             const kind = normalizeDetectionKind((d as any).kind);
@@ -694,7 +661,7 @@ function DetectionsList({
             return (
               <span
                 key={idx}
-                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/15"
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{ background: color }}
                 title={antipatternKindLabel(kind ?? "")}
               />
@@ -707,24 +674,21 @@ function DetectionsList({
           const kind = normalizeDetectionKind((d as any).kind);
           const color = colorForDetectionKind(kind ?? "");
           return (
-            <li
-              key={idx}
-              className="rounded-lg border border-white/10 bg-slate-950/40 px-2.5 py-2"
-            >
+            <li key={idx} className="rounded bg-slate-900 px-2 py-2">
               <div className="flex items-start gap-2">
                 <span
-                  className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/15"
+                  className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ background: color }}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-semibold leading-snug text-white/90">
+                  <div className="text-[11px] font-semibold leading-snug text-slate-100">
                     {d.title}{" "}
-                    <span className="text-[10px] font-medium uppercase text-white/45">
+                    <span className="text-[10px] font-medium uppercase text-slate-500">
                       ({d.severity})
                     </span>
                   </div>
                   {d.summary && (
-                    <div className="mt-1 text-[11px] leading-relaxed text-white/55">
+                    <div className="mt-1 text-[11px] leading-relaxed text-slate-500">
                       {d.summary}
                     </div>
                   )}

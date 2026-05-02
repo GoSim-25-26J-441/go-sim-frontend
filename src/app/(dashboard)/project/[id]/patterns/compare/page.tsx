@@ -56,9 +56,6 @@ export default function ProjectPatternsComparePage({
   );
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [simulationModalOpen, setSimulationModalOpen] = useState(false);
-  const [simulationSelectedVersion, setSimulationSelectedVersion] =
-    useState("");
   const exportLeftGraphRef = useRef<(() => Graph | null) | null>(null);
   const exportRightGraphRef = useRef<(() => Graph | null) | null>(null);
   const exportLeftImageRef = useRef<
@@ -219,18 +216,6 @@ export default function ProjectPatternsComparePage({
     showToast(`Image downloaded (${side} version)`, "success");
   }
 
-  function handleSimulationConfirm() {
-    if (projectId && simulationSelectedVersion) {
-      router.push(
-        `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
-      );
-    } else {
-      showToast("Please select a version first", "warning");
-    }
-    setSimulationModalOpen(false);
-    setSimulationSelectedVersion("");
-  }
-
   return (
     <div className="p-6 space-y-4 min-w-0">
       <div
@@ -362,72 +347,8 @@ export default function ProjectPatternsComparePage({
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={() => setSimulationModalOpen(true)}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
-            >
-              Proceed to Performance Simulator
-            </button>
           </div>
         </div>
-
-        {simulationModalOpen && (
-          <div
-            className="fixed inset-0 z-99999 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-            onClick={(e) =>
-              e.target === e.currentTarget && setSimulationModalOpen(false)
-            }
-          >
-            <div
-              className="w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-sm p-6 shadow-xl shadow-black/30"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-lg font-semibold text-white mb-1">
-                Proceed to Performance Simulation
-              </h3>
-              <p className="text-sm text-white/60 mb-4">
-                Select which version to use for the simulation.
-              </p>
-
-              <div className="flex flex-col gap-2 mb-4">
-                <label className="text-xs font-semibold text-[#9AA4B2] uppercase tracking-wider">
-                  Version
-                </label>
-                <select
-                  className="rounded-lg border border-white/15 bg-gray-800 px-4 py-2.5 text-sm text-white scheme-dark focus:outline-none focus:ring-2 focus:ring-[#9AA4B2]/50"
-                  value={simulationSelectedVersion}
-                  onChange={(e) => setSimulationSelectedVersion(e.target.value)}
-                >
-                  <option value="">Select version…</option>
-                  {versions.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      #{v.version_number} {v.title || "Untitled"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSimulationModalOpen(false)}
-                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSimulationConfirm}
-                  disabled={!simulationSelectedVersion}
-                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Proceed
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {error && (
           <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300 shrink-0">

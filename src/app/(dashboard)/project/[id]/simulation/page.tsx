@@ -11,9 +11,11 @@ import {
   XCircle,
   AlertCircle,
   ArrowLeft,
+  Upload,
 } from "lucide-react";
 import { authenticatedFetch } from "@/lib/api-client/http";
 import { env } from "@/lib/env";
+import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type BackendRunSummary = {
   run_id: string;
@@ -125,6 +127,7 @@ export default function ProjectSimulationPage() {
   const [error, setError] = useState<string | null>(null);
   const [rawResponse, setRawResponse] = useState<unknown>(null);
   const [showRaw, setShowRaw] = useState(false);
+  const [showDiagramImagesModal, setShowDiagramImagesModal] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -198,10 +201,12 @@ export default function ProjectSimulationPage() {
     );
   }
 
+  const showEmptyState = runs.length === 0 && !error;
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="flex min-h-0 w-full flex-1 flex-col p-6">
       <div
-        className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap"
+        className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2.5"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
       >
         <div className="flex items-center gap-3">
@@ -215,61 +220,79 @@ export default function ProjectSimulationPage() {
             Simulation runs
           </h1>
         </div>
-        <Link
-          href={`/project/${projectId}/simulation/new`}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
-        >
-          <Play className="w-3 h-3" />
-          New simulation
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowDiagramImagesModal(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-800/50 text-white/80 hover:text-white transition-colors shadow-md"
+          >
+            <Upload className="w-4 h-4" />
+            <span className="text-sm font-regular">
+              Show Diagram and resource images{" "}
+            </span>
+          </button>
+          <Link
+            href={`/project/${projectId}/simulation/new`}
+            className="flex items-center gap-2 rounded-md bg-emerald-600/80 px-3 py-2 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500"
+          >
+            <Play className="w-3 h-3" />
+            New simulation
+          </Link>
+        </div>
       </div>
 
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-sm text-red-300">
-          {error}
-        </div>
-      )}
+      <DiagramImagesModal
+        projectId={projectId}
+        isOpen={showDiagramImagesModal}
+        onClose={() => setShowDiagramImagesModal(false)}
+      />
 
-      {rawResponse !== null && (
-        <div className="rounded-lg border border-white/10 bg-white/5 text-xs">
-          <button
-            onClick={() => setShowRaw((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-white/40 hover:text-white/70 transition-colors"
-          >
-            <span className="font-mono">Raw API response</span>
-            <span>{showRaw ? "▲ hide" : "▼ show"}</span>
-          </button>
-          {showRaw && (
-            <pre className="px-4 pb-4 font-mono text-[11px] text-white/60 whitespace-pre-wrap break-all border-t border-white/10 pt-3">
-              {JSON.stringify(rawResponse, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
+      <div className="mt-6 flex min-h-0 flex-1 flex-col space-y-6">
+        {error && (
+          <div className="shrink-0 bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-sm text-red-300">
+            {error}
+          </div>
+        )}
 
-      <div className="space-y-3">
-        {runs.length === 0 && !error ? (
-          <div className="bg-card rounded-lg p-6 border border-border text-center space-y-4">
-            <div>
-              <p className="text-white/70 mb-1">
+        {rawResponse !== null && (
+          <div className="shrink-0 rounded-lg border border-white/10 bg-white/5 text-xs">
+            <button
+              onClick={() => setShowRaw((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-2 text-white/40 hover:text-white/70 transition-colors"
+            >
+              <span className="font-mono">Raw API response</span>
+              <span>{showRaw ? "▲ hide" : "▼ show"}</span>
+            </button>
+            {showRaw && (
+              <pre className="px-4 pb-4 font-mono text-[11px] text-white/60 whitespace-pre-wrap break-all border-t border-white/10 pt-3">
+                {JSON.stringify(rawResponse, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+
+        {showEmptyState ? (
+          <div className="flex flex-1 flex-col items-center justify-center py-8 min-h-[min(560px,calc(100vh-14rem))]">
+            <div className="max-w-md space-y-4 px-4 text-center">
+              <p className="text-base text-white/80">
                 No simulation runs for this project yet.
               </p>
-              <p className="text-white/50 text-sm">
+              <p className="text-sm text-white/50">
                 Start a new simulation to see it appear here.
               </p>
+              <Link
+                href={`/project/${projectId}/simulation/new`}
+                className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-white/90"
+              >
+                <Play className="w-4 h-4" />
+                New simulation
+              </Link>
             </div>
-            <Link
-              href={`/project/${projectId}/simulation/new`}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition-colors"
-            >
-              <Play className="w-4 h-4" />
-              New simulation
-            </Link>
           </div>
         ) : null}
 
         {runs.length > 0 && (
-          <ul className="space-y-3">
+          <ul className="space-y-3 shrink-0">
             {runs.map((run) => {
               const label = getRunLabel(run);
               const rawStatus =
@@ -347,7 +370,8 @@ export default function ProjectSimulationPage() {
                     {(run.metadata?.best_score != null ||
                       run.metadata?.iterations != null ||
                       run.metadata?.batch_efficiency_score != null ||
-                      typeof run.metadata?.batch_recommendation_feasible === "boolean") && (
+                      typeof run.metadata?.batch_recommendation_feasible ===
+                        "boolean") && (
                       <div className="flex items-center gap-3 text-[11px] flex-wrap pt-0.5">
                         {run.metadata.iterations != null && (
                           <span className="text-white/40">
@@ -362,19 +386,25 @@ export default function ProjectSimulationPage() {
                           run.metadata.mode === "batch_recommendation") &&
                         (run.metadata.batch_efficiency_score != null ||
                           run.metadata.batch_violation_score != null ||
-                          typeof run.metadata.batch_recommendation_feasible === "boolean") ? (
+                          typeof run.metadata.batch_recommendation_feasible ===
+                            "boolean") ? (
                           <>
-                            {typeof run.metadata.batch_recommendation_feasible === "boolean" && (
+                            {typeof run.metadata
+                              .batch_recommendation_feasible === "boolean" && (
                               <span className="text-white/40">
                                 <span className="text-white/20">Feasible </span>
                                 <span className="font-mono text-emerald-300/80">
-                                  {run.metadata.batch_recommendation_feasible ? "yes" : "no"}
+                                  {run.metadata.batch_recommendation_feasible
+                                    ? "yes"
+                                    : "no"}
                                 </span>
                               </span>
                             )}
                             {run.metadata.batch_violation_score != null && (
                               <span className="text-white/40">
-                                <span className="text-white/20">Violation </span>
+                                <span className="text-white/20">
+                                  Violation{" "}
+                                </span>
                                 <span className="font-mono text-amber-300/80">
                                   {String(run.metadata.batch_violation_score)}
                                 </span>
@@ -382,7 +412,9 @@ export default function ProjectSimulationPage() {
                             )}
                             {run.metadata.batch_efficiency_score != null && (
                               <span className="text-white/40">
-                                <span className="text-white/20">Efficiency </span>
+                                <span className="text-white/20">
+                                  Efficiency{" "}
+                                </span>
                                 <span className="font-mono text-amber-300/80">
                                   {String(run.metadata.batch_efficiency_score)}
                                 </span>
@@ -395,8 +427,10 @@ export default function ProjectSimulationPage() {
                               <span className="text-white/20">Best score </span>
                               <span className="font-mono text-amber-300/80">
                                 {typeof run.metadata.best_score === "number"
-                                  ? (run.metadata.objective === "cpu_utilization" ||
-                                    run.metadata.objective === "memory_utilization")
+                                  ? run.metadata.objective ===
+                                      "cpu_utilization" ||
+                                    run.metadata.objective ===
+                                      "memory_utilization"
                                     ? `${(run.metadata.best_score * 100).toFixed(2)}%`
                                     : run.metadata.best_score.toFixed(4)
                                   : String(run.metadata.best_score)}

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useParams, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, FileCode2, Play } from "lucide-react";
+import { FileCode2, Play } from "lucide-react";
 import { InputField, TextAreaField } from "@/components/common/inputFeild/page";
 import {
   createProjectSimulationRun,
@@ -12,7 +12,6 @@ import {
   isSimulationApiError,
   putDiagramScenarioDraft,
   regenerateDiagramScenario,
-  type DiagramScenarioDraftResponse,
   type ScenarioValidationResult,
   validateScenarioYaml,
 } from "@/lib/api-client/simulation";
@@ -44,12 +43,6 @@ import {
 } from "@/lib/simulation/sample-scenarios";
 import { env } from "@/lib/env";
 
-function routeSegmentParam(param: string | string[] | undefined): string {
-  if (typeof param === "string") return param;
-  if (Array.isArray(param)) return param[0] ?? "";
-  return "";
-}
-
 function draftStatusFromResponse(data: Record<string, unknown>): string | null {
   const s = data.status ?? data.draft_status ?? data.source;
   if (typeof s === "string" && s.trim()) return s.trim();
@@ -63,56 +56,6 @@ function scenarioDraftHttpMessage(e: unknown, fallback: string): string {
     return d ? `${base}\n${d}` : base;
   }
   return e instanceof Error ? e.message : fallback;
-}
-
-/** Fields returned by GET/PUT/regenerate diagram scenario when persisted metadata exists */
-type ScenarioDraftMetadata = {
-  scenario_hash?: string;
-  source?: string;
-  source_hash?: string;
-  s3_path?: string;
-  updated_at?: string;
-};
-
-function extractScenarioDraftMetadata(
-  data: DiagramScenarioDraftResponse | Record<string, unknown>,
-): ScenarioDraftMetadata | null {
-  const scenario_hash =
-    typeof data.scenario_hash === "string" ? data.scenario_hash.trim() : "";
-  const source = typeof data.source === "string" ? data.source.trim() : "";
-  const source_hash =
-    typeof data.source_hash === "string" ? data.source_hash.trim() : "";
-  const s3_path = typeof data.s3_path === "string" ? data.s3_path.trim() : "";
-  const updated_at =
-    typeof data.updated_at === "string" ? data.updated_at.trim() : "";
-  if (!scenario_hash && !source && !source_hash && !s3_path && !updated_at) {
-    return null;
-  }
-  return {
-    ...(scenario_hash ? { scenario_hash } : {}),
-    ...(source ? { source } : {}),
-    ...(source_hash ? { source_hash } : {}),
-    ...(s3_path ? { s3_path } : {}),
-    ...(updated_at ? { updated_at } : {}),
-  };
-}
-
-function shortenHashDisplay(hash: string, maxLen = 12): string {
-  if (hash.length <= maxLen) return hash;
-  return `${hash.slice(0, maxLen)}…`;
-}
-
-function formatScenarioUpdatedAt(raw: string): string {
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? raw : d.toLocaleString();
-}
-
-function scenarioDraftMetadataHasFields(m: ScenarioDraftMetadata | null): m is ScenarioDraftMetadata {
-  if (!m) return false;
-  return Object.keys(m).some((k) => {
-    const v = m[k as keyof ScenarioDraftMetadata];
-    return typeof v === "string" && v.length > 0;
-  });
 }
 
 /** Option for the scenario version dropdown (sample or from AMG-APD versions API) */
@@ -227,12 +170,25 @@ function createInitialScenarioEditorState(): ScenarioState {
   };
 }
 
-export default function ProjectNewSimulationPage() {
-  const params = useParams();
+export type NewSimulationFlowProps = {
+  projectId: string;
+  /** Same as `?version=` on the full-page route. */
+  versionQueryParam?: string | null;
+  /** Serialized `URLSearchParams` from the page URL (for `router.replace` when locking version). Omit or empty in embed mode. */
+  urlSearchParamsSerialized?: string;
+  embedMode?: boolean;
+  onClose?: () => void;
+};
+
+export function NewSimulationFlow({
+  projectId,
+  versionQueryParam = null,
+  urlSearchParamsSerialized = "",
+  embedMode = false,
+  onClose,
+}: NewSimulationFlowProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectId = routeSegmentParam(params.id);
-  const versionFromQuery = searchParams.get("version");
+  const versionFromQuery = versionQueryParam;
 
   // Version/diagram selector phase (shown before the multi-step form)
   const { userId } = useAuth();
@@ -252,8 +208,6 @@ export default function ProjectNewSimulationPage() {
   const [scenarioDraftStatusLabel, setScenarioDraftStatusLabel] = useState<string | null>(null);
   /** Last YAML persisted on the server for this diagram version (dirty detection). Null = sample or fallback/local-only. */
   const [savedScenarioYaml, setSavedScenarioYaml] = useState<string | null>(null);
-  /** Server-returned hashes/path/time for the diagram scenario draft (non-sample only). Cleared on sample/fallback/errors. */
-  const [scenarioDraftMetadata, setScenarioDraftMetadata] = useState<ScenarioDraftMetadata | null>(null);
   const [usedLocalScenarioFallback, setUsedLocalScenarioFallback] = useState(false);
   const [saveScenarioBusy, setSaveScenarioBusy] = useState(false);
   const [regenerateBusy, setRegenerateBusy] = useState(false);
@@ -323,7 +277,9 @@ export default function ProjectNewSimulationPage() {
   // When URL has ?version=..., show the form with that version (e.g. after refresh or shared link)
   useEffect(() => {
     if (!versionFromQuery) return;
-    setSelectedVersionId(normalizeSampleVersionFromUrlParam(versionFromQuery) ?? versionFromQuery);
+    setSelectedVersionId(
+      normalizeSampleVersionFromUrlParam(versionFromQuery) ?? versionFromQuery,
+    );
     setVersionPhase(false);
   }, [versionFromQuery]);
 
@@ -367,7 +323,6 @@ export default function ProjectNewSimulationPage() {
     setScenarioDraftError(null);
     setScenarioDraftStatusLabel(null);
     setSavedScenarioYaml(null);
-    setScenarioDraftMetadata(null);
     setUsedLocalScenarioFallback(false);
     setSampleScenarioReady(false);
     setScenario(createInitialScenarioEditorState());
@@ -409,7 +364,6 @@ export default function ProjectNewSimulationPage() {
         setScenario(amgApdTemplateToScenarioState(amg));
         setScenarioError(null);
         setSavedScenarioYaml(null);
-        setScenarioDraftMetadata(null);
         setScenarioDraftStatusLabel(null);
         setUsedLocalScenarioFallback(true);
         setScenarioDraftError(
@@ -426,7 +380,6 @@ export default function ProjectNewSimulationPage() {
       setScenarioDraftError(null);
       setUsedLocalScenarioFallback(false);
       setSavedScenarioYaml(null);
-      setScenarioDraftMetadata(null);
       setScenarioDraftStatusLabel(null);
       setScenario(createInitialScenarioEditorState());
       setScenarioError(null);
@@ -436,20 +389,17 @@ export default function ProjectNewSimulationPage() {
         const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
         if (!yaml.trim()) {
           setScenarioDraftError("The simulation service returned an empty scenario for this diagram version.");
-          setScenarioDraftMetadata(null);
           return;
         }
         const parsed = parseSimulationScenarioYaml(yaml);
         if (!parsed.ok) {
           setScenarioDraftError(`Could not parse scenario YAML: ${parsed.error}`);
-          setScenarioDraftMetadata(null);
           return;
         }
         setScenario(parsed.state as ScenarioState);
         setScenarioError(null);
         setSavedScenarioYaml(yaml.trim());
         setScenarioDraftStatusLabel(draftStatusFromResponse(data as Record<string, unknown>));
-        setScenarioDraftMetadata(extractScenarioDraftMetadata(data));
       } catch (e) {
         if (cancelled) return;
         const canTryFallback =
@@ -460,7 +410,6 @@ export default function ProjectNewSimulationPage() {
         if (isClientError) {
           setScenarioDraftError(scenarioDraftHttpMessage(e, "Failed to load scenario draft"));
           setSavedScenarioYaml(null);
-          setScenarioDraftMetadata(null);
           return;
         }
         if (canTryFallback && (await tryLocalAmgFallback())) return;
@@ -469,7 +418,6 @@ export default function ProjectNewSimulationPage() {
             (canTryFallback ? " No local diagram fallback was available." : "")
         );
         setSavedScenarioYaml(null);
-        setScenarioDraftMetadata(null);
       } finally {
         if (!cancelled) setScenarioDraftLoading(false);
       }
@@ -594,22 +542,18 @@ export default function ProjectNewSimulationPage() {
     return scenarioYaml.trim() === canonicalSavedScenarioYaml;
   }, [isSampleScenario, canonicalSavedScenarioYaml, scenarioYaml]);
 
-  const applyDraftResponseToEditor = (
-    data: DiagramScenarioDraftResponse | Record<string, unknown>,
-  ) => {
+  const applyDraftResponseToEditor = (data: { scenario_yaml?: string } & Record<string, unknown>) => {
     const yaml = typeof data.scenario_yaml === "string" ? data.scenario_yaml : "";
     if (!yaml.trim()) return;
     const parsed = parseSimulationScenarioYaml(yaml);
     if (!parsed.ok) {
       setScenarioDraftError(`Could not parse scenario YAML: ${parsed.error}`);
-      setScenarioDraftMetadata(null);
       return;
     }
     setScenario(parsed.state as ScenarioState);
     setScenarioError(null);
     setSavedScenarioYaml(yaml.trim());
-    setScenarioDraftMetadata(extractScenarioDraftMetadata(data));
-    const label = draftStatusFromResponse(data as Record<string, unknown>);
+    const label = draftStatusFromResponse(data);
     if (label) setScenarioDraftStatusLabel(label);
   };
 
@@ -624,18 +568,8 @@ export default function ProjectNewSimulationPage() {
       });
       const y = scenarioYaml.trim();
       setSavedScenarioYaml(y);
-      if (res && typeof res === "object") {
-        const yamlStr =
-          typeof (res as { scenario_yaml?: string }).scenario_yaml === "string"
-            ? (res as { scenario_yaml: string }).scenario_yaml
-            : "";
-        if (yamlStr.trim()) {
-          applyDraftResponseToEditor(res as DiagramScenarioDraftResponse);
-        } else {
-          const meta = extractScenarioDraftMetadata(res as Record<string, unknown>);
-          if (meta) setScenarioDraftMetadata(meta);
-          setScenarioDraftStatusLabel("edited");
-        }
+      if (res && typeof res === "object" && "scenario_yaml" in res && res.scenario_yaml) {
+        applyDraftResponseToEditor(res as Record<string, unknown>);
       } else {
         setScenarioDraftStatusLabel("edited");
       }
@@ -654,18 +588,8 @@ export default function ProjectNewSimulationPage() {
             });
             const y = scenarioYaml.trim();
             setSavedScenarioYaml(y);
-            if (res && typeof res === "object") {
-              const yamlStr =
-                typeof (res as { scenario_yaml?: string }).scenario_yaml === "string"
-                  ? (res as { scenario_yaml: string }).scenario_yaml
-                  : "";
-              if (yamlStr.trim()) {
-                applyDraftResponseToEditor(res as DiagramScenarioDraftResponse);
-              } else {
-                const meta = extractScenarioDraftMetadata(res as Record<string, unknown>);
-                if (meta) setScenarioDraftMetadata(meta);
-                setScenarioDraftStatusLabel("edited");
-              }
+            if (res && typeof res === "object" && "scenario_yaml" in res && res.scenario_yaml) {
+              applyDraftResponseToEditor(res as Record<string, unknown>);
             } else {
               setScenarioDraftStatusLabel("edited");
             }
@@ -1226,27 +1150,202 @@ export default function ProjectNewSimulationPage() {
     });
   };
 
+  const embedNavRow = embedMode
+    ? "flex flex-wrap items-center justify-center gap-3"
+    : "flex flex-wrap items-center justify-between gap-3";
+
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col p-6">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 py-2.5">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => router.push(`/project/${projectId}/simulation`)}
-            className="flex h-6 w-6 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
-            aria-label="Back to simulation runs"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <h1 className="flex items-center gap-2 text-md font-bold text-white">
-            New simulation
-          </h1>
+    <div className={embedMode ? "w-full space-y-6" : "space-y-6"}>
+      {/* Version selector phase */}
+      {versionPhase && (
+        <div
+          className={`space-y-6 rounded-xl bg-card p-6 shadow-lg shadow-black/15 sm:p-8 ${
+            embedMode
+              ? "mx-auto w-full max-w-md border border-white/10"
+              : "max-w-lg"
+          }`}
+        >
+          {embedMode ? (
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10">
+                <FileCode2 className="h-5 w-5 text-white" aria-hidden />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-base font-semibold text-white">
+                  Choose a scenario version
+                </h2>
+                <p className="text-xs text-white/50">
+                  Select a saved diagram version or use a bundled sample.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {versionsLoading ? (
+            <div className="flex items-center justify-center gap-2 text-sm text-white/50">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/60" />
+              Loading versions…
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-white/70">
+                Scenario version
+              </label>
+              <select
+                value={selectedVersionId}
+                onChange={(e) => setSelectedVersionId(e.target.value)}
+                className="w-full px-3 py-2 bg-black/40 border border-white/20 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+              >
+                {availableVersions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              {availableVersions.find((v) => v.id === selectedVersionId)?.description && (
+                <p className="text-xs text-white/50 pt-1">
+                  {availableVersions.find((v) => v.id === selectedVersionId)!.description}
+                </p>
+              )}
+              {availableVersions.filter((v) => !isSampleScenarioId(v.id)).length === 0 && (
+                <p className="text-xs text-amber-400/80 pt-1">
+                  No saved diagram versions for this project. Use a bundled sample or create versions in
+                  Pattern Detection first.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className={`${embedNavRow} pt-4`}>
+            {embedMode ? (
+              <button
+                type="button"
+                onClick={() => onClose?.()}
+                className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                Cancel
+              </button>
+            ) : (
+              <Link
+                href={`/project/${projectId}/simulation`}
+                className="rounded-lg border border-white/20 bg-white/5 px-4 py-2 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                Cancel
+              </Link>
+            )}
+            <button
+              type="button"
+              disabled={versionsLoading}
+              onClick={() => {
+                if (!embedMode) {
+                  const params = new URLSearchParams(urlSearchParamsSerialized);
+                  params.set("version", selectedVersionId);
+                  router.replace(
+                    `/project/${projectId}/simulation/new?${params.toString()}`,
+                    { scroll: false },
+                  );
+                }
+                setVersionPhase(false);
+              }}
+              className="rounded-full bg-white px-6 py-2 text-sm font-medium text-black shadow-sm transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Load &amp; Configure →
+            </button>
+          </div>
         </div>
+      )}
+
+      {/* Multi-step form — shown only after a version is selected */}
+      {!versionPhase && (
+        <>
+      {/* Stepper */}
+      <div
+        className={`mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 ${
+          embedMode ? "justify-center" : ""
+        }`}
+      >
+        {[{ step: 1, label: "Scenario setup" }, { step: 2, label: "Configuration" }, { step: 3, label: "Review" }].map(
+          ({ step, label }, idx) => {
+            const isActive = currentStep === step;
+            const isCompleted = currentStep > step;
+            return (
+              <div key={step} className="flex items-center gap-2">
+                <div
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                    isActive
+                      ? "bg-white text-black"
+                      : isCompleted
+                      ? "bg-emerald-400 text-black"
+                      : "bg-white/10 text-white/70"
+                  }`}
+                >
+                  {step}
+                </div>
+                <span className={`text-xs ${isActive ? "text-white" : "text-white/60"}`}>{label}</span>
+                {idx < 2 && <div className="w-10 h-px bg-white/15 ml-2" />}
+              </div>
+            );
+          }
+        )}
+      </div>
+
+      {/* Debug: Version API response (GET /api/amg-apd/versions/:id) + YAML template */}
+      <div
+        className={`overflow-hidden rounded-lg border border-white/10 ${
+          embedMode ? "mx-auto w-full" : ""
+        }`}
+      >
+        <div className="flex items-center justify-between px-3 py-2 bg-white/5">
+          <span className="text-xs font-medium text-white/70">Debug: Version API response</span>
+          <select
+            value={debugView}
+            onChange={(e) => setDebugView(e.target.value as "hide" | "show" | "yaml")}
+            className="text-xs px-2 py-1 rounded bg-black/40 border border-white/20 text-white focus:outline-none focus:ring-1 focus:ring-white/30"
+          >
+            <option value="hide">Hide</option>
+            <option value="show">Show version response</option>
+            <option value="yaml">Show YAML template</option>
+          </select>
+        </div>
+        {debugView === "show" && (
+          <div className="p-3 border-t border-white/10 bg-black/20 max-h-64 overflow-auto">
+            {versionDetailLoading ? (
+              <p className="text-xs text-white/50">Loading…</p>
+            ) : isSampleScenario ? (
+              <p className="text-xs text-white/50">Select a saved diagram version (not a bundled sample) to load response.</p>
+            ) : versionDetailResponse === null ? (
+              <p className="text-xs text-white/50">No response yet.</p>
+            ) : (
+              <pre className="text-[11px] font-mono text-white/80 whitespace-pre-wrap break-all">
+                {JSON.stringify(versionDetailResponse, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+        {debugView === "yaml" && (
+          <div className="p-3 border-t border-white/10 bg-black/20 max-h-64 overflow-auto">
+            {versionDetailLoading ? (
+              <p className="text-xs text-white/50">Loading…</p>
+            ) : versionYamlTemplate ? (
+              <pre className="text-[11px] font-mono text-white/80 whitespace-pre-wrap break-all">
+                {versionYamlTemplate}
+              </pre>
+            ) : isSampleScenario ? (
+              <p className="text-xs text-white/50">Select a saved diagram version (not a bundled sample) to load YAML template.</p>
+            ) : (
+              <p className="text-xs text-white/50">No YAML template in response yet.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Form */}
       <form onSubmit={handleFormSubmit} className="space-y-6">
-        <div className="bg-card rounded-lg p-6 space-y-6">
+        <div
+          className={`space-y-6 rounded-xl bg-card p-6 ${
+            embedMode ? "border border-white/10 shadow-md shadow-black/10" : ""
+          }`}
+        >
           {/* Step 2: Configuration */}
           {currentStep === 2 && (
             <>
@@ -1904,11 +2003,11 @@ export default function ProjectNewSimulationPage() {
               )}
 
               {/* Step 2 navigation */}
-              <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div className={`${embedNavRow} border-t border-border pt-4`}>
                 <button
                   type="button"
                   onClick={() => setCurrentStep(1)}
-                  className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                  className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
                 >
                   Back
                 </button>
@@ -1918,7 +2017,7 @@ export default function ProjectNewSimulationPage() {
                   onClick={() => {
                     if (validateScenarioStep() && validateConfigStep()) setCurrentStep(3);
                   }}
-                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black shadow-sm transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Next: Review
                 </button>
@@ -1959,106 +2058,51 @@ export default function ProjectNewSimulationPage() {
               )}
 
               {!isSampleScenario && (
-                <>
-                  <div className="flex flex-wrap items-center gap-2 justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
-                      {scenarioDraftLoading ? (
-                        <span className="flex items-center gap-2 text-white/60">
-                          <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-                          Loading scenario from simulation service…
-                        </span>
-                      ) : (
-                        <>
-                          {scenarioDraftStatusLabel && (
-                            <span className="rounded bg-white/10 px-2 py-0.5 font-medium text-white/90 capitalize">
-                              {scenarioDraftStatusLabel}
-                            </span>
-                          )}
-                          {!scenarioDraftLoading && !isDiagramScenarioSynced && (
+                <div
+                  className={`flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 ${
+                    embedMode
+                      ? "flex-col justify-center sm:flex-row sm:justify-between"
+                      : "justify-between gap-2"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-white/80 sm:justify-start">
+                    {scenarioDraftLoading ? (
+                      <span className="flex items-center gap-2 text-white/60">
+                        <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                        Loading scenario from simulation service…
+                      </span>
+                    ) : (
+                      <>
+                        {scenarioDraftStatusLabel && (
+                          <span className="rounded bg-white/10 px-2 py-0.5 font-medium text-white/90 capitalize">
+                            {scenarioDraftStatusLabel}
+                          </span>
+                        )}
+                        {!scenarioDraftLoading && !isDiagramScenarioSynced && (
                             <span className="text-amber-200/90">Unsaved changes</span>
                           )}
-                        </>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={diagramScenarioDraftBlocked || saveScenarioBusy || isSampleScenario}
-                        onClick={() => void handleSaveDiagramScenario()}
-                        className="px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/10 text-white hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {saveScenarioBusy ? "Saving…" : "Save scenario"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={scenarioDraftLoading || regenerateBusy || isSampleScenario}
-                        onClick={() => void handleRegenerateDiagramScenario()}
-                        className="px-3 py-1.5 text-xs rounded-lg border border-sky-500/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {regenerateBusy ? "Regenerating…" : "Regenerate from diagram"}
-                      </button>
-                    </div>
+                      </>
+                    )}
                   </div>
-
-                  {scenarioDraftMetadataHasFields(scenarioDraftMetadata) && (
-                    <div className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-white/45 mb-1.5">
-                        Saved scenario
-                      </div>
-                      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] leading-snug">
-                        {scenarioDraftMetadata.source ? (
-                          <>
-                            <dt className="text-white/40 shrink-0">Source</dt>
-                            <dd className="text-white/85 font-medium truncate" title={scenarioDraftMetadata.source}>
-                              {scenarioDraftMetadata.source}
-                            </dd>
-                          </>
-                        ) : null}
-                        {scenarioDraftMetadata.scenario_hash ? (
-                          <>
-                            <dt className="text-white/40 shrink-0">Scenario hash</dt>
-                            <dd
-                              className="font-mono text-white/80 truncate"
-                              title={scenarioDraftMetadata.scenario_hash}
-                            >
-                              {shortenHashDisplay(scenarioDraftMetadata.scenario_hash)}
-                            </dd>
-                          </>
-                        ) : null}
-                        {scenarioDraftMetadata.source_hash ? (
-                          <>
-                            <dt className="text-white/40 shrink-0">Source hash</dt>
-                            <dd
-                              className="font-mono text-white/80 truncate"
-                              title={scenarioDraftMetadata.source_hash}
-                            >
-                              {shortenHashDisplay(scenarioDraftMetadata.source_hash)}
-                            </dd>
-                          </>
-                        ) : null}
-                        {scenarioDraftMetadata.s3_path ? (
-                          <>
-                            <dt className="text-white/40 shrink-0">S3 path</dt>
-                            <dd
-                              className="font-mono text-white/75 truncate min-w-0"
-                              title={scenarioDraftMetadata.s3_path}
-                            >
-                              {scenarioDraftMetadata.s3_path}
-                            </dd>
-                          </>
-                        ) : null}
-                        {scenarioDraftMetadata.updated_at ? (
-                          <>
-                            <dt className="text-white/40 shrink-0">Updated</dt>
-                            <dd className="text-white/85 truncate" title={scenarioDraftMetadata.updated_at}>
-                              {formatScenarioUpdatedAt(scenarioDraftMetadata.updated_at)}
-                            </dd>
-                          </>
-                        ) : null}
-                      </dl>
-                    </div>
-                  )}
-                </>
+                  <div className="flex flex-wrap justify-center gap-2 sm:justify-end">
+                    <button
+                      type="button"
+                      disabled={diagramScenarioDraftBlocked || saveScenarioBusy || isSampleScenario}
+                      onClick={() => void handleSaveDiagramScenario()}
+                      className="rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {saveScenarioBusy ? "Saving…" : "Save scenario"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={scenarioDraftLoading || regenerateBusy || isSampleScenario}
+                      onClick={() => void handleRegenerateDiagramScenario()}
+                      className="rounded-lg border border-sky-500/40 bg-sky-500/15 px-3 py-1.5 text-xs text-sky-100 hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {regenerateBusy ? "Regenerating…" : "Regenerate from diagram"}
+                    </button>
+                  </div>
+                </div>
               )}
 
               <ScenarioBehaviorEditor
@@ -2077,7 +2121,11 @@ export default function ProjectNewSimulationPage() {
                 }}
               />
 
-              <div className="flex justify-end pt-4 border-t border-border mt-4">
+              <div
+                className={`mt-4 flex border-t border-border pt-4 ${
+                  embedMode ? "justify-center" : "justify-end"
+                }`}
+              >
                 <button
                   type="button"
                   disabled={diagramScenarioDraftBlocked}
@@ -2086,7 +2134,7 @@ export default function ProjectNewSimulationPage() {
                       setCurrentStep(2);
                     }
                   }}
-                  className="px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="rounded-full bg-white px-6 py-2 text-sm font-medium text-black shadow-sm transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Next: Configuration
                 </button>
@@ -2104,7 +2152,13 @@ export default function ProjectNewSimulationPage() {
           {/* Step 3: Review & Submit */}
           {currentStep === 3 && (
             <>
-              <h2 className="text-lg font-semibold text-white mb-4">Review</h2>
+              <h2
+                className={`mb-4 text-lg font-semibold text-white ${
+                  embedMode ? "text-center" : ""
+                }`}
+              >
+                Review
+              </h2>
 
               {/* Run details summary */}
               <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
@@ -2344,21 +2398,35 @@ export default function ProjectNewSimulationPage() {
                       : "You have local edits relative to the last loaded server draft. Run once without persisting, or save into the diagram draft and run."}
                   </p>
                 )}
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className={embedNavRow}>
                   <button
                     type="button"
                     onClick={() => setCurrentStep(2)}
-                    className="px-4 py-2 text-sm rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                    className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
                   >
                     Back
                   </button>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <Link
-                      href={`/project/${projectId}/simulation`}
-                      className="inline-flex items-center px-4 py-2 rounded-lg border border-white/20 bg-white/5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
-                    >
-                      Cancel
-                    </Link>
+                  <div
+                    className={`flex flex-wrap items-center gap-2 ${
+                      embedMode ? "justify-center" : "justify-end"
+                    }`}
+                  >
+                    {embedMode ? (
+                      <button
+                        type="button"
+                        onClick={() => onClose?.()}
+                        className="inline-flex items-center rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                    ) : (
+                      <Link
+                        href={`/project/${projectId}/simulation`}
+                        className="inline-flex items-center rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                      >
+                        Cancel
+                      </Link>
+                    )}
                     {isSampleScenario && (
                       <button
                         type="submit"
@@ -2439,6 +2507,9 @@ export default function ProjectNewSimulationPage() {
           )}
         </div>
       </form>
+        </>
+      )}
     </div>
   );
 }
+
