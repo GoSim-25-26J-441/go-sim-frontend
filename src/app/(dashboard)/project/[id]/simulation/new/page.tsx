@@ -226,6 +226,7 @@ export default function ProjectNewSimulationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = params.id as string | undefined;
+  const versionFromQuery = searchParams.get("version");
 
   // Version/diagram selector phase (shown before the multi-step form)
   const { userId } = useAuth();
@@ -315,10 +316,10 @@ export default function ProjectNewSimulationPage() {
 
   // When URL has ?version=..., show the form with that version (e.g. after refresh or shared link)
   useEffect(() => {
-    if (!version) return;
-    setSelectedVersionId(normalizeSampleVersionFromUrlParam(version) ?? version);
+    if (!versionFromQuery) return;
+    setSelectedVersionId(normalizeSampleVersionFromUrlParam(versionFromQuery) ?? versionFromQuery);
     setVersionPhase(false);
-  }, [version]);
+  }, [versionFromQuery]);
 
   // Fetch version detail (GET /api/amg-apd/versions/:id) when a non-sample version is selected
   useEffect(() => {
@@ -1239,7 +1240,7 @@ export default function ProjectNewSimulationPage() {
 
       {/* Form */}
       <form onSubmit={handleFormSubmit} className="space-y-6">
-        <div className="bg-card rounded-lg p-6 border border-border space-y-6">
+        <div className="bg-card rounded-lg p-6 space-y-6">
           {/* Step 2: Configuration */}
           {currentStep === 2 && (
             <>
@@ -2432,8 +2433,6 @@ export default function ProjectNewSimulationPage() {
           )}
         </div>
       </form>
-        </>
-      )}
     </div>
   );
 }
