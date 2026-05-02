@@ -1165,21 +1165,29 @@ export function NewSimulationFlow({
               : "max-w-lg"
           }`}
         >
-          {embedMode ? (
-            <div className="flex flex-col items-center gap-3 text-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10">
+          <div
+            className={
+              embedMode
+                ? "flex flex-col items-center gap-3 text-center"
+                : "flex flex-col gap-3 sm:flex-row sm:items-start"
+            }
+          >
+            {embedMode ? (
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10">
                 <FileCode2 className="h-5 w-5 text-white" aria-hidden />
               </div>
-              <div className="space-y-1">
-                <h2 className="text-base font-semibold text-white">
-                  Choose a scenario version
-                </h2>
-                <p className="text-xs text-white/50">
-                  Select a saved diagram version or use a bundled sample.
-                </p>
+            ) : (
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10">
+                <FileCode2 className="h-5 w-5 text-white" aria-hidden />
               </div>
+            )}
+            <div className={`space-y-1 ${embedMode ? "" : "min-w-0 flex-1"}`}>
+              <h2 className="text-base font-semibold text-white">Choose a scenario version</h2>
+              <p className="text-xs text-white/50 leading-relaxed">
+                Select a saved diagram version or use a bundled sample to get started.
+              </p>
             </div>
-          ) : null}
+          </div>
 
           {versionsLoading ? (
             <div className="flex items-center justify-center gap-2 text-sm text-white/50">
