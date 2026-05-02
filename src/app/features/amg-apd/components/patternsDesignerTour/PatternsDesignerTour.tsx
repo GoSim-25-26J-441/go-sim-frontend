@@ -38,9 +38,9 @@ const STICKY_TOOLBAR_GUARD_PX = 108;
 
 /** Same visual as Legend “Anti-patterns: ?” help control (Legend.tsx). */
 const GUIDE_MARKER_INTERACTIVE =
-  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15 hover:text-white";
+  "amg-designer-q-glow inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15 hover:text-white";
 const GUIDE_MARKER_STATIC =
-  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90";
+  "amg-designer-q-glow inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90";
 
 type ChapterMeta = {
   id: string;
@@ -129,6 +129,15 @@ function getRectFromSelector(selector: string): DOMRect | null {
   return el.getBoundingClientRect();
 }
 
+function inflateRect(r: DOMRect, pad: number): DOMRect {
+  return new DOMRect(
+    r.left - pad,
+    r.top - pad,
+    r.width + pad * 2,
+    r.height + pad * 2,
+  );
+}
+
 function getVisibleGuidesControlRect(): DOMRect | null {
   const sel = qs(AMG_DESIGNER.guides);
   const nodes = document.querySelectorAll(sel);
@@ -201,6 +210,25 @@ function welcomeIntroPanelStyle(anchor: DOMRect | null): CSSProperties {
     width: maxW,
     maxWidth: maxW,
     maxHeight: Math.min(0.55 * vh, vh - topBelow - GUIDES_INTRO_POPOVER_MARGIN),
+  };
+}
+
+/** Centered modal for welcome step 0 (initial intro). */
+function welcomeIntroCenteredPanelStyle(): CSSProperties {
+  const vw =
+    typeof window !== "undefined" ? window.innerWidth : GUIDES_INTRO_MAX_W_PX;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 600;
+  const maxW = Math.min(GUIDES_INTRO_MAX_W_PX, vw - GUIDES_INTRO_POPOVER_MARGIN * 2);
+  const maxH = Math.min(0.88 * vh, 580);
+  return {
+    position: "fixed",
+    zIndex: 30,
+    left: "50%",
+    top: "50%",
+    transform: "translate(-50%, -50%)",
+    width: maxW,
+    maxWidth: maxW,
+    maxHeight: maxH,
   };
 }
 
@@ -563,7 +591,7 @@ function buildSteps(args: {
           el?.scrollIntoView({ block: "nearest", inline: "nearest" });
           await new Promise((r) => window.setTimeout(r, 220));
         },
-        body: "Compare opens a side-by-side view of two saved versions so you can see how the graph and detections changed over time. It is especially useful after refactors or suggestion fixes.",
+        body: "Use Compare in the versions panel header (next to the title) to open a side-by-side view of two saved versions and see how the graph and detections changed. It is especially useful after refactors or suggestion fixes.",
       },
       {
         anchor: AMG_DESIGNER.versionMove,
@@ -994,8 +1022,12 @@ type PatternsDesignerTourProps = {
   onRequestOpenSimulationModal?: () => void;
   /** When false, the Return to chat sparkle chapter is omitted (button not shown). */
   hasReturnToChatTour?: boolean;
+  /** When false (e.g. dashboard patterns), welcome step 2 copy omits the header Guides control. */
+  welcomeGuidesControlInHeader?: boolean;
   welcomeIntroOpen?: boolean;
   onDismissWelcomeIntro?: () => void;
+  /** Called when the user finishes the last welcome step (persists “seen” for first-time users). */
+  onWelcomeIntroComplete?: () => void;
   onTourChapterClose?: () => void;
 };
 
@@ -1010,11 +1042,14 @@ export default function PatternsDesignerTour({
   onRequestExpandSuggestionFirstPreview,
   onRequestOpenSimulationModal,
   hasReturnToChatTour = false,
+  welcomeGuidesControlInHeader = true,
   welcomeIntroOpen = false,
   onDismissWelcomeIntro,
+  onWelcomeIntroComplete,
   onTourChapterClose,
 }: PatternsDesignerTourProps) {
   const maskId = useId().replace(/:/g, "");
+  const [welcomeStep, setWelcomeStep] = useState(0);
   const [chapterId, setChapterId] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [spotRect, setSpotRect] = useState<DOMRect | null>(null);
@@ -1035,6 +1070,14 @@ export default function PatternsDesignerTour({
     }
     return list;
   }, [hasSuggestionsTour, hasReturnToChatTour]);
+
+  const prevWelcomeOpenRef = useRef(false);
+  useEffect(() => {
+    if (welcomeIntroOpen && !prevWelcomeOpenRef.current) {
+      setWelcomeStep(0);
+    }
+    prevWelcomeOpenRef.current = welcomeIntroOpen;
+  }, [welcomeIntroOpen]);
 
   const stepsByChapter = useMemo(
     () =>
@@ -1185,12 +1228,29 @@ export default function PatternsDesignerTour({
       return;
     }
     const measure = () => {
-      const list: DOMRect[] = [];
-      for (const ch of chapterList) {
-        const r = getRectFromSelector(qs(ch.markerAnchor));
-        if (r && r.width > 0 && r.height > 0) list.push(r);
+      if (welcomeStep === 0) {
+        setWelcomeRects([]);
+        return;
       }
-      setWelcomeRects(list);
+      if (welcomeStep === 1) {
+        const list: DOMRect[] = [];
+        for (const ch of chapterList) {
+          const r = getRectFromSelector(qs(ch.markerAnchor));
+          if (r && r.width > 0 && r.height > 0) list.push(r);
+        }
+        setWelcomeRects(list);
+        return;
+      }
+      if (!welcomeGuidesControlInHeader) {
+        setWelcomeRects([]);
+        return;
+      }
+      const g = getVisibleGuidesControlRect();
+      if (g && g.width > 0 && g.height > 0) {
+        setWelcomeRects([inflateRect(g, 8)]);
+      } else {
+        setWelcomeRects([]);
+      }
     };
     measure();
     const id = window.setInterval(measure, 400);
@@ -1201,7 +1261,14 @@ export default function PatternsDesignerTour({
       window.removeEventListener("scroll", measure, true);
       window.removeEventListener("resize", measure);
     };
-  }, [enabled, welcomeIntroOpen, chapterId, chapterList]);
+  }, [
+    enabled,
+    welcomeIntroOpen,
+    chapterId,
+    chapterList,
+    welcomeStep,
+    welcomeGuidesControlInHeader,
+  ]);
 
   useLayoutEffect(() => {
     if (!enabled || !welcomeIntroOpen || chapterId) {
@@ -1251,60 +1318,171 @@ export default function PatternsDesignerTour({
       {enabled && welcomeIntroOpen && !chapterId && (
         <>
           <WelcomeDimWithHoles rects={welcomeRects} maskId={maskId} />
-          {chapterList.map((ch) => {
-            const r = getRectFromSelector(qs(ch.markerAnchor));
-            if (!r || r.width <= 0) return null;
-            return (
-              <DesignerWelcomeGleam
-                key={`w-${ch.id}`}
-                rect={r}
-                title={ch.title}
-              />
-            );
-          })}
+          {welcomeStep === 1 &&
+            chapterList.map((ch) => {
+              const r = getRectFromSelector(qs(ch.markerAnchor));
+              if (!r || r.width <= 0) return null;
+              return (
+                <DesignerWelcomeGleam
+                  key={`w-${ch.id}`}
+                  rect={r}
+                  title={ch.title}
+                />
+              );
+            })}
           <div
             role="dialog"
             aria-labelledby="designer-welcome-intro-title"
             aria-describedby="designer-welcome-intro-desc"
-            className="pointer-events-auto flex min-h-0 flex-col gap-2 overflow-hidden rounded-md bg-white/95 px-3 py-2.5 text-black shadow-xl ring-1 ring-black/10 backdrop-blur-sm sm:min-w-[min(18rem,calc(100vw-1.5rem))]"
-            style={welcomeIntroPanelStyle(guidesButtonRect)}
+            className="pointer-events-auto relative flex min-h-0 flex-col gap-2 overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-2.5 shadow-xl sm:min-w-[min(18rem,calc(100vw-1.5rem))]"
+            style={
+              welcomeStep === 0
+                ? welcomeIntroCenteredPanelStyle()
+                : welcomeIntroPanelStyle(
+                    welcomeStep === 2 && welcomeGuidesControlInHeader
+                      ? guidesButtonRect
+                      : null,
+                  )
+            }
           >
+            <div
+              className="pointer-events-none absolute top-0 right-0 left-0 h-px"
+              style={{
+                background:
+                  "linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent)",
+              }}
+            />
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-black/55">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                   Guides
                 </p>
                 <h3
                   id="designer-welcome-intro-title"
-                  className="mt-0.5 text-sm font-semibold leading-snug text-black"
+                  className="mt-0.5 text-sm font-semibold leading-snug text-white"
                 >
-                  Guided highlights
+                  {welcomeStep === 0 && "Welcome to this workspace"}
+                  {welcomeStep === 1 && "Spot the help markers"}
+                  {welcomeStep === 2 && "Turn guides on or off"}
                 </h3>
               </div>
               <button
                 type="button"
-                onClick={() => onDismissWelcomeIntro?.()}
-                className="rounded p-0.5 text-black/60 transition-colors hover:bg-black/10 hover:text-black shrink-0"
-                aria-label="Dismiss"
+                onClick={() => {
+                  onWelcomeIntroComplete?.();
+                  onDismissWelcomeIntro?.();
+                }}
+                className="shrink-0 rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
+                aria-label="Close and skip tour"
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
               </button>
             </div>
-            <p
-              id="designer-welcome-intro-desc"
-              className="min-h-0 flex-1 overflow-y-auto text-xs leading-relaxed text-black/80 pr-0.5"
-            >
-              Help (?) markers appear on the main areas of this page (versions,
-              exports, legend, layout, editor, and more). Click any marker
-              whenever you want a short guided tour for that topic.
+            <p className="text-[10px] text-gray-500">
+              Step {welcomeStep + 1} of 3
             </p>
-            <button
-              type="button"
-              onClick={() => onDismissWelcomeIntro?.()}
-              className="mt-1 w-full rounded-md bg-black py-2 text-xs font-semibold text-white transition-colors hover:bg-black/90"
+            <div
+              id="designer-welcome-intro-desc"
+              className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5 text-xs leading-relaxed text-gray-400"
             >
-              Got it
-            </button>
+              {welcomeStep === 0 && (
+                <>
+                  <p>
+                    This page is the{" "}
+                    <strong className="text-white/90">
+                      Architecture Model Generator (AMG)
+                    </strong>{" "}
+                    and{" "}
+                    <strong className="text-white/90">
+                      Anti-Pattern Detector (APD) Model
+                    </strong>
+                    : your service graph, anti-pattern highlights, versions, and
+                    edits live here so you can refine the architecture before
+                    simulation.
+                  </p>
+                  <p className="text-[11px] text-gray-500">
+                    Next, you will see where the small{" "}
+                    <strong className="text-gray-300">?</strong> markers appear
+                    on the page.
+                  </p>
+                </>
+              )}
+              {welcomeStep === 1 && (
+                <>
+                  <p>
+                    The blue-glowing <strong className="text-white/90">?</strong>{" "}
+                    markers sit on the main areas of this screen (versions,
+                    exports, legend, layout, edit tools, canvas, and more).
+                  </p>
+                  <p>
+                    Click any <strong className="text-white/90">?</strong> when
+                    you want a short guided tour for that topic.
+                  </p>
+                </>
+              )}
+              {welcomeStep === 2 && (
+                <>
+                  {welcomeGuidesControlInHeader ? (
+                    <p>
+                      Use the{" "}
+                      <strong className="text-white/90">Guides</strong> control
+                      in the header (highlighted above) to show or hide all{" "}
+                      <strong className="text-white/90">?</strong> markers and
+                      this welcome flow.
+                    </p>
+                  ) : (
+                    <p>
+                      On a <strong className="text-white/90">project</strong>{" "}
+                      patterns page, use the{" "}
+                      <strong className="text-white/90">Guides</strong> control
+                      in the top bar to show or hide all{" "}
+                      <strong className="text-white/90">?</strong> markers.
+                    </p>
+                  )}
+                  <p className="text-[11px] text-gray-500">
+                    Your choice is saved to your profile so it stays the same
+                    when you come back.
+                  </p>
+                </>
+              )}
+            </div>
+            <div
+              className="mt-1 pt-2.5"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
+            >
+              {welcomeStep < 2 ? (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onWelcomeIntroComplete?.();
+                      onDismissWelcomeIntro?.();
+                    }}
+                    className="flex-1 rounded-md border border-gray-600 py-2.5 text-xs font-semibold text-gray-200 transition-colors hover:bg-gray-700/50"
+                  >
+                    Skip
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWelcomeStep((s) => s + 1)}
+                    className="flex-1 rounded-md border border-gray-600 bg-gray-700/80 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
+                  >
+                    Next
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onWelcomeIntroComplete?.();
+                    onDismissWelcomeIntro?.();
+                  }}
+                  className="w-full rounded-md border border-gray-600 bg-gray-700/80 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
+                >
+                  Got it
+                </button>
+              )}
+            </div>
           </div>
         </>
       )}

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendAmgApdHeaders } from "../../headers";
 
-const BASE =
+const BASE = (
   process.env.BACKEND_BASE ??
   process.env.NEXT_PUBLIC_BACKEND_BASE ??
-  "http://localhost:8080";
+  "http://localhost:8080"
+).trim();
 
 /** GET /api/amg-apd/versions/:id - get one version (full) */
 export async function GET(
@@ -19,10 +20,13 @@ export async function GET(
 
     const backendHeaders = getBackendAmgApdHeaders(req);
 
-    const res = await fetch(`${BASE}/api/v1/amg-apd/versions/${id}`, {
-      method: "GET",
-      headers: backendHeaders,
-    });
+    const res = await fetch(
+      `${BASE}/api/v1/amg-apd/versions/${encodeURIComponent(id)}`,
+      {
+        method: "GET",
+        headers: backendHeaders,
+      },
+    );
 
     const text = await res.text();
     return new NextResponse(text, {
@@ -52,10 +56,13 @@ export async function DELETE(
 
     const backendHeaders = getBackendAmgApdHeaders(req);
 
-    const res = await fetch(`${BASE}/api/v1/amg-apd/versions/${id}`, {
-      method: "DELETE",
-      headers: backendHeaders,
-    });
+    const res = await fetch(
+      `${BASE}/api/v1/amg-apd/versions/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        headers: backendHeaders,
+      },
+    );
 
     const text = await res.text();
     return new NextResponse(text, {
@@ -72,13 +79,12 @@ export async function DELETE(
   }
 }
 
-/** PATCH /api/amg-apd/versions/:id - update version (e.g. title) */
-export async function PATCH(
+async function forwardVersionUpdate(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+  id: string,
+  backendMethod: "PATCH" | "PUT",
+): Promise<NextResponse> {
   try {
-    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "version id required" }, { status: 400 });
     }
@@ -86,14 +92,17 @@ export async function PATCH(
     const body = await req.json().catch(() => ({}));
     const backendHeaders = getBackendAmgApdHeaders(req);
 
-    const res = await fetch(`${BASE}/api/v1/amg-apd/versions/${id}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...backendHeaders,
+    const res = await fetch(
+      `${BASE}/api/v1/amg-apd/versions/${encodeURIComponent(id)}`,
+      {
+        method: backendMethod,
+        headers: {
+          "Content-Type": "application/json",
+          ...backendHeaders,
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    });
+    );
 
     const text = await res.text();
     return new NextResponse(text, {
@@ -105,7 +114,25 @@ export async function PATCH(
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message ?? "update version failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
+}
+
+/** PATCH /api/amg-apd/versions/:id - update version (e.g. title) */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  return forwardVersionUpdate(req, id, "PATCH");
+}
+
+/** PUT /api/amg-apd/versions/:id — same as PATCH (rename title); some proxies handle PUT more reliably. */
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  return forwardVersionUpdate(req, id, "PUT");
 }

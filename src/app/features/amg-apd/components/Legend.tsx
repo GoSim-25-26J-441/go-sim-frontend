@@ -66,6 +66,7 @@ export default function Legend({
 }) {
   const [showHelp, setShowHelp] = useState(false);
   const last = useAmgApdStore((s) => s.last);
+  const patternsGuidesEnabled = useAmgApdStore((s) => s.patternsGuidesEnabled);
 
   const closeHelp = useCallback(() => setShowHelp(false), []);
 
@@ -118,11 +119,13 @@ export default function Legend({
             type="button"
             data-amg-designer={AMG_DESIGNER.legendHelp}
             onClick={() => setShowHelp(true)}
-            className={
+            className={`${
+              patternsGuidesEnabled ? "amg-designer-q-glow " : ""
+            }${
               versionCount === 1
                 ? "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/25 bg-white/15 text-[10px] font-semibold text-white transition-colors hover:bg-white/25"
                 : "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15"
-            }
+            }`}
             aria-label="What do these anti-patterns mean?"
             title="View explanations"
           >

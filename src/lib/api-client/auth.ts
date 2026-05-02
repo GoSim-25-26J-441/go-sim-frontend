@@ -3,6 +3,8 @@ import { getFirebaseIdToken } from "@/lib/firebase/auth";
 
 const BASE_URL = `${env.BACKEND_BASE}/api/v1/auth`;
 
+export type NewDesignerFlag = "Yes" | "No";
+
 export interface UserProfile {
   firebase_uid: string;
   email: string;
@@ -10,6 +12,7 @@ export interface UserProfile {
   photo_url?: string;
   role?: string;
   organization?: string;
+  new_designer?: NewDesignerFlag;
   preferences?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -22,6 +25,7 @@ export interface SyncUserRequest {
   organization?: string;
   role?: string;
   preferences?: Record<string, unknown>;
+  new_designer?: NewDesignerFlag;
 }
 
 export async function syncUser(data?: SyncUserRequest): Promise<UserProfile> {

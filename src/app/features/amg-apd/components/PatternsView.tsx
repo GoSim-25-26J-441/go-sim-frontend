@@ -58,7 +58,8 @@ export default function PatternsView({
   const setPatternsGraphFullscreen = useAmgApdStore(
     (s) => s.setPatternsGraphFullscreen,
   );
-  const { userId } = useAuth();
+  const { userId, userProfile } = useAuth();
+  const autoWelcomeOfferedRef = useRef(false);
 
   const showToast = useToast((s) => s.showToast);
   const openInChat = useOpenInChat();
@@ -91,6 +92,45 @@ export default function PatternsView({
     (s) => s.setPatternsGuidesEnabled,
   );
   const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
+
+  /** Align guides with persisted `users.new_designer` (default on unless explicitly "No"). */
+  useEffect(() => {
+    if (!userProfile) return;
+    const guidesOn = userProfile.new_designer !== "No";
+    useAmgApdStore.setState((s) => ({
+      patternsGuidesEnabled: guidesOn,
+      ...(guidesOn ? {} : { patternsGuidesWelcomeOnEnable: false }),
+    }));
+  }, [userProfile]);
+
+  useEffect(() => {
+    autoWelcomeOfferedRef.current = false;
+  }, [userProfile?.firebase_uid]);
+
+  /**
+   * Dashboard patterns only: first visit with guides on — show welcome once per account (localStorage).
+   * Project `/project/.../patterns` uses the effect below on every visit instead.
+   */
+  useEffect(() => {
+    if (projectId?.trim()) return;
+    const uid = userProfile?.firebase_uid;
+    if (!uid) return;
+    if (autoWelcomeOfferedRef.current) return;
+    if (userProfile?.new_designer === "No") {
+      autoWelcomeOfferedRef.current = true;
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const key = `amg_apd_patterns_welcome_${uid}`;
+      if (localStorage.getItem(key)) {
+        autoWelcomeOfferedRef.current = true;
+        return;
+      }
+    }
+    if (!newDesignerTourEnabled) return;
+    autoWelcomeOfferedRef.current = true;
+    useAmgApdStore.setState({ patternsGuidesWelcomeOnEnable: true });
+  }, [userProfile, newDesignerTourEnabled, projectId]);
   const patternsGuidesWelcomeOnEnable = useAmgApdStore(
     (s) => s.patternsGuidesWelcomeOnEnable,
   );
@@ -121,6 +161,13 @@ export default function PatternsView({
     setDesignerWelcomeOpen(false);
   }, []);
 
+  const completeDesignerWelcome = useCallback(() => {
+    const uid = userProfile?.firebase_uid;
+    if (uid && typeof window !== "undefined") {
+      localStorage.setItem(`amg_apd_patterns_welcome_${uid}`, "1");
+    }
+  }, [userProfile?.firebase_uid]);
+
   const handleTourChapterClose = useCallback(() => {
     setOpen(false);
     onCloseSimulationModal?.();
@@ -132,7 +179,27 @@ export default function PatternsView({
     }
   }, [newDesignerTourEnabled]);
 
-  /** Welcome intro only when user turns guides on via Guides toggle — not on every visit. */
+  /**
+   * Project patterns: open welcome on each page visit when guides are on (`new_designer` is not "No").
+   * Waits for `patternsGuidesEnabled` to match profile so a stale persisted `false` does not fight this.
+   */
+  useEffect(() => {
+    if (!projectId?.trim()) return;
+    if (!userProfile?.firebase_uid) return;
+    if (userProfile.new_designer === "No") {
+      setDesignerWelcomeOpen(false);
+      return;
+    }
+    if (!newDesignerTourEnabled) return;
+    setDesignerWelcomeOpen(true);
+  }, [
+    projectId,
+    userProfile?.firebase_uid,
+    userProfile?.new_designer,
+    newDesignerTourEnabled,
+  ]);
+
+  /** Welcome when user turns guides on via Guides toggle (project + dashboard). */
   useEffect(() => {
     if (!patternsGuidesWelcomeOnEnable || !newDesignerTourEnabled) return;
     setDesignerWelcomeOpen(true);
@@ -654,8 +721,10 @@ export default function PatternsView({
         onRequestExpandSuggestionFirstPreview={expandSuggestionFirstPreviewForTour}
         onRequestOpenSimulationModal={onRequestOpenSimulationModal}
         hasReturnToChatTour={!onReturnToChat}
+        welcomeGuidesControlInHeader={!!projectId?.trim()}
         welcomeIntroOpen={designerWelcomeOpen}
         onDismissWelcomeIntro={dismissDesignerWelcome}
+        onWelcomeIntroComplete={completeDesignerWelcome}
         onTourChapterClose={handleTourChapterClose}
       />
 

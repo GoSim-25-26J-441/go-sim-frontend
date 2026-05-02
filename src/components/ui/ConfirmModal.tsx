@@ -17,6 +17,8 @@ type ConfirmModalProps = {
   alertOnly?: boolean;
   closeOnConfirm?: boolean;
   confirmLoading?: boolean;
+  /** Overlay z-index (e.g. z-[240000]) when parent UI uses very high stacking (AMG-APD portaled panels). */
+  overlayClassName?: string;
 };
 
 const variantIconColor: Record<ConfirmVariant, string> = {
@@ -46,6 +48,7 @@ export function ConfirmModal({
   alertOnly = false,
   closeOnConfirm = true,
   confirmLoading = false,
+  overlayClassName,
 }: ConfirmModalProps) {
   const { Icon } = variantStyles[variant];
   const iconTint = variantIconColor[variant];
@@ -107,7 +110,7 @@ export function ConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-md"
+      className={`fixed inset-0 flex items-center justify-center bg-black/40 backdrop-blur-md ${overlayClassName ?? "z-50"}`}
       onClick={(e) => {
         if (busy) return;
         if (e.target === e.currentTarget) onClose();

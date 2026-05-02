@@ -19,6 +19,7 @@ import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { useReturnToChatFromPatterns } from "@/modules/di/useReturnToChatFromPatterns";
 import { useAuth } from "@/providers/auth-context";
 import { useToast } from "@/hooks/useToast";
+import { updateUserProfile } from "@/lib/api-client/auth";
 
 export default function ProjectPatternsPage({
   params,
@@ -33,8 +34,30 @@ export default function ProjectPatternsPage({
   );
   const guidesActive = useAmgApdStore((s) => s.patternsGuidesEnabled);
   const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
-  const { userId } = useAuth();
+  const { userId, refreshProfile } = useAuth();
   const showToast = useToast((s) => s.showToast);
+
+  const [guidesSaving, setGuidesSaving] = useState(false);
+
+  const handleGuidesClick = useCallback(async () => {
+    if (guidesSaving) return;
+    const prev = useAmgApdStore.getState().patternsGuidesEnabled;
+    const next = !prev;
+    togglePatternsGuides();
+    setGuidesSaving(true);
+    try {
+      await updateUserProfile({ new_designer: next ? "Yes" : "No" });
+      await refreshProfile();
+    } catch {
+      useAmgApdStore.setState({
+        patternsGuidesEnabled: prev,
+        patternsGuidesWelcomeOnEnable: false,
+      });
+      showToast("Could not save guides preference", "error");
+    } finally {
+      setGuidesSaving(false);
+    }
+  }, [guidesSaving, togglePatternsGuides, refreshProfile, showToast]);
 
   const [simulationModalOpen, setSimulationModalOpen] = useState(false);
   const [simulationSelectedVersion, setSimulationSelectedVersion] =
@@ -126,7 +149,8 @@ export default function ProjectPatternsPage({
             <button
               type="button"
               data-amg-designer={AMG_DESIGNER.guides}
-              onClick={() => togglePatternsGuides()}
+              onClick={() => void handleGuidesClick()}
+              disabled={guidesSaving}
               title={
                 guidesActive
                   ? "Hide guided highlights"
@@ -136,7 +160,7 @@ export default function ProjectPatternsPage({
                 guidesActive
                   ? "text-amber-300"
                   : "text-white/80 hover:bg-gray-800/50"
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <CircleHelp className="h-4 w-4 shrink-0" aria-hidden />
               <span className="text-sm font-normal">Guides</span>

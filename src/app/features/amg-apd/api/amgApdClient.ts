@@ -4,6 +4,12 @@
  * (e.g. from useAuth().userId); no default user or chat id.
  */
 
+/**
+ * App Router proxies under /api/amg-apd — server forwards X-User-Id / X-Chat-Id and body to Go.
+ * Prefer this over /api/v1/... rewrites: external rewrites can drop PATCH bodies or headers in dev.
+ */
+export const AMG_APD_VERSIONS_API_BASE = "/api/amg-apd/versions";
+
 export type AmgApdHeaders = {
   "X-User-Id"?: string;
   "X-Chat-Id"?: string;
@@ -17,8 +23,10 @@ export function getAmgApdHeaders(overrides?: {
   chatId?: string;
 }): AmgApdHeaders {
   const headers: AmgApdHeaders = {};
-  if (overrides?.userId) headers["X-User-Id"] = overrides.userId;
-  if (overrides?.chatId) headers["X-Chat-Id"] = overrides.chatId;
+  const uid = overrides?.userId?.trim();
+  const cid = overrides?.chatId?.trim();
+  if (uid) headers["X-User-Id"] = uid;
+  if (cid) headers["X-Chat-Id"] = cid;
   return headers;
 }
 

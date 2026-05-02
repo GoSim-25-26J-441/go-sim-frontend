@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendAmgApdHeaders } from "../headers";
 
-const BASE =
+const BASE = (
   process.env.BACKEND_BASE ??
   process.env.NEXT_PUBLIC_BACKEND_BASE ??
-  "http://localhost:8080";
+  "http://localhost:8080"
+).trim();
 
 /** GET /api/amg-apd/versions - list versions for user/chat */
 export async function GET(req: NextRequest) {
