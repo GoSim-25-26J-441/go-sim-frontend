@@ -1,12 +1,19 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { DetectionKind, Severity } from "@/app/features/amg-apd/types";
-import {
-  NODE_KIND_COLOR,
-  colorForDetectionKind,
-} from "@/app/features/amg-apd/utils/colors";
+import { colorForDetectionKind } from "@/app/features/amg-apd/utils/colors";
+import { diagramIconUrlForKind } from "@/app/features/amg-apd/mappers/cyto/diagramNodeStyle";
 import { gradientStops } from "./svg";
 
 type StylesheetLike = Array<{ selector: string; style: Record<string, any> }>;
+
+/**
+ * Thin stroke for patterns graph; keep multi-color `line-fill: linear-gradient` (unchanged below).
+ * Arrow heads: width × arrow-scale — bump scales so heads match the prior ~1.25px stroke look.
+ */
+const EDGE_LINE_WIDTH = 0.98;
+const REF_STROKE = 1.25;
+const ARROW_SCALE_NON_CALLS = (REF_STROKE * 2) / EDGE_LINE_WIDTH;
+const ARROW_SCALE_CALLS = (REF_STROKE * 0.42) / EDGE_LINE_WIDTH;
 
 const EDGE_KIND_COLOR: Record<string, string> = {
   CALLS: "#1f2937",
@@ -15,10 +22,10 @@ const EDGE_KIND_COLOR: Record<string, string> = {
 };
 
 function borderWidthForSeverity(sev: Severity | null) {
-  if (sev === "HIGH") return 7;
-  if (sev === "MEDIUM") return 6;
-  if (sev === "LOW") return 5;
-  return 3;
+  if (sev === "HIGH") return 1;
+  if (sev === "MEDIUM") return 1;
+  if (sev === "LOW") return 1;
+  return 1;
 }
 
 function borderColorForNode(ele: any) {
@@ -63,49 +70,108 @@ function getEdgeColors(ele: any): string[] {
   return [];
 }
 
+/**
+ * Mutual CALLS: two straight edges offset slightly along the facing sides so they don’t overlap.
+ *
+ * `%` endpoints are wrong for center-anchored nodes (see prior fix). `deg` bumps looked fine for
+ * attachment but Cytoscape’s angle→border math is not symmetric on left vs right faces, so the two
+ * directions formed an X. Here we use **px offsets from the node center**: `(±w/2, oy)` on vertical
+ * sides (and `(ox, ±h/2)` on horizontal sides) so source and target share the same `oy` / `ox` and
+ * the two mutual edges stay parallel.
+ */
+const RECIPROCAL_EDGE_BUMP_PX = 6;
+
+function reciprocalParallelEndpoints(ele: any): { src: string; tgt: string } {
+  const s = ele.source();
+  const t = ele.target();
+  const sp = s.position();
+  const tp = t.position();
+  const laneRaw = Number(ele.data("reciprocalCallLane"));
+  const lane = Number.isFinite(laneRaw) && laneRaw !== 0 ? laneRaw : 1;
+  const bump = lane * RECIPROCAL_EDGE_BUMP_PX;
+
+  const dx = tp.x - sp.x;
+  const dy = tp.y - sp.y;
+  const adx = Math.abs(dx);
+  const ady = Math.abs(dy);
+
+  const hsw = s.outerWidth() / 2;
+  const htw = t.outerWidth() / 2;
+  const hsh = s.outerHeight() / 2;
+  const hth = t.outerHeight() / 2;
+
+  /* Clamp so anchors stay on the flat side, not corners (nodes are square icons). */
+  const oy = Math.max(-hsh + 2, Math.min(hsh - 2, bump));
+  const oyT = Math.max(-hth + 2, Math.min(hth - 2, bump));
+  const ox = Math.max(-hsw + 2, Math.min(hsw - 2, bump));
+  const oxT = Math.max(-htw + 2, Math.min(htw - 2, bump));
+
+  if (adx >= ady) {
+    if (dx >= 0) {
+      return {
+        src: `${hsw}px ${oy}px`,
+        tgt: `${-htw}px ${oyT}px`,
+      };
+    }
+    return {
+      src: `${-hsw}px ${oy}px`,
+      tgt: `${htw}px ${oyT}px`,
+    };
+  }
+  if (dy >= 0) {
+    return {
+      src: `${ox}px ${hsh}px`,
+      tgt: `${oxT}px ${-hth}px`,
+    };
+  }
+  return {
+    src: `${ox}px ${-hsh}px`,
+    tgt: `${oxT}px ${hth}px`,
+  };
+}
+
 export const cyStyles: StylesheetLike = [
   {
     selector: "node",
     style: {
-      "background-color": (ele: any) => {
-        const kind = ele.data("kind") as keyof typeof NODE_KIND_COLOR;
-        return NODE_KIND_COLOR[kind] ?? "#e5e7eb";
-      },
-      label: "data(label)",
-      "text-wrap": "wrap",
-      "text-max-width": 140,
-      "text-valign": "center",
-      "text-halign": "center",
-      "font-size": 14,
-      "min-zoomed-font-size": 8,
-      color: "#0f172a",
-      width: "label",
-      height: "label",
-      padding: (ele: any) => {
-        const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? "12px 12px 28px 12px" : "12px";
-      },
+      /*
+       * Name + kind are drawn by `NodeDualLineLabels` (per-line font size/color). Keep Cytoscape
+       * `label` empty so text is not painted twice. `padding` adds outside the body in Cytoscape.
+       */
+      "background-color": "#ffffff",
+      "background-image": (ele: any) =>
+        diagramIconUrlForKind(ele.data("kind") as string | undefined),
+      "background-fit": "none",
+      "background-width": "30px",
+      "background-height": "30px",
+      "background-position-x": "50%",
+      "background-position-y": "50%",
+      "background-opacity": 1,
 
+      label: "",
+
+      width: 30,
+      height: 30,
+      padding: "0px",
+
+      /* Uniform 1px border; antipattern nodes use same width (color differs). Selected: 1.5 in `node:selected`. */
       "border-width": (ele: any) => {
         const sev = (ele.data("severity") as Severity | null) ?? null;
         const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length ? borderWidthForSeverity(sev) : 3;
+        return kinds.length ? borderWidthForSeverity(sev) : 1;
       },
       "border-color": (ele: any) => borderColorForNode(ele),
 
       "border-style": (ele: any) => {
         const kinds = (ele.data("detectionKinds") as string[]) ?? [];
-        return kinds.length > 1 ? "double" : "solid";
+        return kinds.length > 1 ? "solid" : "solid";
       },
 
-      shape: (ele: any) => {
-        const kind = (ele.data("kind") as string) ?? "";
-        const k = kind.toUpperCase();
-        return k === "DATABASE" || k === "DB" ? "ellipse" : "round-rectangle";
-      },
+      shape: "rectangle",
+      "overlay-opacity": 0,
 
       "z-index": 10,
-      "events": "yes",
+      events: "yes",
       "text-events": "yes",
     },
   },
@@ -113,8 +179,11 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "node:selected",
     style: {
-      "border-width": 8,
-      "border-color": "#0f172a",
+      width: 30,
+      height: 30,
+      "border-width": 1.5,
+      "border-color": "#000000",
+      "overlay-opacity": 0,
       "z-index": 9999,
     },
   },
@@ -122,22 +191,27 @@ export const cyStyles: StylesheetLike = [
   {
     selector: "edge",
     style: {
-      "curve-style": "bezier",
+      "curve-style": "straight",
+      "source-arrow-shape": "none",
       "target-arrow-shape": "triangle",
       "line-opacity": 1,
       "target-arrow-opacity": 1,
       "line-color": "#1f2937",
       "target-arrow-color": "#1f2937",
-      width: 2.5,
+      width: EDGE_LINE_WIDTH,
+      "arrow-scale": ARROW_SCALE_NON_CALLS,
+      "line-outline-width": 0,
+      "line-cap": "butt",
       opacity: 1,
-      "events": "yes",
+      events: "yes",
       "z-index": 8,
       label: "data(label)",
-      "font-size": 10,
+      "font-size": 6,
       "text-background-color": "#ffffff",
       "text-background-opacity": 1,
-      "text-background-padding": 2,
-      "min-zoomed-font-size": 7,
+      "text-background-padding": 1,
+      "text-margin-y": 1,
+      "min-zoomed-font-size": 4,
     },
   },
   {
@@ -175,16 +249,41 @@ export const cyStyles: StylesheetLike = [
         return EDGE_KIND_COLOR[kind] ?? "#1f2937";
       },
 
-      width: (ele: any) => {
-        const severity = ele.data("severity") as Severity | null;
-        if (!severity) return 2.5;
-        return severity === "HIGH" ? 5 : severity === "MEDIUM" ? 4 : 3;
-      },
+      width: EDGE_LINE_WIDTH,
+    },
+  },
+
+  {
+    /* Data selector so CALLS styling applies even if the `calls` class is missing (e.g. added in edit mode). */
+    selector: 'edge[kind = "CALLS"]',
+    style: {
+      "source-arrow-shape": "none",
+      "target-arrow-shape": "triangle",
+      "arrow-scale": ARROW_SCALE_CALLS,
+      "font-size": 4,
+      "min-zoomed-font-size": 4,
+      "text-background-padding": 0,
+      /* Small offset: keep CALLS labels hugging the stroke */
+      "edge-text-rotation": "autorotate",
+      "text-margin-y": -2,
+    },
+  },
+
+  {
+    selector: "edge.calls.reciprocal-call",
+    style: {
+      "curve-style": "straight",
+      "source-arrow-shape": "none",
+      "target-arrow-shape": "triangle",
+      "source-endpoint": (ele: any) => reciprocalParallelEndpoints(ele).src,
+      "target-endpoint": (ele: any) => reciprocalParallelEndpoints(ele).tgt,
+      "edge-text-rotation": "autorotate",
+      "text-margin-y": (ele: any) => Number(ele.data("reciprocalCallLane")) * 8,
     },
   },
 
   { selector: "edge.reads", style: { "line-style": "dashed" } },
   { selector: ".has-detection-edge", style: { "line-style": "solid" } },
-  { selector: "edge:hover", style: { cursor: "pointer", width: 4 } },
-  { selector: "edge:selected", style: { "z-index": 9998, width: 4 } },
+  { selector: "edge:hover", style: { cursor: "pointer" } },
+  { selector: "edge:selected", style: { "z-index": 9998 } },
 ];

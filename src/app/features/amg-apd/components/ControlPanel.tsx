@@ -1,6 +1,8 @@
 "use client";
 
+import { Maximize2, Minimize2, RotateCcw } from "lucide-react";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
 export type LayoutName = "dagre" | "cose-bilkent" | "cola" | "elk";
 
@@ -31,6 +33,19 @@ type Props = {
   readOnly?: boolean;
 
   data?: AnalysisResult;
+
+  /** Patterns fullscreen workspace: same visual style as Edit Graph (white/black). */
+  fullscreenButton?: {
+    onClick: () => void;
+    isFullscreen: boolean;
+  };
+
+  /** Discard canvas edits since last successful generate / version load / apply. */
+  onResetCanvas?: () => void;
+  resetDisabled?: boolean;
+
+  newDesignerTourEnabled?: boolean;
+  onNewDesignerTourEnabledChange?: (v: boolean) => void;
 };
 
 export default function ControlPanel({
@@ -43,6 +58,11 @@ export default function ControlPanel({
   onSaveChanges,
   isGenerating = false,
   readOnly = false,
+  fullscreenButton,
+  onResetCanvas,
+  resetDisabled = false,
+  newDesignerTourEnabled,
+  onNewDesignerTourEnabledChange,
 }: Props) {
   const {
     services,
@@ -56,74 +76,54 @@ export default function ControlPanel({
     detections,
   } = stats;
 
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-[#9AA4B2]">Layout:</span>
-        <select
-          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-          value={layoutName}
-          onChange={(e) => onLayoutChange(e.target.value as LayoutName)}
-        >
-          <option value="dagre">Left → Right (Dagre)</option>
-          <option value="cose-bilkent">Force-directed (Cose-Bilkent)</option>
-          <option value="cola">Force-directed (Cola)</option>
-          <option value="elk">Layered (ELK)</option>
-        </select>
-        <button
-          type="button"
-          onClick={onFit}
-          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
-        >
-          Fit to Screen
-        </button>
-      </div>
+  const showDesignerSwitch =
+    typeof newDesignerTourEnabled === "boolean" &&
+    typeof onNewDesignerTourEnabledChange === "function";
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Services: <strong className="font-semibold text-white">{services}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Gateways: <strong className="font-semibold text-white">{gateways}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Topics: <strong className="font-semibold text-white">{eventTopics}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Databases: <strong className="font-semibold text-white">{databases}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            External: <strong className="font-semibold text-white">{externalSystems}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Clients: <strong className="font-semibold text-white">{clients}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Actors: <strong className="font-semibold text-white">{userActors}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Edges: <strong className="font-semibold text-white">{edges}</strong>
-          </span>
-          <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90">
-            Anti-patterns: <strong className="font-semibold text-white">{detections}</strong>
-          </span>
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div
+          className="flex flex-wrap items-center gap-2 min-w-0"
+          data-amg-designer={AMG_DESIGNER.layout}
+        >
+          <span className="font-semibold text-[#9AA4B2] shrink-0">Layout:</span>
+          <select
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 max-w-full"
+            value={layoutName}
+            onChange={(e) => onLayoutChange(e.target.value as LayoutName)}
+          >
+            <option value="dagre">Left → Right (Dagre)</option>
+            <option value="cose-bilkent">Force-directed (Cose-Bilkent)</option>
+            <option value="cola">Force-directed (Cola)</option>
+            <option value="elk">Layered (ELK)</option>
+          </select>
+          <button
+            type="button"
+            onClick={onFit}
+            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 shrink-0"
+          >
+            Fit to Screen
+          </button>
         </div>
 
         {!readOnly && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onSaveChanges}
-              disabled={!editMode || isGenerating}
-              style={{ visibility: editMode ? "visible" : "hidden" }}
-              className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 text-white hover:bg-emerald-400"
-            >
-              {isGenerating ? "Generating…" : "Generate Graph"}
-            </button>
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 ml-auto">
+            {editMode && (
+              <button
+                type="button"
+                data-amg-designer={AMG_DESIGNER.generate}
+                onClick={onSaveChanges}
+                disabled={isGenerating}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 text-white hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isGenerating ? "Generating…" : "Generate Graph"}
+              </button>
+            )}
 
             <button
               type="button"
+              data-amg-designer={AMG_DESIGNER.editGraph}
               onClick={onToggleEdit}
               className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150  ${
                 editMode
@@ -133,8 +133,127 @@ export default function ControlPanel({
             >
               {editMode ? "Exit Edit Mode" : "Edit Graph"}
             </button>
+
+            {onResetCanvas && (
+              <button
+                type="button"
+                data-amg-designer={AMG_DESIGNER.reset}
+                onClick={onResetCanvas}
+                disabled={resetDisabled}
+                title="Discard unsaved canvas changes and restore the last generated graph"
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                Reset
+              </button>
+            )}
+
+            {fullscreenButton && (
+              <>
+                <button
+                  type="button"
+                  data-amg-designer={AMG_DESIGNER.fullscreen}
+                  onClick={fullscreenButton.onClick}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                  title={
+                    fullscreenButton.isFullscreen
+                      ? "Exit fullscreen workspace"
+                      : "Open fullscreen workspace"
+                  }
+                >
+                  {fullscreenButton.isFullscreen ? (
+                    <Minimize2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
+                  {fullscreenButton.isFullscreen
+                    ? "Exit fullscreen"
+                    : "Fullscreen"}
+                </button>
+
+                {showDesignerSwitch && (
+                  <div
+                    className="inline-flex h-7 items-center gap-2 rounded-md border border-black/10 bg-white px-2 text-black transition-colors duration-150 hover:bg-gray-200"
+                    data-amg-designer={AMG_DESIGNER.newDesignerSwitch}
+                  >
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={newDesignerTourEnabled}
+                      title={
+                        newDesignerTourEnabled
+                          ? "New Designer hints and preset explanations on"
+                          : "New Designer hints and preset explanations off"
+                      }
+                      onClick={() =>
+                        onNewDesignerTourEnabledChange(!newDesignerTourEnabled)
+                      }
+                      className={`relative h-[18px] w-[34px] shrink-0 rounded-full border transition-colors duration-200 ${
+                        newDesignerTourEnabled
+                          ? "border-neutral-800 bg-neutral-950 shadow-inner shadow-black/20"
+                          : "border-neutral-400/80 bg-neutral-200"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-px left-px h-4 w-4 rounded-full shadow-sm transition-[transform,background-color] duration-200 ease-out ${
+                          newDesignerTourEnabled
+                            ? "translate-x-4 bg-neutral-200 ring-1 ring-black/10"
+                            : "translate-x-0 bg-neutral-950 ring-1 ring-black/10"
+                        }`}
+                      />
+                    </button>
+                    <span className="text-[10px] font-medium tracking-wide whitespace-nowrap">
+                      New Designer
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
+      </div>
+
+      <div
+        className="flex flex-wrap items-center gap-2 text-[11px] pt-0.5 border-t border-white/10"
+        data-amg-designer={AMG_DESIGNER.stats}
+      >
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Services:{" "}
+          <strong className="font-semibold text-white">{services}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Gateways:{" "}
+          <strong className="font-semibold text-white">{gateways}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Topics:{" "}
+          <strong className="font-semibold text-white">{eventTopics}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Databases:{" "}
+          <strong className="font-semibold text-white">{databases}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          External:{" "}
+          <strong className="font-semibold text-white">
+            {externalSystems}
+          </strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Clients:{" "}
+          <strong className="font-semibold text-white">{clients}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Actors:{" "}
+          <strong className="font-semibold text-white">{userActors}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Edges: <strong className="font-semibold text-white">{edges}</strong>
+        </span>
+        <span className="rounded-lg bg-gray-800 border border-white/10 px-3 py-1.5 text-white/90 mt-2">
+          Anti-patterns:{" "}
+          <strong className="font-semibold text-white">{detections}</strong>
+        </span>
       </div>
     </div>
   );

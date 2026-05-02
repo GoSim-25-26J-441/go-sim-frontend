@@ -6,7 +6,10 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "ci": "npm run typecheck && npm test && npm run lint && npm run build"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.1",
@@ -43,6 +46,7 @@
     "eslint": "^9",
     "eslint-config-next": "^15.5.14",
     "tailwindcss": "^4",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
   }
 }

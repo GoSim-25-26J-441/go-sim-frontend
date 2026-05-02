@@ -107,20 +107,19 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
 
   if (error || !data) {
     return (
-      <div className="p-6 max-w-7xl mx-auto">
-        <Link
-          href={costBaseHref}
-          className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100 mb-6"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Back to Cost Analysis
-        </Link>
-        <div className="bg-card border border-red-600 rounded-lg p-6 flex items-start gap-2">
-          <AlertCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-red-500 font-medium">Could not load metrics analysis</p>
-            <p className="text-sm opacity-80 mt-1">{error ?? "Not found"}</p>
-          </div>
+      <div className="p-6 min-h-[80vh] flex items-center justify-center">
+        <div className="max-w-md w-full rounded-2xl border border-border bg-surface/30 px-8 py-10 text-center shadow-sm">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold mb-2">Could not load metrics analysis</h2>
+          <p className="text-sm opacity-80 mt-1">{"Not found"}</p>
+
+          <Link
+            href={costBaseHref}
+            className="mt-6 px-4 py-2 rounded-lg font-medium border border-border inline-flex items-center gap-2 hover:bg-surface transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to Designs
+          </Link>
         </div>
       </div>
     );
@@ -138,7 +137,7 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
         {/* <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
           <div className="flex items-center gap-4">
             <Link
-              href={costBaseHref}
+              href={costSuggestHref}
               className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100"
             >
               <ChevronLeft className="w-4 h-4" />

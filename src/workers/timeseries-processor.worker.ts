@@ -3,32 +3,19 @@
  * Used by the simulation run page when GET /metrics or GET /metrics/timeseries return large payloads.
  */
 
+import {
+  extractSeriesScopeFromNormalized,
+  extractSeriesScopeByLabelFromNormalized,
+  flatTimeseriesSeriesKeyFromNormalized,
+} from "../lib/simulation/metrics-series-scope";
+import { normalizePersistedMetricPoint } from "../lib/simulation/normalize-persisted-metric-point";
+import type { MetricPoint, MetricTimeseries, MetricsResponse } from "../types/simulation";
+
 const MAX_POINTS = 1000;
 
 type ChartRow = Record<string, number>;
 
-interface MetricPoint {
-  time: string;
-  value: number;
-  service_id?: string;
-}
-
-interface MetricTimeseries {
-  metric: string;
-  points: MetricPoint[];
-}
-
-interface MetricsResponse {
-  run_id: string;
-  timeseries?: MetricTimeseries[];
-  [key: string]: unknown;
-}
-
-interface TimeseriesPoint {
-  timestamp: string;
-  value: number;
-  labels?: { service?: string };
-}
+type TimeseriesPoint = MetricPoint;
 
 function downsampleRows(rows: ChartRow[]): ChartRow[] {
   if (rows.length <= MAX_POINTS) return rows;
@@ -43,9 +30,11 @@ function downsampleRows(rows: ChartRow[]): ChartRow[] {
 function processOneTimeseries(ts: MetricTimeseries): { metric: string; rows: ChartRow[] } {
   const rowMap: Record<string, ChartRow> = {};
   for (const p of ts.points) {
-    const key = p.time;
-    if (!rowMap[key]) rowMap[key] = { _t: new Date(p.time).getTime() };
-    rowMap[key][p.service_id ?? "global"] = p.value;
+    const n = normalizePersistedMetricPoint(p, ts.metric);
+    if (!n) continue;
+    const key = n.timestamp;
+    if (!rowMap[key]) rowMap[key] = { _t: new Date(n.timestamp).getTime() };
+    rowMap[key][extractSeriesScopeFromNormalized(n)] = n.value;
   }
   const rows = Object.values(rowMap).sort((a, b) => a._t - b._t);
   return { metric: ts.metric, rows: downsampleRows(rows) };
@@ -57,25 +46,38 @@ function processMetrics(data: MetricsResponse): { type: "metricsResult"; timeser
   return { type: "metricsResult", timeseriesProcessed };
 }
 
-function processTimeseriesPoints(points: TimeseriesPoint[]): { type: "timeseriesResult"; rows: ChartRow[] } {
+function processTimeseriesPoints(
+  points: TimeseriesPoint[],
+  groupingLabel?: string,
+  contextMetric?: string
+): { type: "timeseriesResult"; rows: ChartRow[] } {
   const rowMap: Record<number, ChartRow> = {};
   for (const p of points) {
-    const t = typeof p.timestamp === "string" ? new Date(p.timestamp).getTime() : Number(p.timestamp);
+    const n = normalizePersistedMetricPoint(p);
+    if (!n) continue;
+    const t = new Date(n.timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
     if (!rowMap[t]) rowMap[t] = { _t: t };
-    const service = p.labels?.service ?? "global";
-    rowMap[t][service] = p.value;
+    if (groupingLabel && groupingLabel !== "auto") {
+      const scope = extractSeriesScopeByLabelFromNormalized(n, groupingLabel);
+      const metric = n.metric ?? contextMetric;
+      const key = metric ? `${metric}:${scope}` : scope;
+      rowMap[t][key] = n.value;
+    } else {
+      rowMap[t][flatTimeseriesSeriesKeyFromNormalized(n)] = n.value;
+    }
   }
   const rows = Object.values(rowMap).sort((a, b) => a._t - b._t);
   return { type: "timeseriesResult", rows: downsampleRows(rows) };
 }
 
-self.onmessage = (e: MessageEvent<{ type: string; data?: MetricsResponse; points?: TimeseriesPoint[] }>) => {
+self.onmessage = (e: MessageEvent<{ type: string; data?: MetricsResponse; points?: TimeseriesPoint[]; groupingLabel?: string; metric?: string }>) => {
   try {
     const msg = e.data;
     if (msg.type === "processMetrics" && msg.data) {
       self.postMessage(processMetrics(msg.data));
     } else if (msg.type === "processTimeseriesPoints" && Array.isArray(msg.points)) {
-      self.postMessage(processTimeseriesPoints(msg.points));
+      self.postMessage(processTimeseriesPoints(msg.points, msg.groupingLabel, msg.metric));
     }
   } catch (err) {
     self.postMessage({ type: "error", error: String(err) });

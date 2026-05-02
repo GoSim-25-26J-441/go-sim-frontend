@@ -14,14 +14,18 @@ import type {
   AnalysisResult,
 } from "@/app/features/amg-apd/types";
 import { PenLine, Trash } from "lucide-react";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
 export default function VersionSidebar({
   refreshTrigger = 0,
   projectId,
+  designerTourForceOpenNonce = 0,
 }: {
   refreshTrigger?: number;
   /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
   projectId?: string;
+  /** Incremented by the designer tour to open the versions menu */
+  designerTourForceOpenNonce?: number;
 } = {}) {
   const { userId } = useAuth();
   const headers = () =>
@@ -48,6 +52,7 @@ export default function VersionSidebar({
   const setLast = useAmgApdStore((s) => s.setLast);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
   const setRegenerating = useAmgApdStore((s) => s.setRegenerating);
+  const commitGraphBaseline = useAmgApdStore((s) => s.commitGraphBaseline);
   const showToast = useToast((s) => s.showToast);
 
   const closePanel = useCallback(() => setOpen(false), []);
@@ -112,6 +117,12 @@ export default function VersionSidebar({
     if (refreshTrigger > 0) fetchVersions();
   }, [refreshTrigger, projectId]);
 
+  useEffect(() => {
+    if (!designerTourForceOpenNonce) return;
+    setOpen(true);
+    requestAnimationFrame(() => updatePosition());
+  }, [designerTourForceOpenNonce, updatePosition]);
+
   async function handleMoveToVersion(id: string) {
     setOpen(false);
     setRegenerating(true);
@@ -138,6 +149,7 @@ export default function VersionSidebar({
 
       setLast(data);
       setEditedYaml(yamlContent);
+      commitGraphBaseline();
       showToast("Switched to version successfully", "success");
     } catch (e: any) {
       showToast(
@@ -149,7 +161,20 @@ export default function VersionSidebar({
     }
   }
 
+  function versionDeletableInDesigner(v: AmgApdVersionSummary) {
+    const s = v.source?.trim();
+    return !s || s === "amg_apd";
+  }
+
   async function handleDelete(id: string) {
+    const row = versions.find((x) => x.id === id);
+    if (row && !versionDeletableInDesigner(row)) {
+      showToast(
+        "This version is the main diagram snapshot; it cannot be removed from this list.",
+        "info",
+      );
+      return;
+    }
     if (versions.length <= 1) {
       setLastVersionBlockOpen(true);
       return;
@@ -181,6 +206,13 @@ export default function VersionSidebar({
   }
 
   function startRename(v: AmgApdVersionSummary) {
+    if (!versionDeletableInDesigner(v)) {
+      showToast(
+        "Rename this version from the diagram page or project settings.",
+        "info",
+      );
+      return;
+    }
     setEditingId(v.id);
     setEditingTitle(
       v.title || `diagramV${v.version_number}`,
@@ -234,7 +266,7 @@ export default function VersionSidebar({
   }
 
   return (
-    <div className="relative">
+    <div className="relative" data-amg-designer={AMG_DESIGNER.versions}>
       {typeof document !== "undefined" &&
         createPortal(
           <>
@@ -299,7 +331,8 @@ export default function VersionSidebar({
                     ? `/project/${projectId}/patterns/compare`
                     : "/dashboard/patterns/compare"
                 }
-                className="text-xs hover:text-[#9AA4B2]/90 hover:underline font-medium transition-colors"
+                data-amg-designer={AMG_DESIGNER.versionCompare}
+                className="inline-flex items-center rounded-md border border-white/20 bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-gray-200"
                 onClick={closePanel}
               >
                 Compare
@@ -324,7 +357,7 @@ export default function VersionSidebar({
               )}
 
               <ul className="space-y-2">
-                {versions.map((v) => (
+                {versions.map((v, idx) => (
                   <li
                     key={v.id}
                     className="rounded-md border border-white/10 bg-white/5 p-3 text-xs hover:bg-white/[0.07] transition-colors"
@@ -372,6 +405,11 @@ export default function VersionSidebar({
                           title={v.title}
                         >
                           #{v.version_number} {v.title || "Untitled"}
+                          {v.source === "canvas_json" ? (
+                            <span className="ml-1.5 text-[10px] font-normal text-white/45">
+                              (canvas)
+                            </span>
+                          ) : null}
                         </div>
                         <div className="text-[10px] text-white/50 mt-1">
                           {formatDate(v.created_at)}
@@ -379,28 +417,41 @@ export default function VersionSidebar({
                         <div className="flex flex-wrap items-center gap-1.5 mt-2">
                           <button
                             type="button"
+                            data-amg-designer={
+                              idx === 0 ? AMG_DESIGNER.versionMove : undefined
+                            }
                             onClick={() => handleMoveToVersion(v.id)}
                             className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
                           >
                             Move to this version
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => startRename(v)}
-                            className="flex items-center gap-2 transition-all duration-150 text-white mx-4"
-                            title="Rename version"
-                          >
-                            <PenLine className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(v.id)}
-                            disabled={deletingId === v.id}
-                            className="flex items-center transition-all duration-150 text-red-800"
-                            title="Delete version"
-                          >
-                            <Trash className="w-4 h-4" />
-                          </button>
+                          {versionDeletableInDesigner(v) ? (
+                            <button
+                              type="button"
+                              data-amg-designer={
+                                idx === 0 ? AMG_DESIGNER.versionRename : undefined
+                              }
+                              onClick={() => startRename(v)}
+                              className="flex items-center gap-2 transition-all duration-150 text-white mx-4"
+                              title="Rename version"
+                            >
+                              <PenLine className="w-4 h-4" />
+                            </button>
+                          ) : null}
+                          {versionDeletableInDesigner(v) ? (
+                            <button
+                              type="button"
+                              data-amg-designer={
+                                idx === 0 ? AMG_DESIGNER.versionDelete : undefined
+                              }
+                              onClick={() => handleDelete(v.id)}
+                              disabled={deletingId === v.id}
+                              className="flex items-center transition-all duration-150 text-red-800"
+                              title="Delete version"
+                            >
+                              <Trash className="w-4 h-4" />
+                            </button>
+                          ) : null}
                         </div>
                       </>
                     )}

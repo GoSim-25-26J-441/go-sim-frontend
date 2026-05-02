@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import {
@@ -16,7 +23,7 @@ import {
   PenSquare,
 } from "lucide-react";
 import {
-  useGetProjectThreadIdQuery,
+  useGetProjectThreadQuery,
   useGetMessagesQuery,
   useSendMessageMutation,
   type ChatMessageItem,
@@ -47,6 +54,60 @@ function getFetchErrorStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
+function getReadableChatError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  const status = getFetchErrorStatus(error);
+  if (status === 504) {
+    return "The AI model timed out while generating a response. Please try again or shorten your request.";
+  }
+  if (status && status >= 500) {
+    return "Chat service is temporarily unavailable. Please try again shortly.";
+  }
+
+  return "Failed to send message";
+}
+
+function designRequirementsSkippedStorageKey(projectId: string) {
+  return `go-sim-design-requirements-skipped-${projectId}`;
+}
+
+function hasSkippedDesignRequirements(projectId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      window.sessionStorage.getItem(
+        designRequirementsSkippedStorageKey(projectId),
+      ) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function setSkippedDesignRequirements(projectId: string) {
+  try {
+    window.sessionStorage.setItem(
+      designRequirementsSkippedStorageKey(projectId),
+      "1",
+    );
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function clearSkippedDesignRequirements(projectId: string) {
+  try {
+    window.sessionStorage.removeItem(
+      designRequirementsSkippedStorageKey(projectId),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function ClientChat({ id }: Props) {
   const { userId } = useAuth();
   const searchParams = useSearchParams();
@@ -67,10 +128,15 @@ export default function ClientChat({ id }: Props) {
   const [checkingThread, setCheckingThread] = useState(!urlThreadId);
   const [showDesignModal, setShowDesignModal] = useState(false);
   const [designAnswers, setDesignAnswers] = useState<Record<string, any>>({});
+  const [designSimulation, setDesignSimulation] = useState<
+    { nodes: number } | undefined
+  >(undefined);
   const [openCheckPatternsAfterDesign, setOpenCheckPatternsAfterDesign] =
     useState(false);
   const [designSuggestionDismissed, setDesignSuggestionDismissed] =
     useState(false);
+  /** True when the design modal was opened from "Check Anti-Patterns" (not Requirements Settings). */
+  const designModalOpenedForAntiPatternsRef = useRef(false);
   const [showImagesModal, setShowImagesModal] = useState(false);
   
   const projectLabel = id ? `${id.slice(0, 18)}…` : "Unknown project";
@@ -95,10 +161,21 @@ export default function ClientChat({ id }: Props) {
   }, [input, syncInputHeight]);
 
   const {
-    data: projectThreadId,
+    data: projectThread,
     isSuccess: projectThreadSuccess,
     isError: projectThreadError,
-  } = useGetProjectThreadIdQuery(id, { skip: !!urlThreadId });
+  } = useGetProjectThreadQuery(id, { skip: !id });
+
+  /** URL param wins; else PINNED thread uses pinned_diagram_version_id (param is removed after first send). */
+  const diagramVersionForDiagramCanvas = useMemo(() => {
+    const fromUrl = diagramVersionParam?.trim();
+    if (fromUrl) return fromUrl;
+    if (projectThread?.binding_mode === "PINNED") {
+      const pinned = projectThread.pinned_diagram_version_id?.trim();
+      if (pinned) return pinned;
+    }
+    return undefined;
+  }, [diagramVersionParam, projectThread]);
 
   const {
     data: messagesData,
@@ -158,7 +235,7 @@ export default function ClientChat({ id }: Props) {
       return;
     }
     if (projectThreadSuccess) {
-      const tid = projectThreadId ?? null;
+      const tid = projectThread?.id ?? null;
       setThreadId(tid);
       if (tid) {
         router.replace(`/project/${id}/chat?thread=${tid}`, { scroll: false });
@@ -173,7 +250,7 @@ export default function ClientChat({ id }: Props) {
     urlThreadId,
     projectThreadSuccess,
     projectThreadError,
-    projectThreadId,
+    projectThread,
     router,
   ]);
 
@@ -184,11 +261,12 @@ export default function ClientChat({ id }: Props) {
       q.set("thread", threadId);
       q.set("reload", "1");
     }
-    if (diagramVersionParam) {
-      q.set("diagramVersion", diagramVersionParam);
+    const dv = diagramVersionForDiagramCanvas?.trim();
+    if (dv) {
+      q.set("diagramVersion", dv);
     }
     router.push(`/diagram?${q.toString()}`);
-  }, [id, threadId, diagramVersionParam, router]);
+  }, [id, threadId, diagramVersionForDiagramCanvas, router]);
 
   useEffect(() => {
     if (messagesData) {
@@ -284,6 +362,16 @@ export default function ClientChat({ id }: Props) {
         ...(Object.keys(designAnswers).length > 0
           ? { design: designAnswers }
           : {}),
+        ...(designSimulation &&
+        typeof designSimulation.nodes === "number" &&
+        Number.isFinite(designSimulation.nodes) &&
+        designSimulation.nodes >= 1
+          ? {
+              simulation: {
+                nodes: Math.floor(designSimulation.nodes),
+              },
+            }
+          : {}),
         ...(diagramVersionId ? { diagram_version_id: diagramVersionId } : {}),
       };
 
@@ -296,7 +384,7 @@ export default function ClientChat({ id }: Props) {
         } catch (e) {
           lastError = e;
           const status = getFetchErrorStatus(e);
-          if (status === 503 && attempt < MAX_MESSAGE_503_RETRIES - 1) {
+          if ((status === 503 || status === 504) && attempt < MAX_MESSAGE_503_RETRIES - 1) {
             if (attempt === 0) {
               showToast("Diagram is still saving; retrying…", "info");
             }
@@ -347,7 +435,7 @@ export default function ClientChat({ id }: Props) {
       }
     } catch (e) {
       if (aliveRef.current) {
-        setErr(e instanceof Error ? e.message : "Failed to send");
+        setErr(getReadableChatError(e));
         setMessages((prev) => prev.slice(0, -1));
       }
     } finally {
@@ -372,23 +460,41 @@ export default function ClientChat({ id }: Props) {
       <DesignQuestionsModal
         isOpen={showDesignModal}
         onClose={() => {
+          designModalOpenedForAntiPatternsRef.current = false;
           setShowDesignModal(false);
           setOpenCheckPatternsAfterDesign(false);
         }}
-        onSubmit={(d) => {
-          setDesignAnswers(d);
+        onSubmit={({ design, simulation }) => {
+          designModalOpenedForAntiPatternsRef.current = false;
+          clearSkippedDesignRequirements(id);
+          setDesignAnswers(design);
+          setDesignSimulation(simulation);
           setShowDesignModal(false);
           if (openCheckPatternsAfterDesign) {
             setShowCheckPatternsOverlay(true);
             setOpenCheckPatternsAfterDesign(false);
           }
         }}
-        onDesignLoaded={(d) => setDesignAnswers(d)}
+        onDesignLoaded={(payload) => {
+          const { design, simulation } = payload;
+          if (Object.keys(design ?? {}).length > 0) {
+            setDesignAnswers(design);
+          } else {
+            setDesignAnswers({});
+          }
+          setDesignSimulation(simulation);
+        }}
         onSkip={() => {
+          setSkippedDesignRequirements(id);
           setShowDesignModal(false);
           setOpenCheckPatternsAfterDesign(false);
+          if (designModalOpenedForAntiPatternsRef.current) {
+            designModalOpenedForAntiPatternsRef.current = false;
+            setShowCheckPatternsOverlay(true);
+          }
         }}
         initialDesign={designAnswers}
+        initialSimulation={designSimulation}
         projectId={id}
         userId={userId ?? undefined}
       />
@@ -480,7 +586,11 @@ export default function ClientChat({ id }: Props) {
 
             <div className="relative shrink-0">
               <button
-                onClick={() => setShowDesignModal(true)}
+                type="button"
+                onClick={() => {
+                  designModalOpenedForAntiPatternsRef.current = false;
+                  setShowDesignModal(true);
+                }}
                 className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
               >
                 <Settings2 className="w-3.5 h-3.5" />
@@ -528,7 +638,9 @@ export default function ClientChat({ id }: Props) {
               className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 shrink-0 bg-amber-400 text-black border border-amber-500/80 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none"
               title={
                 threadId
-                  ? "Open diagram canvas (reloads latest saved design)"
+                  ? diagramVersionForDiagramCanvas
+                    ? "Open diagram canvas for the version this chat is pinned to"
+                    : "Open diagram canvas (latest saved design for this project)"
                   : "Open diagram canvas for this project"
               }
             >
@@ -537,10 +649,16 @@ export default function ClientChat({ id }: Props) {
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 if (Object.keys(designAnswers).length === 0) {
-                  setOpenCheckPatternsAfterDesign(true);
-                  setShowDesignModal(true);
+                  if (hasSkippedDesignRequirements(id)) {
+                    setShowCheckPatternsOverlay(true);
+                  } else {
+                    designModalOpenedForAntiPatternsRef.current = true;
+                    setOpenCheckPatternsAfterDesign(true);
+                    setShowDesignModal(true);
+                  }
                 } else {
                   setShowCheckPatternsOverlay(true);
                 }
@@ -623,7 +741,7 @@ export default function ClientChat({ id }: Props) {
 
             {err && (
               <div
-                className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
+                className="flex w-full items-start gap-2 px-3 py-2 rounded-lg text-sm"
                 style={{
                   backgroundColor: "rgba(239,68,68,0.08)",
                   border: "1px solid rgba(239,68,68,0.2)",
@@ -631,7 +749,7 @@ export default function ClientChat({ id }: Props) {
                 }}
               >
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                {err}
+                <span className="min-w-0 break-words whitespace-pre-wrap">{err}</span>
               </div>
             )}
 

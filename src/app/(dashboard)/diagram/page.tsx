@@ -238,6 +238,7 @@ function graphKindToCanvasType(kind: string): string {
     case "CLIENT":
       return "client";
     case "USER":
+    case "USER_ACTOR":
       return "user";
     case "EXTERNAL":
       return "external";
@@ -323,6 +324,14 @@ function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
   if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
     return data;
   }
+  // Prefer AMG-APD graph payload when present; legacy arrays may be lossy.
+  const graph = data.graph;
+  if (isRecord(graph) && Array.isArray(graph.edges)) {
+    const nodesObj = graph.nodes;
+    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
+      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
+    }
+  }
   const deps = data.dependencies;
   const hasLegacyDeps = Array.isArray(deps);
   const hasLegacyNodes =
@@ -331,13 +340,6 @@ function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
     Array.isArray(data.topics);
   if (hasLegacyDeps && hasLegacyNodes) {
     return data;
-  }
-  const graph = data.graph;
-  if (isRecord(graph) && Array.isArray(graph.edges)) {
-    const nodesObj = graph.nodes;
-    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
-      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
-    }
   }
   throw new Error(
     "Unrecognized diagram JSON. Expected { nodes, edges }, legacy { services, datastores?, dependencies }, or { graph: { nodes, edges } }."
@@ -423,6 +425,13 @@ export default function DrawDiagram() {
     const id = summary?.latest_diagram_version?.id;
     return typeof id === "string" && id.length > 0 ? id : undefined;
   }, [diagramVersionFromQuery, summary?.latest_diagram_version?.id]);
+
+  const summaryProjectId = useMemo(() => {
+    const p = summary?.project as Record<string, unknown> | undefined;
+    const fromPublicId = typeof p?.public_id === "string" ? p.public_id : undefined;
+    const fromId = typeof p?.id === "string" ? p.id : undefined;
+    return fromPublicId ?? fromId ?? null;
+  }, [summary]);
 
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
@@ -869,7 +878,7 @@ export default function DrawDiagram() {
       if (kind === "gateway") return "gateway";
       if (kind === "external") return "external";
       if (kind === "client") return "client";
-      if (kind === "user") return "user";
+      if (kind === "user") return "user_actor";
       return "service";
     };
 
@@ -1011,7 +1020,7 @@ export default function DrawDiagram() {
         else if (t === "gateway") kind = "gateway";
         else if (t === "external") kind = "external";
         else if (t === "client") kind = "client";
-        else if (t === "user") kind = "user";
+        else if (t === "user" || t === "user_actor") kind = "user";
         else if (t === "service") kind = "service";
 
         const { x, y } = positionFromSavedOrGrid(node, idx);
@@ -1194,6 +1203,7 @@ export default function DrawDiagram() {
       loadingSummary ||
       diagramLoaded ||
       projectId !== lastLoadedProjectId ||
+      (summaryProjectId !== null && summaryProjectId !== projectId) ||
       !summary?.latest_diagram_version?.diagram_json
     ) {
       return;
@@ -1203,7 +1213,8 @@ export default function DrawDiagram() {
     if (diagramJson && typeof diagramJson === "object") {
       try {
         console.log("Loading diagram from summary:", diagramJson);
-        loadDiagramFromJson(diagramJson as any);
+        const normalized = normalizeDiagramJsonForLoader(diagramJson as Record<string, unknown>);
+        loadDiagramFromJson(normalized as any);
         setLastLoadedProjectId(projectId);
       } catch (error) {
         console.error("Failed to load diagram from summary:", error);
@@ -1211,7 +1222,15 @@ export default function DrawDiagram() {
     } else {
       console.log("No diagram_json found in summary:", summary);
     }
-  }, [projectId, summary, loadingSummary, diagramLoaded, loadDiagramFromJson, lastLoadedProjectId]);
+  }, [
+    projectId,
+    summary,
+    summaryProjectId,
+    loadingSummary,
+    diagramLoaded,
+    loadDiagramFromJson,
+    lastLoadedProjectId,
+  ]);
 
   useEffect(() => {
     if (reloadFlag !== "1" || !diagramLoaded || !projectId) return;
@@ -1221,12 +1240,15 @@ export default function DrawDiagram() {
     router.replace(qs ? `/diagram?${qs}` : "/diagram", { scroll: false });
   }, [reloadFlag, diagramLoaded, projectId, router, searchParams]);
 
+  const diagramKindToExportJson = (kind: NodeKind): string =>
+    kind === "user" ? "user_actor" : kind;
+
   const buildExportModel = () => {
     const services = nodes
       .filter((n) => DIAGRAM_SPEC_NODE_KINDS.includes(n.kind))
       .map((n) => ({
         name: n.name,
-        kind: n.kind,
+        kind: diagramKindToExportJson(n.kind),
       }));
 
     const datastores = nodes
@@ -1539,6 +1561,7 @@ export default function DrawDiagram() {
           projectId,
           versionId: diagramVersionIdForSave,
           diagram_json: diagramJson,
+          spec_summary: backendFormat.spec_summary,
           ...(imageObjectKey ? { image_object_key: imageObjectKey } : {}),
         }).unwrap()) as Record<string, unknown>;
       } else {

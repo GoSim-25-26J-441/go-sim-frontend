@@ -9,19 +9,30 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const versionId = body?.version_id;
     const yaml = body?.yaml ?? "";
+    const node_layout = body?.node_layout;
 
     if (!versionId) {
       return NextResponse.json({ error: "version_id is required" }, { status: 400 });
     }
 
     const backendHeaders = getBackendAmgApdHeaders(req);
+    const payload: Record<string, unknown> = { version_id: versionId, yaml };
+    if (
+      node_layout &&
+      typeof node_layout === "object" &&
+      !Array.isArray(node_layout) &&
+      Object.keys(node_layout as object).length > 0
+    ) {
+      payload.node_layout = node_layout;
+    }
+
     const res = await fetch(`${BASE}/api/v1/amg-apd/update-version-analysis`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...backendHeaders,
       },
-      body: JSON.stringify({ version_id: versionId, yaml }),
+      body: JSON.stringify(payload),
     });
 
     const text = await res.text();

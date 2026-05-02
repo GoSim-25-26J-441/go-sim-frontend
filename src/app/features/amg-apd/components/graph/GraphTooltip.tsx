@@ -10,7 +10,7 @@ const NODE_KIND_LABEL: Record<NodeKind, string> = {
   EVENT_TOPIC: "Event Topic",
   EXTERNAL_SYSTEM: "External System",
   CLIENT: "Client (web/mobile)",
-  USER_ACTOR: "User / Actor",
+  USER_ACTOR: "user_actor",
 };
 
 export default function GraphTooltip({

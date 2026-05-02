@@ -1,15 +1,39 @@
 import type { Core } from "cytoscape";
-import type { EdgeKind, NodeKind } from "@/app/features/amg-apd/types";
+import type {
+  Edge,
+  EdgeKind,
+  Graph,
+  Node,
+  NodeKind,
+} from "@/app/features/amg-apd/types";
+
+/** Id → position for `node_layout` when saving a version (backend merges into stored graph JSON). */
+export type NodeLayoutPayload = Record<string, { x: number; y: number }>;
+
+export function nodeLayoutPayloadFromGraph(
+  graph: Graph | null | undefined,
+): NodeLayoutPayload | undefined {
+  if (!graph?.nodes) return undefined;
+  const out: NodeLayoutPayload = {};
+  for (const node of Object.values(graph.nodes)) {
+    if (!node?.id) continue;
+    if (typeof node.x === "number" && typeof node.y === "number") {
+      out[node.id] = { x: node.x, y: node.y };
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 export function validateGraphForSave(cy: Core): string | null {
   const nodes = cy.nodes();
   const edges = cy.edges();
 
-  if (nodes.length === 0) {
+  const realNodes = nodes.filter((n) => !n.hasClass("halo"));
+  if (realNodes.length === 0) {
     return "Graph is incomplete: there are no nodes.";
   }
 
-  for (const node of nodes) {
+  for (const node of realNodes) {
     const id = node.data("id");
     const kind = node.data("kind");
     const label = node.data("label");
@@ -28,6 +52,49 @@ export function validateGraphForSave(cy: Core): string | null {
   }
 
   return null;
+}
+
+/** Build graph JSON from the live canvas, including node `x`/`y` (diagram-style layout). */
+export function exportGraphJsonFromCy(cy: Core): Graph {
+  const nodes: Record<string, Node> = {};
+  cy.nodes().forEach((ele) => {
+    if (ele.hasClass("halo")) return;
+    const id = ele.id();
+    const kind = (ele.data("kind") as NodeKind) || "SERVICE";
+    const name = (ele.data("label") as string) || id;
+    const pos = ele.position();
+    const rawAttrs = ele.data("attrs") as Record<string, any> | undefined;
+    const node: Node = {
+      id,
+      name,
+      kind,
+      x: pos.x,
+      y: pos.y,
+    };
+    if (rawAttrs && typeof rawAttrs === "object" && Object.keys(rawAttrs).length > 0) {
+      node.attrs = rawAttrs;
+    }
+    nodes[id] = node;
+  });
+
+  const edges: Edge[] = [];
+  cy.edges().forEach((e) => {
+    const source = e.data("source") as string;
+    const target = e.data("target") as string;
+    const kind = (e.data("kind") as EdgeKind) || "CALLS";
+    const attrs = (e.data("attrs") as Record<string, any>) || {};
+    const edge: Edge = {
+      from: source,
+      to: target,
+      kind,
+    };
+    if (attrs && Object.keys(attrs).length > 0) {
+      edge.attrs = attrs;
+    }
+    edges.push(edge);
+  });
+
+  return { nodes, edges };
 }
 
 function yamlQuote(s: string): string {
@@ -57,6 +124,7 @@ export function exportGraphToYaml(cy: Core): string {
 
   const servicesOut: { name: string; type: string }[] = [];
   nodes.forEach((n) => {
+    if (n.hasClass("halo")) return;
     const kind = (n.data("kind") as NodeKind) || "SERVICE";
     const name = (n.data("label") as string) || n.id();
     servicesOut.push({

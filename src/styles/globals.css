@@ -149,6 +149,84 @@ html.dark select {
   background: transparent;
 }
 
+/* Extra-thin scrollbar for dashboard sidebar lists */
+.scrollbar-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.scrollbar-sidebar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Edit toolbox + Details panel: gutter + deeper sky accent (slightly darker mid-blue, not navy) */
+.scrollbar-toolbox {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(2, 132, 199, 0.72) rgba(15, 23, 42, 0.88);
+  scrollbar-gutter: stable;
+}
+
+.scrollbar-toolbox::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-track {
+  background: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.95),
+    rgba(30, 41, 59, 0.9)
+  );
+  border-radius: 8px;
+  margin: 6px 2px;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(2, 132, 199, 0.58),
+    rgba(3, 105, 161, 0.5)
+  );
+  border-radius: 8px;
+  border: 2px solid rgba(15, 23, 42, 0.65);
+  background-clip: padding-box;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(2, 132, 199, 0.78),
+    rgba(3, 105, 161, 0.66)
+  );
+  border-color: rgba(15, 23, 42, 0.5);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-thumb:active {
+  background: rgba(3, 105, 161, 0.78);
+}
+
+.scrollbar-toolbox::-webkit-scrollbar-corner {
+  background: rgba(15, 23, 42, 0.95);
+}
+
 /* Apply the same subtle scrollbar to the whole page (viewport scroll) */
 html,
 body {
@@ -181,4 +259,53 @@ body::-webkit-scrollbar-thumb:hover {
 html::-webkit-scrollbar-thumb:active,
 body::-webkit-scrollbar-thumb:active {
   background: rgba(255, 255, 255, 0.25);
+}
+
+/* Patterns designer tour — idle hint pips pulse between subtle and glowing */
+@keyframes designer-tour-pip-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(15, 23, 42, 0.65),
+      0 0 6px rgba(56, 189, 248, 0.2);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(56, 189, 248, 0.45),
+      0 0 14px rgba(56, 189, 248, 0.55),
+      0 0 26px rgba(56, 189, 248, 0.35);
+    transform: scale(1.06);
+  }
+}
+
+@keyframes designer-tour-welcome-gleam {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(15, 23, 42, 0.55),
+      0 0 10px rgba(56, 189, 248, 0.25);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(56, 189, 248, 0.4),
+      0 0 20px rgba(56, 189, 248, 0.5),
+      0 0 32px rgba(56, 189, 248, 0.3);
+  }
+}
+
+.animate-designer-tour-pip {
+  animation: designer-tour-pip-glow 2.2s ease-in-out infinite;
+}
+
+.animate-designer-tour-welcome-gleam {
+  animation: designer-tour-welcome-gleam 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-designer-tour-pip,
+  .animate-designer-tour-welcome-gleam {
+    animation: none;
+    transform: none;
+  }
 }

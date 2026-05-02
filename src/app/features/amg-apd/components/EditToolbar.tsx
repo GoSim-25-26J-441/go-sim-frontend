@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import type {
   EditTool,
   CallProtocol,
   DetectionKind,
+  NodeKind,
 } from "@/app/features/amg-apd/types";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import {
@@ -12,60 +14,143 @@ import {
   ANTIPATTERN_ICONS,
   ANTIPATTERN_ICONS_ALT,
 } from "@/app/features/amg-apd/utils/antiPatternChunks";
+import {
+  DIAGRAM_NODE_ICON_PATHS,
+} from "@/app/features/amg-apd/utils/diagramNodeIcons";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
-const TOOL_ICONS: Record<EditTool, string> = {
-  select: "/icon/select.png",
-  "add-service": "/icon/service.png",
-  "add-api-gateway": "/icon/api_gateway.png",
-  "add-database": "/icon/database.png",
-  "add-event-topic": "/icon/event_topic.png",
-  "add-external-system": "/icon/service.png", // fallback; add external_system.png if desired
-  "add-client": "/icon/client.png",
-  "add-user-actor": "/icon/actor.png",
-  "connect-calls": "/icon/select.png", // connect tool reuses select icon
+const TOOL_ICONS: Record<
+  "add-service" | "add-api-gateway" | "add-database" | "add-event-topic" | "add-external-system" | "add-client" | "add-user-actor",
+  string
+> = {
+  "add-service": DIAGRAM_NODE_ICON_PATHS.service,
+  "add-api-gateway": DIAGRAM_NODE_ICON_PATHS.gateway,
+  "add-database": DIAGRAM_NODE_ICON_PATHS.database,
+  "add-event-topic": DIAGRAM_NODE_ICON_PATHS.topic,
+  "add-external-system": DIAGRAM_NODE_ICON_PATHS.external,
+  "add-client": DIAGRAM_NODE_ICON_PATHS.client,
+  "add-user-actor": DIAGRAM_NODE_ICON_PATHS.user,
 };
 
-const NODE_TOOLS: { t: EditTool; label: string; title: string }[] = [
-  { t: "select", label: "Select / Move", title: "Select, move and inspect elements" },
-  { t: "add-service", label: "Service", title: "Add a new service (click on the background)" },
-  { t: "add-api-gateway", label: "API Gateway", title: "Add an API gateway (click on the background)" },
-  { t: "add-database", label: "Database", title: "Add a new database (click on the background)" },
-  { t: "add-event-topic", label: "Event Topic", title: "Add an event topic (click on the background)" },
-  { t: "add-external-system", label: "External System", title: "Add an external system (click on the background)" },
-  { t: "add-client", label: "Client (web/mobile)", title: "Add a client (click on the background)" },
-  { t: "add-user-actor", label: "User / Actor", title: "Add a user or actor (click on the background)" },
+type ToolRowDef = {
+  t: EditTool;
+  label: string;
+  title: string;
+  hint: string;
+  dragKind: NodeKind;
+};
+
+/** Add-node tools — diagram-style white tiles; sky when selected. */
+const NODE_ADD_TOOLS: ToolRowDef[] = [
+  {
+    t: "add-service",
+    label: "Service",
+    title: "Drag and drop to add a new service",
+    hint: "Drag to canvas",
+    dragKind: "SERVICE",
+  },
+  {
+    t: "add-api-gateway",
+    label: "API Gateway",
+    title: "Drag and drop to add an API gateway",
+    hint: "Drag to canvas",
+    dragKind: "API_GATEWAY",
+  },
+  {
+    t: "add-database",
+    label: "Database",
+    title: "Drag and drop to add a database",
+    hint: "Drag to canvas",
+    dragKind: "DATABASE",
+  },
+  {
+    t: "add-event-topic",
+    label: "Event Topic",
+    title: "Drag and drop to add an event topic",
+    hint: "Drag to canvas",
+    dragKind: "EVENT_TOPIC",
+  },
+  {
+    t: "add-external-system",
+    label: "External System",
+    title: "Drag and drop to add an external system",
+    hint: "Drag to canvas",
+    dragKind: "EXTERNAL_SYSTEM",
+  },
+  {
+    t: "add-client",
+    label: "Client (Web/Mobile)",
+    title: "Drag and drop to add a client",
+    hint: "Drag to canvas",
+    dragKind: "CLIENT",
+  },
+  {
+    t: "add-user-actor",
+    label: "User / Actor",
+    title: "Drag and drop to add a user/actor",
+    hint: "Drag to canvas",
+    dragKind: "USER_ACTOR",
+  },
 ];
 
 const NODES_HEADING = "Nodes";
-const ANTIPATTERNS_HEADING = "Anti-Patterns";
+const ANTIPATTERNS_HEADING = "Anti-patterns";
+
+const rowBase =
+  "flex w-full items-center gap-1.5 rounded-lg border px-1.5 py-1 text-left text-[10px] transition-all duration-150 sm:gap-2 sm:px-2 sm:py-1.5 sm:text-xs";
+
+/** Default matches `/diagram` toolbox: white tile, black border. */
+const diagramRowIdle = `${rowBase} cursor-pointer border-black bg-white text-black shadow-sm hover:bg-white/85`;
+
+const toneRowClasses = {
+  node: {
+    idle: diagramRowIdle,
+    active: `${rowBase} cursor-pointer border-sky-600 bg-gradient-to-br from-sky-100/95 via-white to-sky-200/65 text-black ring-2 ring-sky-600/42 shadow-[0_0_20px_rgba(2,132,199,0.26)]`,
+    iconWrapIdle: "bg-slate-100/90",
+    iconWrapActive: "bg-sky-300/50",
+    hintActive: "text-sky-950/72",
+  },
+  anti: {
+    idle: diagramRowIdle,
+    pending: `${rowBase} cursor-pointer border-rose-500 bg-gradient-to-br from-rose-50 via-white to-rose-100/50 text-black ring-2 ring-rose-400/50 shadow-[0_0_22px_rgba(251,113,133,0.32)]`,
+    iconWrapIdle: "bg-slate-100/90",
+    iconWrapPending: "bg-rose-200/50",
+    hintPending: "text-rose-900/70",
+  },
+} as const;
 
 type Props = {
   editMode: boolean;
-  tool: EditTool;
   pendingSourceId: string | null;
-  onToolChange: (tool: EditTool) => void;
   defaultCallProtocol?: CallProtocol;
   defaultCallSync?: boolean;
   onDefaultCallChange?: (kind: CallProtocol, sync: boolean) => void;
-  onAddAntiPattern?: (kind: DetectionKind) => void;
-  /** When set, the matching anti-pattern button shows a glowing red "selected for placement" state. */
   pendingAntiPatternKind?: DetectionKind | null;
   variant?: "overlay" | "sidebar";
+  onNodeDragStart?: (kind: NodeKind) => (e: ReactDragEvent<HTMLButtonElement>) => void;
+  onAntiPatternDragStart?: (
+    kind: DetectionKind,
+  ) => (e: ReactDragEvent<HTMLButtonElement>) => void;
+  onToolDragEnd?: () => void;
+  draggingAntiPatternKind?: DetectionKind | null;
 };
 
 export default function EditToolbar({
   editMode,
-  tool,
   pendingSourceId,
-  onToolChange,
-  defaultCallProtocol = "rest",
-  defaultCallSync = true,
-  onDefaultCallChange,
-  onAddAntiPattern,
+  defaultCallProtocol: _defaultCallProtocol = "rest",
+  defaultCallSync: _defaultCallSync = true,
+  onDefaultCallChange: _onDefaultCallChange,
   pendingAntiPatternKind = null,
   variant = "overlay",
+  onNodeDragStart,
+  onAntiPatternDragStart,
+  onToolDragEnd,
+  draggingAntiPatternKind = null,
 }: Props) {
-  if (!editMode) return null;
+  void _defaultCallProtocol;
+  void _defaultCallSync;
+  void _onDefaultCallChange;
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -74,195 +159,259 @@ export default function EditToolbar({
     [searchQuery],
   );
 
-  const { showNodesSection, nodeToolsToShow, showAntiSection, antiToShow } =
-    useMemo(() => {
-      if (!query) {
-        return {
-          showNodesSection: true,
-          nodeToolsToShow: NODE_TOOLS,
-          showAntiSection: true,
-          antiToShow: EDITABLE_ANTIPATTERNS,
-        };
-      }
-      const nodesHeadingMatches =
-        NODES_HEADING.toLowerCase().includes(query) ||
-        "nodes".includes(query);
-      const antiHeadingMatches =
-        ANTIPATTERNS_HEADING.toLowerCase().replace(/\s/g, "-").includes(query) ||
-        "antipatterns".includes(query) ||
-        "anti-patterns".includes(query) ||
-        "anti patterns".includes(query);
-      const matchingNodeTools = NODE_TOOLS.filter((item) =>
-        item.label.toLowerCase().includes(query),
-      );
-      const matchingAnti = EDITABLE_ANTIPATTERNS.filter((kind) =>
-        antipatternKindLabel(kind).toLowerCase().includes(query),
-      );
+  const {
+    showNodesSection,
+    nodesToShow,
+    showAntiSection,
+    antiToShow,
+  } = useMemo(() => {
+    const matchesRow = (item: ToolRowDef) =>
+      item.label.toLowerCase().includes(query) ||
+      item.hint.toLowerCase().includes(query);
+
+    if (!query) {
       return {
-        showNodesSection: nodesHeadingMatches || matchingNodeTools.length > 0,
-        nodeToolsToShow: nodesHeadingMatches ? NODE_TOOLS : matchingNodeTools,
-        showAntiSection: antiHeadingMatches || matchingAnti.length > 0,
-        antiToShow: antiHeadingMatches ? EDITABLE_ANTIPATTERNS : matchingAnti,
+        showNodesSection: true,
+        nodesToShow: NODE_ADD_TOOLS,
+        showAntiSection: true,
+        antiToShow: EDITABLE_ANTIPATTERNS,
       };
-    }, [query],
-  );
+    }
 
-  const btnBase =
-    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150";
-  const inactive =
-    "bg-slate-800/80 text-slate-200 hover:bg-slate-700/90 border border-slate-600/60 hover:border-slate-500";
-  const active =
-    "bg-sky-600 text-white border border-sky-500 shadow-md shadow-sky-500/30 ring-1 ring-sky-400/50";
+    const nodesHeadingMatches =
+      (query.length > 0 &&
+        NODES_HEADING.toLowerCase().includes(query)) ||
+      query === "node" ||
+      query === "nodes";
+    const antiHeadingMatches =
+      ANTIPATTERNS_HEADING.toLowerCase().replace(/\s/g, "-").includes(query) ||
+      "antipatterns".includes(query) ||
+      "anti-patterns".includes(query) ||
+      "anti patterns".includes(query);
 
-  const ToolBtn = ({
+    const matchingNodes = NODE_ADD_TOOLS.filter(matchesRow);
+    const matchingAnti = EDITABLE_ANTIPATTERNS.filter((kind) =>
+      antipatternKindLabel(kind).toLowerCase().includes(query),
+    );
+
+    return {
+      showNodesSection: nodesHeadingMatches || matchingNodes.length > 0,
+      nodesToShow: nodesHeadingMatches ? NODE_ADD_TOOLS : matchingNodes,
+      showAntiSection: antiHeadingMatches || matchingAnti.length > 0,
+      antiToShow: antiHeadingMatches ? EDITABLE_ANTIPATTERNS : matchingAnti,
+    };
+  }, [query]);
+
+  if (!editMode) return null;
+
+  const NodeRow = ({
     t,
     label,
     title,
-  }: {
-    t: EditTool;
-    label: string;
-    title: string;
-  }) => (
-    <button
-      type="button"
-      title={title}
-      onClick={() => onToolChange(t)}
-      className={`${btnBase} ${tool === t ? active : inactive}`}
-    >
-      <span
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
-          tool === t ? "bg-white/25" : "bg-white/20"
-        }`}
+    hint,
+    dragKind,
+  }: ToolRowDef) => {
+    const tc = toneRowClasses.node;
+    const nodeDragDataClass =
+      "data-[dragging=true]:border-sky-700 data-[dragging=true]:bg-gradient-to-br data-[dragging=true]:from-sky-200/95 data-[dragging=true]:via-sky-50 data-[dragging=true]:to-sky-300/80 data-[dragging=true]:ring-2 data-[dragging=true]:ring-sky-700/55 data-[dragging=true]:shadow-[0_0_24px_rgba(3,105,161,0.42)]";
+    const nodeIconDragDataClass = "group-data-[dragging=true]:bg-sky-300/35";
+    const nodeHintDragDataClass = "group-data-[dragging=true]:text-sky-950/90";
+    return (
+      <button
+        type="button"
+        draggable
+        title={title}
+        onDragStart={(e) => {
+          e.currentTarget.dataset.dragging = "true";
+          onNodeDragStart?.(dragKind)(e);
+        }}
+        onDragEnd={(e) => {
+          e.currentTarget.dataset.dragging = "false";
+          onToolDragEnd?.();
+        }}
+        className={`${tc.idle} group ${nodeDragDataClass}`}
       >
-        <img
-          src={TOOL_ICONS[t]}
-          alt=""
-          className="h-4 w-4 object-contain invert"
-        />
-      </span>
-      <span className="truncate">{label}</span>
-    </button>
-  );
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${tc.iconWrapIdle} ${nodeIconDragDataClass}`}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={TOOL_ICONS[t as keyof typeof TOOL_ICONS]}
+            alt=""
+            width={32}
+            height={32}
+            draggable={false}
+            className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
+          />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col text-left">
+          <span className="truncate font-bold text-black">{label}</span>
+          <span
+            className={`truncate text-[9px] sm:text-[10px] text-black/80 ${nodeHintDragDataClass}`}
+          >
+            {hint}
+          </span>
+        </div>
+      </button>
+    );
+  };
 
-  const content = (
+  /** ~⅔ viewport cap (larger than the earlier ~⅓ toolbox); overlay uses the same scale. */
+  const scrollListMaxTwoThirds =
+    "max-h-[min(66dvh,34rem)] sm:max-h-[min(68dvh,36rem)]";
+
+  const scrollOuterClass =
+    variant === "sidebar"
+      ? "flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable]"
+      : `flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable] ${scrollListMaxTwoThirds}`;
+
+  const scrollArea = (
     <div
-      className="w-full rounded-xl border border-slate-700/80 bg-slate-900/95 p-3.5 text-[11px] shadow-xl shadow-black/50 backdrop-blur-sm"
+      className={scrollOuterClass}
       onWheel={(e) => e.stopPropagation()}
     >
-      <div className="mb-3 flex items-center justify-between shrink-0">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-          Edit tools
-        </span>
-        <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-200 border border-amber-400/50">
-          EDIT MODE
-        </span>
-      </div>
+      {showNodesSection && (
+        <div data-amg-designer={AMG_DESIGNER.editToolboxNodes}>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-300/85 sm:text-[11px]">
+            {NODES_HEADING}
+          </div>
+          {nodesToShow.map((row) => (
+            <NodeRow key={row.t} {...row} />
+          ))}
+        </div>
+      )}
 
-      <div className="mb-2.5 shrink-0">
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search tools…"
-          className="w-full rounded-lg border border-slate-600/80 bg-slate-800/90 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500/60 focus:border-sky-500/50"
-          aria-label="Search edit tools"
-        />
-      </div>
-
-      {/* Scrollable tools list */}
-      <div
-        className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5 min-h-0"
-        style={{ maxHeight: "320px" }}
-      >
-        {showNodesSection && (
-          <>
-            <div className="mt-0.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              {NODES_HEADING}
-            </div>
-            {nodeToolsToShow.map(({ t, label, title }) => (
-              <ToolBtn key={t} t={t} label={label} title={title} />
-            ))}
-          </>
-        )}
-
-        {showAntiSection && (
-          <>
-            <div className="mt-2.5 border-t border-slate-700/80 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              {ANTIPATTERNS_HEADING}
-            </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Add a sample graph that triggers this anti-pattern.
-            </p>
-            {antiToShow.map((kind) => {
-              const isPending = pendingAntiPatternKind === kind;
-              return (
-                <button
-                  key={kind}
-                  type="button"
-                  title={`Add a sample graph that triggers ${antipatternKindLabel(kind)}. Then click on the canvas to place it.`}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onAddAntiPattern?.(kind);
-                  }}
-                  className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium w-full transition-all duration-150 cursor-pointer ${
-                    isPending
-                      ? "bg-rose-900/60 text-rose-100 border-2 border-rose-400 shadow-lg shadow-rose-500/40 ring-2 ring-rose-400/60"
-                      : "bg-slate-800/80 text-slate-200 hover:bg-rose-900/40 border border-slate-600/60 hover:border-rose-500/50"
+      {showAntiSection && (
+        <div data-amg-designer={AMG_DESIGNER.editToolboxAntiPatterns}>
+          <div className="mt-3 border-t border-slate-600/50 pt-3 text-[10px] font-semibold uppercase tracking-wider text-rose-200/90 sm:text-[11px]">
+            {ANTIPATTERNS_HEADING}
+          </div>
+          <p className="text-[9px] text-rose-200/60 sm:text-[10px]">
+            Drag and drop a sample subgraph that triggers the detector.
+          </p>
+          {antiToShow.map((kind) => {
+            const isDragging =
+              draggingAntiPatternKind === kind || pendingAntiPatternKind === kind;
+            const ac = toneRowClasses.anti;
+            return (
+              <button
+                key={kind}
+                type="button"
+                draggable
+                title={`Drag and drop a sample graph that triggers ${antipatternKindLabel(kind)}.`}
+                onDragStart={onAntiPatternDragStart?.(kind)}
+                onDragEnd={onToolDragEnd}
+                className={isDragging ? ac.pending : ac.idle}
+              >
+                <span
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
+                    isDragging ? ac.iconWrapPending : ac.iconWrapIdle
                   }`}
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/20 pointer-events-none">
-                    <img
-                      src={ANTIPATTERN_ICONS[kind]}
-                      alt=""
-                      className="h-4 w-4 object-contain invert pointer-events-none"
-                      draggable={false}
-                      onError={(e) => {
-                        const el = e.currentTarget;
-                        if (!el) return;
-                        const tried = el.getAttribute("data-fallback") ?? "";
-                        const alt = ANTIPATTERN_ICONS_ALT[kind];
-                        if (!tried && alt) {
-                          el.setAttribute("data-fallback", "alt");
-                          el.src = alt;
-                          return;
-                        }
-                        el.setAttribute("data-fallback", "1");
-                        el.src = "/icon/service.png";
-                      }}
-                    />
+                  {/* Native img: reliable src swap on error for SVG→PNG fallback */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={ANTIPATTERN_ICONS[kind]}
+                    alt=""
+                    width={32}
+                    height={32}
+                    className="h-7 w-7 object-contain sm:h-9 sm:w-9 pointer-events-none drop-shadow-sm"
+                    draggable={false}
+                    onError={(e) => {
+                      const el = e.currentTarget;
+                      const tried = el.getAttribute("data-fallback") ?? "";
+                      const alt = ANTIPATTERN_ICONS_ALT[kind];
+                      if (!tried && alt) {
+                        el.setAttribute("data-fallback", "alt");
+                        el.src = alt;
+                        return;
+                      }
+                      el.setAttribute("data-fallback", "1");
+                      el.src = DIAGRAM_NODE_ICON_PATHS.service;
+                    }}
+                  />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col text-left">
+                  <span className="truncate font-bold text-black">
+                    {antipatternKindLabel(kind)}
                   </span>
-                  <span className="truncate">{antipatternKindLabel(kind)}</span>
-                </button>
-              );
-            })}
-          </>
-        )}
+                  <span
+                    className={`truncate text-[9px] sm:text-[10px] ${
+                      isDragging ? ac.hintPending : "text-black/80"
+                    }`}
+                  >
+                    Drag to canvas
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-        {query && !showNodesSection && !showAntiSection && (
+      {query &&
+        !showNodesSection &&
+        !showAntiSection && (
           <p className="py-4 text-center text-[11px] text-slate-500">
             No tools match &quot;{searchQuery.trim()}&quot;
           </p>
         )}
-      </div>
-
-      {pendingSourceId && (
-        <div className="mt-3 rounded-lg bg-slate-800/90 border border-slate-600/80 p-2 text-[10px] text-slate-200 shrink-0">
-          Source chosen (
-          <span className="font-mono text-sky-300">{pendingSourceId}</span>
-          ). Click on a second node to create the connection.
-        </div>
-      )}
     </div>
   );
 
+  const searchBlock = (
+    <div className="mb-2 shrink-0" data-amg-designer={AMG_DESIGNER.editToolboxSearch}>
+      <input
+        type="search"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="Search tools…"
+        className="w-full rounded-lg border border-slate-600/80 bg-slate-900/40 px-2.5 py-1.5 text-[11px] text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-600/55 focus:border-sky-600/45"
+        aria-label="Search edit tools"
+      />
+    </div>
+  );
+
+  const pendingBlock =
+    pendingSourceId ? (
+      <div className="mt-2 shrink-0 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-[10px] text-amber-100">
+        Source{" "}
+        <span className="font-mono text-amber-200">{pendingSourceId}</span>.
+        Click a second node to connect.
+      </div>
+    ) : null;
+
   if (variant === "sidebar") {
-    return <div className="w-full">{content}</div>;
+    return (
+      <div className="flex min-h-0 flex-1 w-full flex-col">
+        {searchBlock}
+        <div
+          className={`mt-0 flex w-full min-h-[11rem] flex-col overflow-hidden rounded-lg border border-slate-700/50 bg-slate-950/40 p-1.5 shadow-inner shadow-black/20 ring-1 ring-white/[0.04] ${scrollListMaxTwoThirds}`}
+        >
+          {scrollArea}
+        </div>
+        {pendingBlock}
+      </div>
+    );
   }
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 z-20 flex flex-col">
-      <div className="pointer-events-auto w-56">{content}</div>
+      <div className="pointer-events-auto w-64 max-w-[min(100vw-2rem,22rem)] rounded-xl border border-slate-700/80 bg-slate-900/95 p-3.5 shadow-xl shadow-black/50 backdrop-blur-sm">
+        <div className="mb-3 flex shrink-0 items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Toolbox
+          </span>
+          <span className="rounded-md border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-200">
+            EDIT MODE
+          </span>
+        </div>
+        {searchBlock}
+        <div className="rounded-lg border border-slate-700/45 bg-slate-900/35 p-1.5 min-h-0">
+          {scrollArea}
+        </div>
+        {pendingBlock}
+      </div>
     </div>
   );
 }

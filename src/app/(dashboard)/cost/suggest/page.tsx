@@ -9,7 +9,7 @@ import {
     fetchSuggestionsFromRun,
     type RunCandidateItem,
 } from '@/app/api/asm/routes';
-import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft } from 'lucide-react';
+import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft, Loader2 } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -57,68 +57,6 @@ interface SimulationRequirements {
     nodes: number;
 }
 
-const DUMMY_DESIGN: DesignRequirements = {
-    preferred_vcpu: 4,
-    preferred_memory_gb: 16,
-    workload: { concurrent_users: 500 },
-    budget: 500,
-};
-
-const DUMMY_SIMULATION: SimulationRequirements = {
-    nodes: 3,
-};
-
-const DUMMY_CANDIDATE = (id: string, label: string, vcpu: number, memory_gb: number, cpu_util: number, mem_util: number, users: number, source: string): Candidate => ({
-    id,
-    spec: { vcpu, memory_gb, label },
-    metrics: { cpu_util_pct: cpu_util, mem_util_pct: mem_util },
-    sim_workload: { concurrent_users: users },
-    source,
-});
-
-const DUMMY_SUGGESTION_RESPONSE: SuggestionResponse = {
-    storage_id: 'b2cf17cb-085e-4be4-ba62-2cac869b0157',
-    best: {
-        candidate: DUMMY_CANDIDATE('t3.xlarge', 't3.xlarge', 4, 16, 62, 58, 480, 'AWS'),
-        passed_all_required: false,
-        workload_distance: 20,
-        suggestions: [
-            'Consider scaling to 4 nodes to meet target concurrent users.',
-            'CPU utilization is within healthy range; memory has headroom.',
-            'For production, enable enhanced networking if available.',
-        ],
-    },
-    all_scores: [
-        {
-            candidate: DUMMY_CANDIDATE('t3.xlarge', 't3.xlarge', 4, 16, 62, 58, 480, 'AWS'),
-            passed_all_required: false,
-            workload_distance: 20,
-            suggestions: [
-                'Consider scaling to 4 nodes to meet target concurrent users.',
-                'CPU utilization is within healthy range; memory has headroom.',
-            ],
-        },
-        {
-            candidate: DUMMY_CANDIDATE('t3.large', 't3.large', 2, 8, 78, 72, 320, 'AWS'),
-            passed_all_required: false,
-            workload_distance: 180,
-            suggestions: [
-                'Instance is under-provisioned for target workload.',
-                'Upgrade to t3.xlarge or add more nodes.',
-            ],
-        },
-        {
-            candidate: DUMMY_CANDIDATE('m5.large', 'm5.large', 2, 8, 82, 75, 300, 'AWS'),
-            passed_all_required: false,
-            workload_distance: 200,
-            suggestions: [
-                'High CPU and memory utilization; consider larger instance.',
-                'm5.xlarge would better match your preferred spec.',
-            ],
-        },
-    ],
-};
-
 type SuggestPageProps = {
     projectId?: string;
 };
@@ -133,6 +71,17 @@ function normalizeDesignFromApi(raw: DesignRequirements | undefined): DesignRequ
         },
         budget: raw.budget ?? 0,
     };
+}
+
+/** Delay between retries when a run has not published candidates yet (e.g. still persisting). */
+const RUN_CANDIDATES_POLL_INTERVAL_MS = 3000;
+/** Stop polling after this many empty responses after the initial fetch (~10 min at 3s). */
+const RUN_CANDIDATES_MAX_EMPTY_POLLS = 200;
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 
 function mapRunCandidatesToSuggest(candidates: RunCandidateItem[]): Candidate[] {
@@ -188,26 +137,61 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
 
             try {
                 if (resolvedProjectId && runIdFromQuery && !candidatesParam) {
-                    const runData = await fetchRunCandidates(runIdFromQuery);
+                    console.log('[cost/suggest] fetchRunCandidates:start', {
+                        runId: runIdFromQuery,
+                        projectId: resolvedProjectId,
+                    });
+                    let runData = await fetchRunCandidates(runIdFromQuery);
+                    console.log('[cost/suggest] fetchRunCandidates:result', runData);
                     if (cancelled) return;
-                    const mappedCandidates = mapRunCandidatesToSuggest(runData.candidates ?? []);
+
+                    let mappedCandidates = mapRunCandidatesToSuggest(
+                        runData.candidates ?? [],
+                    );
+                    let emptyPolls = 0;
+                    while (
+                        mappedCandidates.length === 0 &&
+                        emptyPolls < RUN_CANDIDATES_MAX_EMPTY_POLLS
+                    ) {
+                        if (cancelled) return;
+                        await delay(RUN_CANDIDATES_POLL_INTERVAL_MS);
+                        if (cancelled) return;
+                        runData = await fetchRunCandidates(runIdFromQuery);
+                        console.log('[cost/suggest] fetchRunCandidates:poll', {
+                            runId: runIdFromQuery,
+                            attempt: emptyPolls + 1,
+                            candidateCount: (runData.candidates ?? []).length,
+                        });
+                        if (cancelled) return;
+                        mappedCandidates = mapRunCandidatesToSuggest(
+                            runData.candidates ?? [],
+                        );
+                        emptyPolls += 1;
+                    }
+
+                    if (cancelled) return;
+
                     if (mappedCandidates.length === 0) {
-                        setError('No candidates found for this run');
-                        setDesign(DUMMY_DESIGN);
-                        setSimulation(runData.simulation ?? DUMMY_SIMULATION);
+                        setError(
+                            'No candidates were found for this run after waiting. Try again once the simulation has finished exporting candidates.',
+                        );
+                        setDesign(null);
+                        setSimulation(runData.simulation ?? null);
                         setSuggestionData(null);
                         return;
                     }
+
                     setCandidates(mappedCandidates);
                     const sim = runData.simulation ?? { nodes: 0 };
                     setSimulation(sim);
                     const fallbackDesign: DesignRequirements = {
-                        ...DUMMY_DESIGN,
                         preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
                         preferred_memory_gb: mappedCandidates[0]?.spec.memory_gb ?? 0,
                         workload: {
-                            concurrent_users: mappedCandidates[0]?.sim_workload.concurrent_users ?? 0,
+                            concurrent_users:
+                                mappedCandidates[0]?.sim_workload.concurrent_users ?? 0,
                         },
+                        budget: 0,
                     };
                     const data = (await fetchSuggestionsFromRun(
                         firebaseUid,
@@ -225,9 +209,12 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 // Flow 2: runId + candidates in URL (existing flow with design from stored request)
                 if (!runIdFromQuery || !candidatesParam) {
                     if (cancelled) return;
-                    setDesign(DUMMY_DESIGN);
-                    setSimulation(DUMMY_SIMULATION);
-                    setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
+                    setDesign(null);
+                    setSimulation(null);
+                    setSuggestionData(null);
+                    setError(
+                        'Open this page from a simulation run, or provide both run ID and candidates in the URL.',
+                    );
                     return;
                 }
 
@@ -272,9 +259,9 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 if (cancelled) return;
                 console.error('Error fetching suggestions:', err);
                 setError(err instanceof Error ? err.message : 'An error occurred');
-                setDesign(DUMMY_DESIGN);
-                setSimulation(DUMMY_SIMULATION);
-                setSuggestionData(DUMMY_SUGGESTION_RESPONSE);
+                setDesign(null);
+                setSimulation(null);
+                setSuggestionData(null);
             } finally {
                 if (!cancelled) {
                     setLoading(false);
@@ -306,16 +293,16 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
         }
     };
 
-    const shouldShowLoading =
-        loading ||
-        !design ||
-        !simulation ||
-        (!suggestionData && !error);
-
-    if (shouldShowLoading) {
+    if (loading) {
         return (
-            <div className="flex items-center justify-center min-h-[60vh] p-6">
-                <div className="text-xl opacity-70">Analyzing infrastructure candidates...</div>
+            <div className="flex flex-col items-center justify-center gap-4 min-h-[70vh] p-6">
+                <Loader2
+                    className="h-10 w-10 animate-spin text-white/80"
+                    aria-hidden
+                />
+                <p className="text-xl opacity-70">
+                    Loading run candidates and analysis…
+                </p>
             </div>
         );
     }
@@ -368,6 +355,15 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     </div>
                 </div>
 
+                {error && (
+                    <div className="bg-card border border-red-600 rounded-lg p-4 mb-4">
+                        <div className="flex items-start gap-2">
+                            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+                            <p className="text-red-500">{error}</p>
+                        </div>
+                    </div>
+                )}
+
                 {/* Requirements Summary */}
                 {design && simulation && (
                     <div className="bg-card border border-border rounded-lg p-6 mb-8">
@@ -406,7 +402,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 )}
 
                 {/* Results Display */}
-                {suggestionData && (
+                {suggestionData && design && simulation && (
                     <div className="space-y-6">
                         {/* Best Candidate */}
                         <div className="bg-card border border-border rounded-lg p-6">
@@ -663,18 +659,6 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                 </details>
                             </div>
                         </div>
-
-                        {error && (
-                            <div className="bg-card border border-red-600 rounded-lg p-4">
-                                <div className="flex items-start gap-2">
-                                    <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-                                    <div>
-                                        <p className="text-red-500">Note: {error}</p>
-                                        <p className="text-red-600 text-sm mt-1">Showing demo data instead.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                     </div>
                 )}
             </div>

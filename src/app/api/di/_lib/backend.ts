@@ -1,10 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { cookies, headers } from "next/headers";
+import { getServerBackendBase } from "@/lib/server-backend-base";
 
 function getBackendBase() {
-  const base = process.env.BACKEND_BASE;
-  if (!base) throw new Error("Missing env: BACKEND_BASE (or NEXT_PUBLIC_BACKEND_BASE)");
-  return base.replace(/\/+$/, "");
+  return getServerBackendBase().replace(/\/+$/, "");
 }
 
 function getDesignInputBase() {

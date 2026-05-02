@@ -12,6 +12,9 @@ export interface Node {
   id: string;
   name: string;
   kind: NodeKind;
+  /** Layout coordinates when saved (same idea as `/diagram` node JSON). */
+  x?: number;
+  y?: number;
   attrs?: Record<string, any>;
 }
 
@@ -70,6 +73,8 @@ export interface AmgApdVersionSummary {
   id: string;
   version_number: number;
   title: string;
+  /** e.g. amg_apd | canvas_json — absent on older API responses (treated as amg_apd). */
+  source?: string;
   created_at: string;
 }
 
@@ -91,7 +96,8 @@ export type EditTool =
   | "add-external-system"
   | "add-client"
   | "add-user-actor"
-  | "connect-calls";
+  | "connect-calls"
+  | "delete-element";
 
 export type SelectedItem =
   | { type: "node"; data: any }

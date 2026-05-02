@@ -1,13 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
+import { getServerBackendBase } from "@/lib/server-backend-base";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const BACKEND = process.env.BACKEND_BASE || process.env.NEXT_PUBLIC_BACKEND_BASE;
-  if (!BACKEND) {
-    return NextResponse.json({ error: "Missing BACKEND_BASE" }, { status: 500 });
-  }
+  const BACKEND = getServerBackendBase();
 
   const auth = req.headers.get("authorization") || "";
   const body = await req.text();
