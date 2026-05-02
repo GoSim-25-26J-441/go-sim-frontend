@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   Server,
@@ -114,6 +114,16 @@ function answersFromDesign(design: Record<string, any> | undefined, questions: Q
   return init;
 }
 
+function areAnswerMapsEqual(a: DesignAnswers, b: DesignAnswers): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 /**
  * When the saved request includes only `simulation` (no `design` key), we must
  * not merge `initialDesign` after fetch settles — that would hide host count and
@@ -173,6 +183,7 @@ export default function DesignQuestionsModal({
     undefined,
   );
   const [enabled, setEnabled] = useState(false);
+  const lastNotifiedRef = useRef<string | null>(null);
 
   const { data: questionsData, isLoading: questionsLoading } =
     useGetRequirementsQuestionsQuery(undefined, { skip: !isOpen });
@@ -234,8 +245,13 @@ export default function DesignQuestionsModal({
         ? Math.floor(rawNodes)
         : undefined;
 
-    setAnswers(answersFromDesign(design, questions));
-    setSimulationNodes(normalizedNodes);
+    const nextAnswers = answersFromDesign(design, questions);
+    setAnswers((prev) =>
+      areAnswerMapsEqual(prev, nextAnswers) ? prev : nextAnswers,
+    );
+    setSimulationNodes((prev) =>
+      prev === normalizedNodes ? prev : normalizedNodes,
+    );
 
     const simulationFromRequest = designByRunData?.request?.simulation;
     const mergedDesign = design ?? {};
@@ -246,15 +262,30 @@ export default function DesignQuestionsModal({
 
     const deferNotifyPendingFetch = Boolean(userId && projectId && designLoading);
 
-    if (!deferNotifyPendingFetch && shouldNotify && onDesignLoaded) {
-      onDesignLoaded({
-        design: mergedDesign,
-        simulation:
-          typeof simulationFromRequest?.nodes === "number" &&
-          simulationFromRequest.nodes >= 1
-            ? { nodes: Math.floor(simulationFromRequest.nodes) }
-            : undefined,
-      });
+    const notifyPayload = {
+      design: mergedDesign,
+      simulation:
+        typeof simulationFromRequest?.nodes === "number" &&
+        simulationFromRequest.nodes >= 1
+          ? { nodes: Math.floor(simulationFromRequest.nodes) }
+          : undefined,
+    };
+
+    const notifyKey = JSON.stringify({
+      design: notifyPayload.design,
+      simulationNodes: notifyPayload.simulation?.nodes ?? null,
+      deferNotifyPendingFetch,
+      shouldNotify,
+    });
+
+    if (
+      !deferNotifyPendingFetch &&
+      shouldNotify &&
+      onDesignLoaded &&
+      lastNotifiedRef.current !== notifyKey
+    ) {
+      lastNotifiedRef.current = notifyKey;
+      onDesignLoaded(notifyPayload);
     }
   }, [
     questions,
@@ -266,7 +297,7 @@ export default function DesignQuestionsModal({
     projectId,
     onDesignLoaded,
   ]);
-
+ 
   const handleSimulationNodesChange = (value: string) => {
     if (value === "") {
       setSimulationNodes(undefined);
