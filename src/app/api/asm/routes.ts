@@ -313,13 +313,18 @@ export interface RunCandidatesResponse {
   candidates: RunCandidateItem[];
   project_id: string;
   run_id: string;
-  simulation: { nodes: number };
+  simulation?: { nodes: number };
   user_id: string;
 }
 
 export interface RunCandidateItem {
   id: string;
-  spec: { label: string; memory_gb: number; vcpu: number };
+  spec: {
+    label: string;
+    memory_gb: number;
+    vcpu: number;
+    hosts?: unknown[];
+  };
   metrics: {
     cpu_util_pct: number;
     mem_util_pct: number;
@@ -328,6 +333,18 @@ export interface RunCandidateItem {
   sim_workload: { concurrent_users: number; rate_rps?: number };
   source: string;
   s3_path?: string;
+}
+
+export function resolveClusterNodeCountFromRunCandidates(
+  runData: RunCandidatesResponse,
+): number {
+  const meta = runData.simulation?.nodes ?? 0;
+  if (meta > 0) return meta;
+  for (const c of runData.candidates ?? []) {
+    const hosts = c.spec?.hosts;
+    if (Array.isArray(hosts) && hosts.length > 0) return hosts.length;
+  }
+  return 0;
 }
 
 // Fetch candidates for a simulation run (uses auth for 401 avoidance)

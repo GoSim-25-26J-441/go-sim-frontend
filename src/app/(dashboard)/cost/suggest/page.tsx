@@ -7,6 +7,7 @@ import {
     fetchDesignByProjectRun,
     fetchRunCandidates,
     fetchSuggestionsFromRun,
+    resolveClusterNodeCountFromRunCandidates,
     type RunCandidateItem,
 } from '@/app/api/asm/routes';
 import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft, Loader2 } from 'lucide-react';
@@ -149,7 +150,8 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     console.log('[cost/suggest] fetchRunCandidates:result', runData);
                     if (cancelled) return;
 
-                    const initialNodes = runData.simulation?.nodes ?? 1;
+                    const clusterNodes = resolveClusterNodeCountFromRunCandidates(runData);
+                    const initialNodes = clusterNodes > 0 ? clusterNodes : 1;
                     let mappedCandidates = mapRunCandidatesToSuggest(
                         runData.candidates ?? [],
                         initialNodes,
@@ -169,9 +171,11 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             candidateCount: (runData.candidates ?? []).length,
                         });
                         if (cancelled) return;
+                        const polledNodes = resolveClusterNodeCountFromRunCandidates(runData);
+                        const divisor = polledNodes > 0 ? polledNodes : initialNodes;
                         mappedCandidates = mapRunCandidatesToSuggest(
                             runData.candidates ?? [],
-                            runData.simulation?.nodes ?? initialNodes,
+                            divisor,
                         );
                         emptyPolls += 1;
                     }
@@ -183,13 +187,18 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             'No candidates were found for this run after waiting. Try again once the simulation has finished exporting candidates.',
                         );
                         setDesign(null);
-                        setSimulation(runData.simulation ?? null);
+                        setSimulation({
+                            nodes:
+                                resolveClusterNodeCountFromRunCandidates(runData) ||
+                                initialNodes,
+                        });
                         setSuggestionData(null);
                         return;
                     }
 
                     setCandidates(mappedCandidates);
-                    const sim = runData.simulation ?? { nodes: 0 };
+                    const resolvedNodes = resolveClusterNodeCountFromRunCandidates(runData);
+                    const sim = { nodes: resolvedNodes > 0 ? resolvedNodes : initialNodes };
                     setSimulation(sim);
                     const fallbackDesign: DesignRequirements = {
                         preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
@@ -243,8 +252,22 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 };
 
                 const resolvedDesign = storedRequest.design;
+                let runSimulationFromCandidates: SimulationRequirements | null =
+                    null;
+                try {
+                    const runCand = await fetchRunCandidates(
+                        runIdFromQuery,
+                    );
+                    const n = resolveClusterNodeCountFromRunCandidates(runCand);
+                    if (n > 0) {
+                        runSimulationFromCandidates = { nodes: n };
+                    }
+                } catch {
+                }
                 const resolvedSimulation =
-                    storedRequest.simulation || { nodes: 0 };
+                    runSimulationFromCandidates ??
+                    storedRequest.simulation ??
+                    { nodes: 0 };
 
                 setDesign(resolvedDesign);
                 setSimulation(resolvedSimulation);
