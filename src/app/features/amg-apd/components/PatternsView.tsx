@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/useToast";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 import { fetchLatestProjectDiagramVersionId } from "@/modules/di/fetchLatestProjectDiagramVersionId";
+import { fetchMaxDiagramVersionNumberForProject } from "@/modules/di/fetchMaxDiagramVersionNumberForProject";
 import type {
   AnalysisResult,
   AmgApdVersionSummary,
@@ -177,19 +178,26 @@ export default function PatternsView({
   ): Promise<AnalysisResult> {
     let versionTitle = title;
     if (versionTitle == null || versionTitle.trim() === "") {
-      const listRes = await fetch("/api/amg-apd/versions", {
-        headers: headers(),
-      });
-      const listData = listRes.ok ? await listRes.json() : {};
-      const list = listData?.versions ?? [];
-      const maxVersionNumber =
-        list.length === 0
-          ? 0
-          : Math.max(
-              ...list.map(
-                (v: { version_number?: number }) => v.version_number ?? 0,
-              ),
-            );
+      let maxVersionNumber = 0;
+      const pid = projectId?.trim();
+      if (pid) {
+        maxVersionNumber = await fetchMaxDiagramVersionNumberForProject(pid);
+      }
+      if (maxVersionNumber === 0 && !pid) {
+        const listRes = await fetch("/api/amg-apd/versions", {
+          headers: headers(),
+        });
+        const listData = listRes.ok ? await listRes.json() : {};
+        const list = listData?.versions ?? [];
+        maxVersionNumber =
+          list.length === 0
+            ? 0
+            : Math.max(
+                ...list.map(
+                  (v: { version_number?: number }) => v.version_number ?? 0,
+                ),
+              );
+      }
       const nextNum = maxVersionNumber + 1;
       versionTitle = `diagramV${nextNum}`;
     }
@@ -237,40 +245,35 @@ export default function PatternsView({
     if (last?.graph || restoreStartedRef.current) return;
     restoreStartedRef.current = true;
     setRegenerating(true);
+    let cancelled = false;
 
     (async () => {
       try {
         const listRes = await fetch("/api/amg-apd/versions", {
           headers: headers(),
         });
-        if (!listRes.ok) return;
+        if (!listRes.ok || cancelled) return;
 
         const listData = await listRes.json();
         const versionsList = listData?.versions ?? [];
-        if (versionsList.length === 0) return;
+        if (versionsList.length === 0 || cancelled) return;
 
+        
         const sorted = [...versionsList].sort(
-          (
-            a: { created_at?: string; version_number?: number },
-            b: { created_at?: string; version_number?: number },
-          ) => {
-            const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-            const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
-            if (bTime !== aTime) return bTime - aTime;
-            return (b.version_number ?? 0) - (a.version_number ?? 0);
-          },
+          (a: { version_number?: number }, b: { version_number?: number }) =>
+            (b.version_number ?? 0) - (a.version_number ?? 0),
         );
 
         const latest = sorted[0];
         const versionRes = await fetch(`/api/amg-apd/versions/${latest.id}`, {
           headers: headers(),
         });
-        if (!versionRes.ok) return;
+        if (!versionRes.ok || cancelled) return;
 
         const v = await versionRes.json();
         const graph = v?.graph;
         const yamlContent = v?.yaml_content;
-        if (!graph || !yamlContent) return;
+        if (!graph || !yamlContent || cancelled) return;
 
         const data: AnalysisResult = {
           graph,
@@ -281,15 +284,22 @@ export default function PatternsView({
           created_at: v?.created_at,
         };
 
+        if (cancelled) return;
         setLast(data);
         setEditedYaml(yamlContent);
         commitGraphBaseline();
       } catch {
         // Leave graph empty
       } finally {
-        setRegenerating(false);
+        if (!cancelled) setRegenerating(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+      restoreStartedRef.current = false;
+      setRegenerating(false);
+    };
   }, [
     last?.graph,
     projectId,
@@ -331,8 +341,10 @@ export default function PatternsView({
     } else if (projectId) {
       void (async () => {
         try {
+          const fromCanvas = last?.version_id?.trim();
           const diagramVersionId =
-            await fetchLatestProjectDiagramVersionId(projectId);
+            fromCanvas ||
+            (await fetchLatestProjectDiagramVersionId(projectId));
           await openInChat(projectId, { diagramVersionId });
         } catch {
           showToast("Could not open chat", "error");
@@ -896,7 +908,7 @@ export default function PatternsView({
             }
           >
             <GraphCanvas
-              key={`amg-apd-graph-v${graphVersion}`}
+              key={`amg-apd-graph-v${graphVersion}-${last?.version_id ?? "none"}`}
               data={last}
               isGenerating={regenerating}
               showRegeneratingOverlay={regenerating}

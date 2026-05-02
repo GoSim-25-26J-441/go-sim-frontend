@@ -324,6 +324,14 @@ function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
   if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
     return data;
   }
+  // Prefer AMG-APD graph payload when present; legacy arrays may be lossy.
+  const graph = data.graph;
+  if (isRecord(graph) && Array.isArray(graph.edges)) {
+    const nodesObj = graph.nodes;
+    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
+      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
+    }
+  }
   const deps = data.dependencies;
   const hasLegacyDeps = Array.isArray(deps);
   const hasLegacyNodes =
@@ -332,13 +340,6 @@ function normalizeDiagramJsonForLoader(raw: unknown): Record<string, unknown> {
     Array.isArray(data.topics);
   if (hasLegacyDeps && hasLegacyNodes) {
     return data;
-  }
-  const graph = data.graph;
-  if (isRecord(graph) && Array.isArray(graph.edges)) {
-    const nodesObj = graph.nodes;
-    if (isRecord(nodesObj) && !Array.isArray(nodesObj)) {
-      return graphToCanvasPayload(nodesObj, graph.edges as unknown[]);
-    }
   }
   throw new Error(
     "Unrecognized diagram JSON. Expected { nodes, edges }, legacy { services, datastores?, dependencies }, or { graph: { nodes, edges } }."
@@ -1212,7 +1213,8 @@ export default function DrawDiagram() {
     if (diagramJson && typeof diagramJson === "object") {
       try {
         console.log("Loading diagram from summary:", diagramJson);
-        loadDiagramFromJson(diagramJson as any);
+        const normalized = normalizeDiagramJsonForLoader(diagramJson as Record<string, unknown>);
+        loadDiagramFromJson(normalized as any);
         setLastLoadedProjectId(projectId);
       } catch (error) {
         console.error("Failed to load diagram from summary:", error);
@@ -1559,6 +1561,7 @@ export default function DrawDiagram() {
           projectId,
           versionId: diagramVersionIdForSave,
           diagram_json: diagramJson,
+          spec_summary: backendFormat.spec_summary,
           ...(imageObjectKey ? { image_object_key: imageObjectKey } : {}),
         }).unwrap()) as Record<string, unknown>;
       } else {

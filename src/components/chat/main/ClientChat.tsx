@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-context";
 import {
@@ -16,7 +23,7 @@ import {
   PenSquare,
 } from "lucide-react";
 import {
-  useGetProjectThreadIdQuery,
+  useGetProjectThreadQuery,
   useGetMessagesQuery,
   useSendMessageMutation,
   type ChatMessageItem,
@@ -154,10 +161,21 @@ export default function ClientChat({ id }: Props) {
   }, [input, syncInputHeight]);
 
   const {
-    data: projectThreadId,
+    data: projectThread,
     isSuccess: projectThreadSuccess,
     isError: projectThreadError,
-  } = useGetProjectThreadIdQuery(id, { skip: !!urlThreadId });
+  } = useGetProjectThreadQuery(id, { skip: !id });
+
+  /** URL param wins; else PINNED thread uses pinned_diagram_version_id (param is removed after first send). */
+  const diagramVersionForDiagramCanvas = useMemo(() => {
+    const fromUrl = diagramVersionParam?.trim();
+    if (fromUrl) return fromUrl;
+    if (projectThread?.binding_mode === "PINNED") {
+      const pinned = projectThread.pinned_diagram_version_id?.trim();
+      if (pinned) return pinned;
+    }
+    return undefined;
+  }, [diagramVersionParam, projectThread]);
 
   const {
     data: messagesData,
@@ -217,7 +235,7 @@ export default function ClientChat({ id }: Props) {
       return;
     }
     if (projectThreadSuccess) {
-      const tid = projectThreadId ?? null;
+      const tid = projectThread?.id ?? null;
       setThreadId(tid);
       if (tid) {
         router.replace(`/project/${id}/chat?thread=${tid}`, { scroll: false });
@@ -232,7 +250,7 @@ export default function ClientChat({ id }: Props) {
     urlThreadId,
     projectThreadSuccess,
     projectThreadError,
-    projectThreadId,
+    projectThread,
     router,
   ]);
 
@@ -243,11 +261,12 @@ export default function ClientChat({ id }: Props) {
       q.set("thread", threadId);
       q.set("reload", "1");
     }
-    if (diagramVersionParam) {
-      q.set("diagramVersion", diagramVersionParam);
+    const dv = diagramVersionForDiagramCanvas?.trim();
+    if (dv) {
+      q.set("diagramVersion", dv);
     }
     router.push(`/diagram?${q.toString()}`);
-  }, [id, threadId, diagramVersionParam, router]);
+  }, [id, threadId, diagramVersionForDiagramCanvas, router]);
 
   useEffect(() => {
     if (messagesData) {
@@ -619,7 +638,9 @@ export default function ClientChat({ id }: Props) {
               className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 shrink-0 bg-amber-400 text-black border border-amber-500/80 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none"
               title={
                 threadId
-                  ? "Open diagram canvas (reloads latest saved design)"
+                  ? diagramVersionForDiagramCanvas
+                    ? "Open diagram canvas for the version this chat is pinned to"
+                    : "Open diagram canvas (latest saved design for this project)"
                   : "Open diagram canvas for this project"
               }
             >
