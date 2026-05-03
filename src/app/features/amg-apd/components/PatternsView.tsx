@@ -88,6 +88,9 @@ export default function PatternsView({
   const newDesignerTourEnabled = useAmgApdStore(
     (s) => s.patternsGuidesEnabled,
   );
+  /** Scoped UI: `/project/.../patterns` only (not dashboard patterns). */
+  const useProjectPatterns = Boolean(projectId?.trim());
+  const guideChromeLayout = useProjectPatterns && newDesignerTourEnabled;
   const { toggleGuides, setGuidesEnabledAndPersist } =
     usePatternsGuidesWithProfile();
   const patternsGuidesWelcomeOnEnable = useAmgApdStore(
@@ -640,6 +643,7 @@ export default function PatternsView({
         applyLoading={applyLoading}
         disabledApply={!hasDetections || loadingSug}
         designerTourExpandFirstPreviewNonce={designerTourSuggestionPreviewExpandNonce}
+        projectPatternsGuideChrome={guideChromeLayout}
       />
 
       <PatternsDesignerTour
@@ -662,6 +666,7 @@ export default function PatternsView({
         welcomeIntroOpen={designerWelcomeOpen}
         onDismissWelcomeIntro={dismissDesignerWelcome}
         onTourChapterClose={handleTourChapterClose}
+        projectPatternsStyling={useProjectPatterns}
       />
 
       {typeof document !== "undefined" &&
@@ -696,6 +701,8 @@ export default function PatternsView({
               refreshTrigger={versionsRefreshTrigger}
               projectId={projectId}
               designerTourForceOpenNonce={designerTourVersionsNonce}
+              projectPatternsPage={useProjectPatterns}
+              guidesActive={useProjectPatterns && newDesignerTourEnabled}
             />
 
             <button
@@ -768,6 +775,7 @@ export default function PatternsView({
               <Legend
                 versionCount={versionCount ?? undefined}
                 showNodeTypes={false}
+                projectPatternsGuidePip={useProjectPatterns}
               />
             </div>
           </div>
@@ -800,6 +808,7 @@ export default function PatternsView({
                 <Legend
                   versionCount={versionCount ?? undefined}
                   showNodeTypes={false}
+                  projectPatternsGuidePip={useProjectPatterns}
                 />
               </div>
             </div>
@@ -843,6 +852,8 @@ export default function PatternsView({
               }
               designerTourWorkspaceNonce={designerTourWorkspaceNonce}
               designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
+              projectPatternsGuideChrome={guideChromeLayout}
+              projectPatternsPage={useProjectPatterns}
             />
           </div>
         </div>
@@ -1000,7 +1011,11 @@ export default function PatternsView({
                 <button
                   type="button"
                   onClick={() => setDesignerResetAckOpen(false)}
-                  className="w-full rounded-full bg-white py-2.5 text-sm font-medium text-black transition-all duration-150 hover:bg-white/80"
+                  className={
+                    useProjectPatterns
+                      ? "ml-auto block rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black transition-all duration-150 hover:bg-white/85"
+                      : "w-full rounded-full bg-white py-2.5 text-sm font-medium text-black transition-all duration-150 hover:bg-white/80"
+                  }
                 >
                   Got it
                 </button>
