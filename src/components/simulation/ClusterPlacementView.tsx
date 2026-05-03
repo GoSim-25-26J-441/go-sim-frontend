@@ -90,7 +90,7 @@ export default function ClusterPlacementView({
     vals.length > 0 ? vals.reduce((sum, v) => sum + v, 0) / vals.length : undefined;
 
   return (
-    <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+    <div className="space-y-3 border-t border-white/40 pt-6 pb-6">
       <h2 className="text-sm font-semibold text-white">
         Cluster placement
         <span className="ml-2 text-xs font-normal text-white/40">
