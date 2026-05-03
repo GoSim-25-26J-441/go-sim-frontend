@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
-import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getProjectThreadId } from "@/modules/di/getProjectThread";
@@ -11,6 +10,7 @@ import {
   Search,
   Play,
   BarChart3,
+  Loader2,
 } from "lucide-react";
 import Overview from "@/components/summary/Overview";
 import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
@@ -36,6 +36,10 @@ export default function Summary({
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [showImagesModal, setShowImagesModal] = useState(false);
+  /** Same placement as pattern stub page: loader in main column, not full-screen. */
+  const [mainOutletMessage, setMainOutletMessage] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -47,13 +51,28 @@ export default function Summary({
       .catch(() => setLoadingThread(false));
   }, [id]);
 
+  const queueNavigate = (message: string, href: string) => {
+    setMainOutletMessage(message);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        router.push(href);
+      });
+    });
+  };
+
   const handleChatClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    router.push(
+    const href =
       threadId
         ? `/project/${id}/chat?thread=${threadId}`
-        : `/project/${id}/chat`,
-    );
+        : `/project/${id}/chat`;
+    queueNavigate("Opening chat…", href);
+  };
+
+  const navLoadingMessages: Record<string, string> = {
+    pattern: "Loading pattern detection…",
+    simulation: "Loading simulation engine…",
+    cost: "Loading cost analysis…",
   };
 
   const navItems = [
@@ -77,6 +96,10 @@ export default function Summary({
       href: `/project/${id}/cost`,
     },
   ];
+
+  const handleNavHrefClick = (key: string, href: string) => {
+    queueNavigate(navLoadingMessages[key] ?? "Loading…", href);
+  };
 
   const delays = ["delay-0", "delay-75", "delay-100", "delay-150"];
 
@@ -158,26 +181,31 @@ export default function Summary({
 
             if (item.href) {
               return (
-                <Link
+                <button
                   key={item.key}
-                  href={item.href}
-                  className={sharedClass}
-                  onClick={() => setActiveNav(item.key)}
+                  type="button"
+                  disabled={!!mainOutletMessage}
+                  className={`group cursor-pointer border-0 bg-transparent p-0 font-inherit text-left ${sharedClass} disabled:pointer-events-none disabled:opacity-50`}
+                  onClick={() => {
+                    setActiveNav(item.key);
+                    handleNavHrefClick(item.key, item.href!);
+                  }}
                 >
                   {content}
-                </Link>
+                </button>
               );
             }
 
             return (
               <button
                 key={item.key}
+                type="button"
                 onClick={(e) => {
                   setActiveNav(item.key);
                   item.action?.(e as any);
                 }}
-                disabled={item.key === "chat" && loadingThread}
-                className={sharedClass}
+                disabled={(item.key === "chat" && loadingThread) || !!mainOutletMessage}
+                className={`group cursor-pointer border-0 bg-transparent p-0 font-inherit text-left ${sharedClass} disabled:pointer-events-none disabled:opacity-50`}
               >
                 {content}
               </button>
@@ -185,7 +213,19 @@ export default function Summary({
           })}
         </aside>
 
-        <Overview />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {mainOutletMessage ? (
+            <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center gap-3">
+              <Loader2
+                className="h-6 w-6 animate-spin text-white/60"
+                aria-hidden
+              />
+              <p className="text-sm text-white/50">{mainOutletMessage}</p>
+            </div>
+          ) : (
+            <Overview />
+          )}
+        </div>
       </div>
 
       <DiagramImagesModal

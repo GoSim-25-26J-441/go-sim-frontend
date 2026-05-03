@@ -31,7 +31,8 @@ import {
     Calendar,
     X,
     GitCompare,
-    ArrowLeft
+    ArrowLeft,
+    Loader2,
 } from "lucide-react";
 import { getRegionDisplayName } from "@/utils/regionFormatter";
 import { GENERIC_REGIONS, getGenericRegionById } from "@/utils/genericRegions";
@@ -728,11 +729,12 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                         onViewBreakdown={jumpToBreakdownForPick}
                         breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
                     />
-                    <div className="flex min-h-[40vh] flex-1 items-center justify-center">
-                        <div className="text-center">
-                            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-t-2 border-border"></div>
-                            <p className="text-base opacity-70">Loading cluster costs...</p>
-                        </div>
+                    <div className="flex min-h-[40vh] flex-1 flex-col items-center justify-center gap-3">
+                        <Loader2
+                            className="h-8 w-8 animate-spin text-white/80"
+                            aria-hidden
+                        />
+                        <p className="text-sm text-white/70">Loading cluster costs…</p>
                     </div>
                 </div>
             </div>
