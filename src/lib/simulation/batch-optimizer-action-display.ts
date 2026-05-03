@@ -1,26 +1,35 @@
 /**
- * Human-readable labels for batch optimizer / scaling actions in run replay.
- * Coarse ordinals 1–6 match `batch-scaling-actions.ts` serialization; strings may be proto names or engine-specific.
+ * Optimizer replay labels aligned with backend `batch_scaling_actions` ordinals 1–12.
  */
 
 export const BATCH_SCALING_ORDINAL_DISPLAY: Record<number, string> = {
-  1: "SERVICE_REPLICA_SCALE",
-  2: "HOST_FLEET_SCALE",
-  3: "SERVICE_CPU_SCALE",
-  4: "SERVICE_MEMORY_SCALE",
-  5: "HOST_CPU_SCALE",
-  6: "HOST_MEMORY_SCALE",
+  1: "SERVICE_REPLICA_SCALE_UP",
+  2: "SERVICE_REPLICA_SCALE_DOWN",
+  3: "SERVICE_CPU_INCREASE",
+  4: "SERVICE_CPU_DECREASE",
+  5: "SERVICE_MEMORY_INCREASE",
+  6: "SERVICE_MEMORY_DECREASE",
+  7: "HOST_SCALE_OUT",
+  8: "HOST_SCALE_IN",
+  9: "HOST_CPU_INCREASE",
+  10: "HOST_CPU_DECREASE",
+  11: "HOST_MEMORY_INCREASE",
+  12: "HOST_MEMORY_DECREASE",
 };
 
 const PROTO_STRING_ALIASES: { pattern: RegExp; display: string }[] = [
-  { pattern: /SCALE_REPLICAS|replica/i, display: "SERVICE_REPLICA_SCALE" },
-  { pattern: /SCALE_HOSTS|host_fleet|host count/i, display: "HOST_FLEET_SCALE" },
-  { pattern: /service.*cpu|SCALE_SERVICE_CPU|cpu.*service/i, display: "SERVICE_CPU_SCALE" },
-  { pattern: /service.*mem|SCALE_SERVICE_MEM|memory.*service/i, display: "SERVICE_MEMORY_SCALE" },
-  { pattern: /host.*cpu|SCALE_HOST_CPU/i, display: "HOST_CPU_SCALE" },
-  { pattern: /host.*mem|SCALE_HOST_MEM/i, display: "HOST_MEMORY_SCALE" },
-  { pattern: /SCALE_OUT|scale_out/i, display: "SERVICE_SCALE_OUT" },
-  { pattern: /SCALE_IN|scale_in/i, display: "SERVICE_SCALE_IN" },
+  { pattern: /SERVICE_REPLICA_SCALE_UP|REPLICA_SCALE_UP/i, display: "SERVICE_REPLICA_SCALE_UP" },
+  { pattern: /SERVICE_REPLICA_SCALE_DOWN|REPLICA_SCALE_DOWN/i, display: "SERVICE_REPLICA_SCALE_DOWN" },
+  { pattern: /SERVICE_CPU_INCREASE|SCALE_UP_CPU|CPU_INCREASE/i, display: "SERVICE_CPU_INCREASE" },
+  { pattern: /SERVICE_CPU_DECREASE|SCALE_DOWN_CPU|CPU_DECREASE/i, display: "SERVICE_CPU_DECREASE" },
+  { pattern: /SERVICE_MEMORY_INCREASE|MEMORY_INCREASE/i, display: "SERVICE_MEMORY_INCREASE" },
+  { pattern: /SERVICE_MEMORY_DECREASE|MEMORY_DECREASE/i, display: "SERVICE_MEMORY_DECREASE" },
+  { pattern: /HOST_SCALE_OUT/i, display: "HOST_SCALE_OUT" },
+  { pattern: /HOST_SCALE_IN/i, display: "HOST_SCALE_IN" },
+  { pattern: /HOST_CPU_INCREASE/i, display: "HOST_CPU_INCREASE" },
+  { pattern: /HOST_CPU_DECREASE/i, display: "HOST_CPU_DECREASE" },
+  { pattern: /HOST_MEMORY_INCREASE/i, display: "HOST_MEMORY_INCREASE" },
+  { pattern: /HOST_MEMORY_DECREASE/i, display: "HOST_MEMORY_DECREASE" },
   { pattern: /BATCH_SCALING_ACTION_UNSPECIFIED/i, display: "UNSPECIFIED" },
 ];
 
@@ -40,9 +49,12 @@ function normalizeStringActionToDisplay(s: string): string {
   return u;
 }
 
+function displayForOrdinal(n: number): string {
+  return BATCH_SCALING_ORDINAL_DISPLAY[n] ?? `ACTION_${n}`;
+}
+
 export function describeOptimizerActionForReplay(reasonDetails: Record<string, unknown> | undefined): {
   primary: string;
-  /** Ordinal or raw engine value for developers */
   diagnostic?: string;
 } {
   if (!reasonDetails) return { primary: "—" };
@@ -51,9 +63,9 @@ export function describeOptimizerActionForReplay(reasonDetails: Record<string, u
 
   if (typeof rawAction === "number" && Number.isFinite(rawAction)) {
     const n = Math.trunc(rawAction);
-    if (n >= 1 && n <= 6) {
+    if (n >= 1) {
       return {
-        primary: BATCH_SCALING_ORDINAL_DISPLAY[n] ?? `ACTION_${n}`,
+        primary: displayForOrdinal(n),
         diagnostic: `ordinal ${n}`,
       };
     }
@@ -62,14 +74,14 @@ export function describeOptimizerActionForReplay(reasonDetails: Record<string, u
   if (typeof rawAction === "string" && rawAction.length > 0) {
     const display = normalizeStringActionToDisplay(rawAction);
     const diagnostic =
-      display !== rawAction && !/^SERVICE_|^HOST_/.test(rawAction) ? rawAction : undefined;
+      display !== rawAction && !/^(SERVICE_|HOST_)/.test(rawAction) ? rawAction : undefined;
     return { primary: display, diagnostic };
   }
 
   const asNum = Number(rawAction);
-  if (Number.isInteger(asNum) && asNum >= 1 && asNum <= 6) {
+  if (Number.isInteger(asNum) && asNum >= 1) {
     return {
-      primary: BATCH_SCALING_ORDINAL_DISPLAY[asNum] ?? `ACTION_${asNum}`,
+      primary: displayForOrdinal(asNum),
       diagnostic: `ordinal ${asNum}`,
     };
   }

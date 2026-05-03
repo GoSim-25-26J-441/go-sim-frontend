@@ -11,11 +11,13 @@ import { Boxes, Gauge, Layers, Search, ShieldCheck, Sparkles, Timer } from "luci
 import { env } from "@/lib/env";
 import {
   allowedActionsFromDirectional,
+  anyHostScalingActionSelected,
   BATCH_BROKER_ACTIONS_READY,
+  BATCH_HOST_ACTION_ORDER,
+  BATCH_SERVICE_ACTION_ORDER,
   type BatchActionPresetId,
   cloneDirectional,
   directionalFlagsForPreset,
-  hostActionsEnabled,
   type DirectionalBatchScalingFlags,
 } from "@/lib/simulation/batch-scaling-actions";
 
@@ -24,7 +26,7 @@ export type BatchRecommendationUiMode = "quick" | "balanced" | "advanced";
 export interface BatchRecommendationFormState {
   ui_mode: BatchRecommendationUiMode;
   action_preset: BatchActionPresetId;
-  /** Directional toggles; folded into coarse backend ordinals on submit. */
+  /** One toggle per backend ordinal (1–12): service (1–6) and host (7–12). */
   actions: DirectionalBatchScalingFlags;
   evaluation_duration_ms: number;
   max_evaluations: number;
@@ -128,27 +130,8 @@ const DEFAULT_MAX_HOST_CPU = 16;
 const DEFAULT_MIN_HOST_GB = 1;
 const DEFAULT_MAX_HOST_GB = 64;
 
-/** @internal exported for tests — host field edits trigger auto-enabling host action toggles */
-export function patchTouchesHostBounds(patch: Partial<BatchRecommendationFormState>): boolean {
-  return Object.keys(patch).some((k) =>
-    [
-      "min_hosts",
-      "max_hosts",
-      "host_cpu_low",
-      "host_cpu_high",
-      "host_mem_low",
-      "host_mem_high",
-      "min_host_cpu_cores",
-      "max_host_cpu_cores",
-      "min_host_memory_gb",
-      "max_host_memory_gb",
-    ].includes(k)
-  );
-}
-
-/** Exported for tests: host fleet/capacity configured but no host action toggles. */
-export function shouldWarnHostBoundsWithoutHostActions(br: BatchRecommendationFormState): boolean {
-  if (hostActionsEnabled(br.actions)) return false;
+/** Exported for tests — host fleet/capacity fields under optimization.batch (no host ordinals in API today). */
+export function hostFleetConstraintsConfigured(br: BatchRecommendationFormState): boolean {
   if (br.max_hosts > br.min_hosts) return true;
   if (br.min_hosts > 1) return true;
   if (br.min_host_cpu_cores !== DEFAULT_MIN_HOST_CPU || br.max_host_cpu_cores !== DEFAULT_MAX_HOST_CPU) return true;
@@ -156,46 +139,66 @@ export function shouldWarnHostBoundsWithoutHostActions(br: BatchRecommendationFo
   return false;
 }
 
+/** True when host utilization bands differ from service bands (separate host targets are configured). */
+export function hostUtilizationTargetsDistinctFromService(br: BatchRecommendationFormState): boolean {
+  return (
+    Math.abs(br.host_cpu_low - br.service_cpu_low) > 1e-5 ||
+    Math.abs(br.host_cpu_high - br.service_cpu_high) > 1e-5 ||
+    Math.abs(br.host_mem_low - br.service_mem_low) > 1e-5 ||
+    Math.abs(br.host_mem_high - br.service_mem_high) > 1e-5
+  );
+}
+
+/**
+ * Warn when host-related constraints or utilization targets are set but no host `allowed_actions`
+ * (ordinals 7–12) are enabled.
+ */
+export function shouldWarnHostBoundsWithoutHostActions(br: BatchRecommendationFormState): boolean {
+  const hostContextConfigured =
+    hostFleetConstraintsConfigured(br) || hostUtilizationTargetsDistinctFromService(br);
+  if (!hostContextConfigured) return false;
+  return !anyHostScalingActionSelected(br.actions);
+}
+
 const PRESET_OPTIONS: {
   id: Exclude<BatchActionPresetId, "custom">;
   label: string;
   hint?: string;
+  selectDisabled?: boolean;
 }[] = [
   {
-    id: "all_actions",
-    label: "All actions",
-    hint: BATCH_BROKER_ACTIONS_READY
-      ? "Fleet + broker tuning"
-      : "All supported scaling dimensions (same as service + host until broker APIs add ordinals)",
+    id: "service_plus_host",
+    label: "Service + host (default)",
+    hint: "allowed_actions [1–12]: service and host scale / CPU / memory directions",
   },
-  { id: "service_only", label: "Service only" },
-  { id: "host_only", label: "Host only" },
-  { id: "service_plus_host", label: "Service + host (default)" },
+  {
+    id: "service_only",
+    label: "Service only",
+    hint: "allowed_actions [1–6]: service replica / CPU / memory only",
+  },
+  {
+    id: "host_only",
+    label: "Host only",
+    hint: "allowed_actions [7–12]: host fleet / CPU / memory directions only",
+  },
+  {
+    id: "all_actions",
+    label: "All actions (1–12)",
+    hint: "Full set for current backend; queue/topic ordinals 13–16 not in UI yet",
+  },
+  {
+    id: "replica_focus",
+    label: "Replica focus (1–2)",
+    hint: "SERVICE_REPLICA_SCALE_UP / SERVICE_REPLICA_SCALE_DOWN only",
+  },
   {
     id: "broker_concurrency",
-    label: "Broker concurrency",
+    label: "Broker concurrency (unavailable)",
     hint: BATCH_BROKER_ACTIONS_READY
-      ? "Includes queue/topic scaling"
-      : "Uses service + host actions until broker endpoints ship",
+      ? "Queue/topic ordinals when available"
+      : "Queue/topic ordinals 13–16 are not enabled yet — use Service + host or All actions (1–12)",
+    selectDisabled: !BATCH_BROKER_ACTIONS_READY,
   },
-];
-
-const SERVICE_ACTION_CHECKBOXES: { key: keyof DirectionalBatchScalingFlags; label: string }[] = [
-  { key: "service_scale_out", label: "Service scale out" },
-  { key: "service_scale_in", label: "Service scale in" },
-  { key: "service_cpu_up", label: "Service CPU up" },
-  { key: "service_cpu_down", label: "Service CPU down" },
-  { key: "service_memory_up", label: "Service memory up" },
-  { key: "service_memory_down", label: "Service memory down" },
-];
-
-const HOST_ACTION_CHECKBOXES: { key: keyof DirectionalBatchScalingFlags; label: string }[] = [
-  { key: "host_scale_out", label: "Host scale out" },
-  { key: "host_scale_in", label: "Host scale in" },
-  { key: "host_cpu_up", label: "Host CPU up" },
-  { key: "host_cpu_down", label: "Host CPU down" },
-  { key: "host_memory_up", label: "Host memory up" },
-  { key: "host_memory_down", label: "Host memory down" },
 ];
 
 interface BatchRecommendationFieldsProps {
@@ -298,28 +301,8 @@ export function BatchRecommendationFields({
   expectedWorkloadRps,
   markMinThroughputTouched,
 }: BatchRecommendationFieldsProps) {
-  const set = (patch: Partial<BatchRecommendationFormState>) => {
-    setBatchRecommendation((prev) => {
-      let next: BatchRecommendationFormState = { ...prev, ...patch };
-      const explicitActions = patch.actions !== undefined;
-      if (patchTouchesHostBounds(patch) && !explicitActions) {
-        next = {
-          ...next,
-          action_preset: "custom",
-          actions: {
-            ...next.actions,
-            host_scale_out: true,
-            host_scale_in: true,
-            host_cpu_up: true,
-            host_cpu_down: true,
-            host_memory_up: true,
-            host_memory_down: true,
-          },
-        };
-      }
-      return next;
-    });
-  };
+  const set = (patch: Partial<BatchRecommendationFormState>) =>
+    setBatchRecommendation((prev) => ({ ...prev, ...patch }));
 
   const [durUnit, setDurUnit] = useState<"seconds" | "ms">("seconds");
 
@@ -407,8 +390,9 @@ export function BatchRecommendationFields({
           </p>
 
           <p className="text-xs text-white/45 max-w-3xl leading-relaxed">
-            <span className="text-white/60">Target CPU</span> is a healthy range, not a value to minimize. The
-            optimizer may scale replicas, service resources, or hosts up or down to stay in range.
+            <span className="text-white/60">Target CPU</span> is a healthy range, not a value to minimize. Batch
+            <span className="text-white/50"> allowed_actions</span> uses numeric ordinals 1–12 for service and host
+            directions; host fleet and utilization bands further constrain the search space.
           </p>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -868,7 +852,7 @@ export function BatchRecommendationFields({
                       className="rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-xs text-white"
                     >
                       {PRESET_OPTIONS.map((opt) => (
-                        <option key={opt.id} value={opt.id} title={opt.hint}>
+                        <option key={opt.id} value={opt.id} title={opt.hint} disabled={opt.selectDisabled}>
                           {opt.label}
                         </option>
                       ))}
@@ -877,9 +861,9 @@ export function BatchRecommendationFields({
                   </label>
                 </div>
                 <p className="text-[10px] text-white/40 leading-snug">
-                  Presets map to backend <span className="font-mono text-white/50">allowed_actions</span> ordinals 1–6
-                  (bidirectional per dimension). Directional labels describe intent; the API remains coarse until finer enums
-                  exist.
+                  Presets set which numeric ordinals are sent in <span className="font-mono text-white/45">allowed_actions</span>{" "}
+                  (1–6 service, 7–12 host). Host fleet limits and utilization bands are configured in earlier sections and
+                  in <span className="font-mono text-white/45">optimization.batch</span>.
                 </p>
               </div>
 
@@ -914,82 +898,64 @@ export function BatchRecommendationFields({
               </div>
 
               <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-3">
-                <p className="text-[11px] text-white/55 font-medium">Allowed actions</p>
+                <p className="text-[11px] text-white/55 font-medium">Allowed actions (batch optimizer)</p>
                 <p className="text-[10px] text-white/35 leading-snug">
-                  Each toggle expresses direction where shown; the create-run payload still uses coarse backend ordinals
-                  (both directions enabled for that dimension if either direction is checked).
+                  Checkboxes map to numeric <span className="font-mono text-white/45">allowed_actions</span> ordinals
+                  (1–12). Values sent to the API are numbers only.
                 </p>
-                {hostBoundsWarning && (
+                {hostBoundsWarning ? (
                   <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-2 text-[11px] text-amber-100/90 leading-snug">
-                    Host fleet or capacity controls are set, but host-level actions are off. Enable host actions below or
-                    relax host bounds so the optimizer is not asked to tune hosts it cannot change.
+                    Host bounds or host utilization targets are configured, but no host actions (ordinals 7–12) are
+                    enabled. Enable the host toggles below or relax host constraints to avoid one-sided host limits.
                   </div>
-                )}
-                <div className="grid sm:grid-cols-2 gap-4 pt-1">
-                  <div className="space-y-2">
-                    <p className="text-[10px] uppercase tracking-wide text-white/40">Service</p>
-                    <div className="grid gap-2">
-                      {SERVICE_ACTION_CHECKBOXES.map((row) => (
-                        <label key={row.key} className="flex items-center gap-2 cursor-pointer text-sm text-white/75">
-                          <input
-                            type="checkbox"
-                            checked={br.actions[row.key]}
-                            onChange={(e) =>
-                              set({
-                                action_preset: "custom",
-                                actions: { ...br.actions, [row.key]: e.target.checked },
-                              })
-                            }
-                            className="rounded border-white/30"
-                          />
-                          {row.label}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-[10px] uppercase tracking-wide text-white/40">Host</p>
-                    <div className="grid gap-2">
-                      {HOST_ACTION_CHECKBOXES.map((row) => (
-                        <label key={row.key} className="flex items-center gap-2 cursor-pointer text-sm text-white/75">
-                          <input
-                            type="checkbox"
-                            checked={br.actions[row.key]}
-                            onChange={(e) =>
-                              set({
-                                action_preset: "custom",
-                                actions: { ...br.actions, [row.key]: e.target.checked },
-                              })
-                            }
-                            className="rounded border-white/30"
-                          />
-                          {row.label}
-                        </label>
-                      ))}
-                    </div>
-                    {!hostActionsEnabled(br.actions) && hostBoundsWarning && (
-                      <button
-                        type="button"
-                        onClick={() =>
+                ) : null}
+                <p className="text-[10px] text-white/45 font-medium pt-1">Service (1–6)</p>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {BATCH_SERVICE_ACTION_ORDER.map((row) => (
+                    <label key={row.key} className="flex items-center gap-2 cursor-pointer text-sm text-white/75">
+                      <input
+                        type="checkbox"
+                        checked={br.actions[row.key]}
+                        onChange={(e) =>
                           set({
                             action_preset: "custom",
-                            actions: {
-                              ...br.actions,
-                              host_scale_out: true,
-                              host_scale_in: true,
-                              host_cpu_up: true,
-                              host_cpu_down: true,
-                              host_memory_up: true,
-                              host_memory_down: true,
-                            },
+                            actions: { ...br.actions, [row.key]: e.target.checked },
                           })
                         }
-                        className="mt-1 text-left text-[11px] text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
-                      >
-                        Enable all host actions
-                      </button>
-                    )}
-                  </div>
+                        className="rounded border-white/30"
+                      />
+                      <span>
+                        {row.label}{" "}
+                        <span className="text-[10px] text-white/35 font-mono">
+                          ({row.ordinal}) {row.backendNormalizedName}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[10px] text-white/45 font-medium pt-2">Host (7–12)</p>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {BATCH_HOST_ACTION_ORDER.map((row) => (
+                    <label key={row.key} className="flex items-center gap-2 cursor-pointer text-sm text-white/75">
+                      <input
+                        type="checkbox"
+                        checked={br.actions[row.key]}
+                        onChange={(e) =>
+                          set({
+                            action_preset: "custom",
+                            actions: { ...br.actions, [row.key]: e.target.checked },
+                          })
+                        }
+                        className="rounded border-white/30"
+                      />
+                      <span>
+                        {row.label}{" "}
+                        <span className="text-[10px] text-white/35 font-mono">
+                          ({row.ordinal}) {row.backendNormalizedName}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1012,11 +978,12 @@ export function BatchRecommendationFields({
               </p>
               <p>
                 <code className="text-white/45">allowed_actions</code> ordinals sent:{" "}
-                <code className="text-white/55">{JSON.stringify(allowedOrdinals)}</code> (1=replicas … 6=host memory).
+                <code className="text-white/55">{JSON.stringify(allowedOrdinals)}</code>
               </p>
-              <p>
-                Directional toggles fold into those coarse ordinals; each ordinal still implies both directions at the
-                engine when either direction is enabled in the UI.
+              <p className="text-white/35">
+                Ordinals 1–6: service replica up/down, service CPU up/down, service memory up/down. 7–12:{" "}
+                <code className="text-white/50">HOST_SCALE_OUT</code> … <code className="text-white/50">HOST_MEMORY_DECREASE</code>{" "}
+                (display names; payload sends integers only). Queue/topic 13–16 not enabled in UI yet.
               </p>
             </div>
           </details>
