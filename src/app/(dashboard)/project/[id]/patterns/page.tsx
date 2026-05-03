@@ -222,10 +222,7 @@ export default function ProjectPatternsPage({
                 style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <Gauge
-                    className="h-6 w-6 shrink-0 text-white"
-                    aria-hidden
-                  />
+                  <Gauge className="h-6 w-6 shrink-0 text-white" aria-hidden />
                   <div className="min-w-0">
                     <h2
                       id="patterns-simulation-modal-title"
@@ -245,7 +242,7 @@ export default function ProjectPatternsPage({
                 <button
                   type="button"
                   onClick={closeSimulationModal}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/[0.06] text-gray-200 transition-colors hover:bg-white/10 hover:text-white"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/6 text-gray-200 transition-colors hover:bg-white/10 hover:text-white"
                   aria-label="Close"
                 >
                   <X className="h-4 w-4" aria-hidden />
@@ -265,7 +262,7 @@ export default function ProjectPatternsPage({
                   </label>
                   <select
                     id="patterns-simulation-version-select"
-                    className="w-full max-w-xs rounded-md border border-white/12 bg-white/[0.06] px-2.5 py-1.5 text-xs text-white shadow-sm outline-none transition-colors focus:border-white/22 focus:ring-1 focus:ring-white/12 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="w-full max-w-xs rounded-md border border-white/12 bg-white/6 px-2.5 py-1.5 text-xs text-white shadow-sm outline-none transition-colors focus:border-white/22 focus:ring-1 focus:ring-white/12 disabled:cursor-not-allowed disabled:opacity-45"
                     value={simulationSelectedVersion}
                     onChange={(e) =>
                       setSimulationSelectedVersion(e.target.value)

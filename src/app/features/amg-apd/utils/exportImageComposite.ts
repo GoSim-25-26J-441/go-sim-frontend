@@ -443,7 +443,6 @@ export function renderExportImageHeader(
       const rowTop = ty;
 
       for (const e of srow) {
-        const pillText = `${e.label}: ${e.value}`;
         const pillW = measureStatPillWidth(ctx, e.label, e.value, L);
 
         roundRectPath(ctx, sx, rowTop, pillW, statPillH, L.statsPillRadius);
@@ -486,6 +485,28 @@ export function scaleCanvasToMinWidth(
     1,
     Math.round((source.height * minWidthPx) / source.width),
   );
+  const ctx = out.getContext("2d");
+  if (!ctx) return source;
+  ctx.imageSmoothingEnabled = true;
+  (ctx as CanvasRenderingContext2D & { imageSmoothingQuality?: string }).imageSmoothingQuality =
+    "high";
+  ctx.drawImage(source, 0, 0, out.width, out.height);
+  return out;
+}
+
+/** Scale down so the longest side is at most `maxDimPx` (keeps PDF / diagram-only exports compact). */
+export function scaleCanvasToMaxDimension(
+  source: HTMLCanvasElement,
+  maxDimPx: number,
+): HTMLCanvasElement {
+  const w = source.width;
+  const h = source.height;
+  const m = Math.max(w, h);
+  if (m <= maxDimPx) return source;
+  const scale = maxDimPx / m;
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(w * scale));
+  out.height = Math.max(1, Math.round(h * scale));
   const ctx = out.getContext("2d");
   if (!ctx) return source;
   ctx.imageSmoothingEnabled = true;

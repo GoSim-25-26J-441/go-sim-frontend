@@ -8,6 +8,7 @@ import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import { ReduxProvider } from "../store/uidp/ReduxProvider";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { GlobalLoader } from "@/components/loading/GlobalLoader";
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const patternsFullscreen = useAmgApdStore((s) => s.patternsGraphFullscreen);
@@ -21,6 +22,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           : "80px minmax(0, 1fr)",
       }}
     >
+      <GlobalLoader />
       {/* Top row: 0fr when patterns fullscreen so Topbar stays mounted but takes no space. */}
       <div className="min-h-0 overflow-hidden" aria-hidden={patternsFullscreen}>
         <Topbar />

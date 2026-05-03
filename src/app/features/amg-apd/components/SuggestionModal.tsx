@@ -180,7 +180,7 @@ export default function SuggestionModal({
                     }}
                     className={`group flex cursor-pointer gap-3 rounded-md border p-3 transition-all duration-150 ${
                       isSelected
-                        ? "border-emerald-500/45 bg-emerald-500/10"
+                        ? "border-white/22 bg-[#262626] shadow-[inset_3px_0_0_0_rgba(148,163,184,0.85)]"
                         : "border-white/[0.08] bg-white/[0.04] hover:border-white/15 hover:bg-white/[0.07]"
                     }`}
                   >
@@ -188,7 +188,7 @@ export default function SuggestionModal({
                     <div
                       className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-all ${
                         isSelected
-                          ? "border-emerald-400 bg-emerald-600/90"
+                          ? "border-slate-300/90 bg-slate-500/35 text-white"
                           : "border-white/15 bg-white/[0.06] group-hover:border-white/25"
                       }`}
                     >
@@ -243,8 +243,8 @@ export default function SuggestionModal({
                       </div>
 
                       {s.auto_fix_notes?.length ? (
-                        <div className="mt-3 rounded-md border border-emerald-500/35 bg-emerald-500/10 p-2.5 text-xs text-emerald-200/95">
-                          <div className="font-semibold">Auto-fix notes</div>
+                        <div className="mt-3 rounded-md border border-white/12 bg-white/[0.05] p-2.5 text-xs text-gray-300">
+                          <div className="font-semibold text-white/90">Auto-fix notes</div>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
                             {s.auto_fix_notes.map((n, i) => (
                               <li key={i}>{n}</li>

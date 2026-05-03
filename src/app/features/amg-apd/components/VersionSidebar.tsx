@@ -11,6 +11,7 @@ import {
 } from "@/app/features/amg-apd/api/amgApdClient";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { useToast } from "@/hooks/useToast";
+import { useLoading } from "@/hooks/useLoading";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type {
   AmgApdVersionSummary,
@@ -352,7 +353,10 @@ export default function VersionSidebar({
                     : "/dashboard/patterns/compare"
                 }
                 className="inline-flex items-center rounded-md border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/15"
-                onClick={closePanel}
+                onClick={() => {
+                  closePanel();
+                  useLoading.getState().setLoading(true);
+                }}
               >
                 Compare
               </Link>

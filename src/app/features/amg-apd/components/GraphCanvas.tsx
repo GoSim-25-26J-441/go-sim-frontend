@@ -60,6 +60,7 @@ import {
   MIN_EXPORT_GRAPH_PIXEL_WIDTH,
   padCanvasUniform,
   renderExportImageHeader,
+  scaleCanvasToMaxDimension,
   scaleCanvasToMinWidth,
 } from "@/app/features/amg-apd/utils/exportImageComposite";
 import { diagramNodeLabelText } from "@/app/features/amg-apd/mappers/cyto/diagramNodeStyle";
@@ -360,6 +361,10 @@ type GraphCanvasProps = {
   onResetCanvas?: () => void;
   /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
   onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
+  /** Diagram raster only (no legend header) — for PDF report and similar. */
+  onExportDiagramPngReady?: (
+    exportPng: () => string | null | Promise<string | null>,
+  ) => void;
   /** Called when cy is ready; parent can call getter to export graph JSON including node x/y from the canvas */
   onExportGraphJsonReady?: (getGraph: () => Graph | null) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
@@ -374,6 +379,7 @@ function GraphCanvasInner({
   layoutMode = "default",
   onGenerateGraph,
   onExportImageReady,
+  onExportDiagramPngReady,
   onExportGraphJsonReady,
   onDuplicateName,
   onResetCanvas,
@@ -968,6 +974,46 @@ function GraphCanvasInner({
       })();
     });
   }, [cy, onExportImageReady, analysis]);
+
+  /** PNG of the graph area only (no legend strip / export header) — PDF report. */
+  const DIAGRAM_ONLY_EXPORT_MAX_PX = 2000;
+
+  useEffect(() => {
+    if (!onExportDiagramPngReady || !cyAlive(cy)) return;
+    onExportDiagramPngReady(() => {
+      const c = cyRef.current;
+      const wrap = containerRef.current;
+      if (!c || !cyAlive(c)) return null;
+
+      return (async (): Promise<string | null> => {
+        let graphCanvas: HTMLCanvasElement | null = null;
+
+        if (wrap) {
+          graphCanvas = await captureGraphWithExpandedViewport(wrap, c);
+          if (!graphCanvas) {
+            graphCanvas = await captureGraphRegionHtmlToCanvas(wrap);
+          }
+        }
+
+        if (!graphCanvas) {
+          graphCanvas = await exportCyToCanvasWithNodeLabels(c);
+        }
+
+        if (!graphCanvas) return null;
+
+        graphCanvas = scaleCanvasToMaxDimension(
+          graphCanvas,
+          DIAGRAM_ONLY_EXPORT_MAX_PX,
+        );
+
+        try {
+          return graphCanvas.toDataURL("image/png");
+        } catch {
+          return null;
+        }
+      })();
+    });
+  }, [cy, onExportDiagramPngReady, analysis]);
 
   useEffect(() => {
     if (!onExportGraphJsonReady) return;

@@ -566,7 +566,7 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.toolbarDownloads,
         title: "Exports & downloads",
-        body: "Download YAML saves the live architecture text from the editor. Download JSON bundles the graph plus detections and version metadata. Download Image exports the diagram as PNG.",
+        body: "Download YAML saves the live architecture text from the editor. Download JSON bundles the graph plus detections and version metadata. Download Report exports a compact PDF (legend reference with icons for node roles, counts, canvas-only diagram).",
       },
     ],
     returnToChat: [

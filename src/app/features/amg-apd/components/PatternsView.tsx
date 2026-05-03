@@ -27,6 +27,7 @@ import {
   nodeLayoutPayloadFromGraph,
   type NodeLayoutPayload,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
+import { buildArchitectureReportPdfBlob } from "@/app/features/amg-apd/utils/buildArchitectureReportPdf";
 
 type PatternsViewProps = {
   projectId?: string;
@@ -97,7 +98,7 @@ export default function PatternsView({
   useEffect(() => {
     if (!userProfile) return;
     const guidesOn = userProfile.new_designer !== "No";
-    useAmgApdStore.setState((s) => ({
+    useAmgApdStore.setState(() => ({
       patternsGuidesEnabled: guidesOn,
       ...(guidesOn ? {} : { patternsGuidesWelcomeOnEnable: false }),
     }));
@@ -214,7 +215,9 @@ export default function PatternsView({
     return () => setPatternsGraphFullscreen(false);
   }, [setPatternsGraphFullscreen]);
 
-  const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
+  const exportDiagramPngRef = useRef<
+    (() => string | null | Promise<string | null>) | null
+  >(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
   const restoreStartedRef = useRef(false);
 
@@ -470,8 +473,8 @@ export default function PatternsView({
     showToast("JSON downloaded", "success");
   }
 
-  async function handleDownloadImage() {
-    const fn = exportImageRef.current;
+  async function handleDownloadReport() {
+    const fn = exportDiagramPngRef.current;
     if (!fn) {
       showToast(
         "Graph is not ready to export. Wait for the diagram to load.",
@@ -487,13 +490,36 @@ export default function PatternsView({
       );
       return;
     }
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = "architecture-graph.png";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    showToast("Image downloaded", "success");
+    const graphFromCanvas = exportGraphJsonRef.current?.() ?? null;
+    const graph = graphFromCanvas ?? last?.graph ?? null;
+    try {
+      const blob = await buildArchitectureReportPdfBlob({
+        generatedAt: new Date(),
+        contextLabel: projectId?.trim()
+          ? `Project ${projectId.trim()}`
+          : "Dashboard · Patterns",
+        versionNumber: last?.version_number ?? null,
+        graph,
+        detections: last?.detections ?? [],
+        diagramPngDataUrl: dataUrl,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const id = projectId?.trim() ?? "";
+      const safeBase =
+        id.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "") ||
+        "patterns";
+      a.download = `${safeBase}_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast("PDF report downloaded", "success");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      showToast(`Could not build report: ${msg}`, "error");
+    }
   }
 
   const openSuggestions = useCallback(async () => {
@@ -805,10 +831,10 @@ export default function PatternsView({
 
               <button
                 type="button"
-                onClick={handleDownloadImage}
+                onClick={() => void handleDownloadReport()}
                 className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
               >
-                Download Image
+                Download Report
               </button>
 
               {!onReturnToChat && (
@@ -881,8 +907,8 @@ export default function PatternsView({
               isGenerating={regenerating}
               showRegeneratingOverlay={regenerating}
               layoutMode={fullscreenOpen ? "fullscreen" : "default"}
-              onExportImageReady={(fn) => {
-                exportImageRef.current = fn;
+              onExportDiagramPngReady={(fn) => {
+                exportDiagramPngRef.current = fn;
               }}
               onExportGraphJsonReady={(getGraph) => {
                 exportGraphJsonRef.current = getGraph;
