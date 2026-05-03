@@ -15,6 +15,10 @@ import {
 } from "lucide-react";
 import { authenticatedFetch } from "@/lib/api-client/http";
 import { env } from "@/lib/env";
+import {
+  formatOnlineOptimizationBestScore,
+  formatOnlineOptimizationTargetLabel,
+} from "@/lib/simulation/objective-labels";
 import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type BackendRunSummary = {
@@ -324,8 +328,11 @@ export default function ProjectSimulationPage() {
                         </span>
                       )}
                       {run.metadata?.objective && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300">
-                          {String(run.metadata.objective)}
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300"
+                          title={String(run.metadata.objective)}
+                        >
+                          {formatOnlineOptimizationTargetLabel(String(run.metadata.objective))}
                         </span>
                       )}
                     </div>
@@ -427,12 +434,12 @@ export default function ProjectSimulationPage() {
                               <span className="text-white/20">Best score </span>
                               <span className="font-mono text-amber-300/80">
                                 {typeof run.metadata.best_score === "number"
-                                  ? run.metadata.objective ===
-                                      "cpu_utilization" ||
-                                    run.metadata.objective ===
-                                      "memory_utilization"
-                                    ? `${(run.metadata.best_score * 100).toFixed(2)}%`
-                                    : run.metadata.best_score.toFixed(4)
+                                  ? formatOnlineOptimizationBestScore(
+                                      run.metadata.best_score,
+                                      typeof run.metadata.objective === "string"
+                                        ? run.metadata.objective
+                                        : undefined
+                                    )
                                   : String(run.metadata.best_score)}
                               </span>
                             </span>

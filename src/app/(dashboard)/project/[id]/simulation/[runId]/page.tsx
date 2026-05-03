@@ -35,6 +35,12 @@ import {
   flatTimeseriesSeriesKeyFromNormalized,
   isUnscopedSeriesKey,
 } from "@/lib/simulation/metrics-series-scope";
+import { describeOptimizerActionForReplay } from "@/lib/simulation/batch-optimizer-action-display";
+import {
+  formatOnlineOptimizationBestScore,
+  formatOnlineOptimizationTargetLabel,
+  isInteractiveOnlineRunMode,
+} from "@/lib/simulation/objective-labels";
 import {
   normalizePersistedMetricPoint,
   type NormalizedPersistedMetricPoint,
@@ -976,11 +982,6 @@ function asUnknownRecord(v: unknown): Record<string, unknown> | null {
 
 function toStr(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
-}
-
-function getOptimizationActionLabel(reasonDetails: Record<string, unknown> | undefined): string | undefined {
-  if (!reasonDetails) return undefined;
-  return toStr(reasonDetails.type) ?? toStr(reasonDetails.action);
 }
 
 function summarizeConfigDiff(previousConfig: unknown, currentConfig: unknown): string[] {
@@ -3730,11 +3731,10 @@ export default function SimulationRunPage() {
                   isBatchOptimizationMeta(m);
                 if (!showSummary) return null;
                 const batchMode = isBatchOptimizationMeta(m);
+                const isOnlineRunMeta = isInteractiveOnlineRunMode(m.mode);
                 const fmtScore = (v: unknown, objective?: string) => {
                   if (typeof v !== "number") return String(v);
-                  return objective === "cpu_utilization" || objective === "memory_utilization"
-                    ? `${(v * 100).toFixed(2)}%`
-                    : v.toFixed(4);
+                  return formatOnlineOptimizationBestScore(v, objective);
                 };
                 return (
                   <div className="border-t border-border pt-4">
@@ -3913,7 +3913,15 @@ export default function SimulationRunPage() {
                         )}
                       </div>
                     ) : (
-                      <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+                      <>
+                        {isOnlineRunMeta && (
+                          <p className="text-[11px] text-white/45 mb-3">
+                            Online optimization: <span className="font-mono text-white/55">metadata.objective</span> matches
+                            the run&apos;s primary target (same semantics as{" "}
+                            <span className="font-mono text-white/55">optimization.objective</span> at create time).
+                          </p>
+                        )}
+                        <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
                         {m.iterations != null && (
                           <div>
                             <dt className="text-white/40 mb-0.5">Iterations</dt>
@@ -3922,14 +3930,16 @@ export default function SimulationRunPage() {
                         )}
                         {m.best_score != null && (
                           <div>
-                            <dt className="text-white/40 mb-0.5">Best score</dt>
+                            <dt className="text-white/40 mb-0.5">
+                              {isOnlineRunMeta ? "Best score (online target)" : "Best score"}
+                            </dt>
                             <dd className="text-white/80 font-mono">{fmtScore(m.best_score, m.objective)}</dd>
                           </div>
                         )}
                         {m.objective && (
                           <div>
-                            <dt className="text-white/40 mb-0.5">Objective</dt>
-                            <dd className="text-white/80">{String(m.objective)}</dd>
+                            <dt className="text-white/40 mb-0.5">Primary target</dt>
+                            <dd className="text-white/80">{formatOnlineOptimizationTargetLabel(String(m.objective))}</dd>
                           </div>
                         )}
                         {m.online_completion_reason && (
@@ -3971,6 +3981,7 @@ export default function SimulationRunPage() {
                           </div>
                         )}
                       </dl>
+                      </>
                     )}
                   </div>
                 );
@@ -5163,7 +5174,9 @@ export default function SimulationRunPage() {
                     </div>
                     {leaseTtlMs == null && (
                       <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
-                        Lease not configured for this run. Manual renewal is unavailable.
+                        No lease TTL on this run — scheduled renewal is off. Interactive real-time creates omit{" "}
+                        <span className="font-mono text-white/55">lease_ttl_ms</span>; only runs created with a positive
+                        lease TTL (or backend metadata) get renewal timers here.
                       </p>
                     )}
                     {leaseRenewError && (
@@ -5535,7 +5548,7 @@ export default function SimulationRunPage() {
                   : undefined;
                 const blocked = isOptimizerStepBlocked(step);
                 const reasonDetails = asUnknownRecord(step.reason_details);
-                const actionLabel = getOptimizationActionLabel(reasonDetails ?? undefined);
+                const actionReplay = describeOptimizerActionForReplay(reasonDetails ?? undefined);
                 const decisionReason = toStr(reasonDetails?.decision_reason);
                 const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
                 const primitiveReasonDetails = Object.entries(reasonDetails ?? {})
@@ -5546,7 +5559,7 @@ export default function SimulationRunPage() {
                   .slice(0, 4);
                 return (
                   <div
-                    key={`${step.iteration_index ?? "na"}-${actionLabel ?? step.reason ?? "step"}-${idx}`}
+                    key={`${step.iteration_index ?? "na"}-${actionReplay.primary ?? step.reason ?? "step"}-${idx}`}
                     className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
                   >
                     <div className="flex items-center gap-2 flex-wrap">
@@ -5568,9 +5581,12 @@ export default function SimulationRunPage() {
                       <span className={`font-mono ${overTarget === undefined ? "text-white/45" : overTarget ? "text-red-300" : "text-emerald-300"}`}>
                         {formatTargetDelta(step.score_p95_ms, step.target_p95_ms)}
                       </span>
-                      {actionLabel && (
-                        <span className="inline-flex rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 px-2 py-0.5 font-medium">
-                          {actionLabel}
+                      {actionReplay.primary !== "—" && (
+                        <span className="inline-flex flex-col gap-0.5 rounded border border-blue-500/30 bg-blue-500/10 px-2 py-0.5">
+                          <span className="font-medium text-blue-200">{actionReplay.primary}</span>
+                          {actionReplay.diagnostic && (
+                            <span className="text-[10px] font-mono text-blue-200/55">{actionReplay.diagnostic}</span>
+                          )}
                         </span>
                       )}
                       {blocked && (

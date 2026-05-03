@@ -4,6 +4,7 @@ import {
   buildBatchRecommendationOptimizationPayload,
   resolveBatchRecommendationObjective,
 } from "./batch-recommendation-optimization-payload";
+import { directionalFlagsForPreset } from "./batch-scaling-actions";
 
 describe("resolveBatchRecommendationObjective", () => {
   it("defaults to cpu_utilization when unset or unknown", () => {
@@ -56,18 +57,16 @@ describe("buildBatchRecommendationOptimizationPayload", () => {
   it("includes allowed_actions as protobuf ordinals matching enabled scaling flags", () => {
     const br = {
       ...base,
-      allow_replica_scaling: true,
-      allow_host_scaling: true,
-      allow_service_cpu: false,
-      allow_service_memory: false,
-      allow_host_cpu: false,
-      allow_host_memory: false,
+      action_preset: "custom" as const,
+      actions: {
+        ...directionalFlagsForPreset("service_only"),
+      },
     };
     const batch = buildBatchRecommendationOptimizationPayload(br, "cpu_utilization").batch as Record<
       string,
       unknown
     >;
-    expect(batch.allowed_actions).toEqual([1, 2]);
+    expect(batch.allowed_actions).toEqual([1, 3, 4]);
     expect((batch.allowed_actions as unknown[]).every((x) => typeof x === "number")).toBe(true);
   });
 
