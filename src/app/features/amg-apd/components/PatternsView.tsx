@@ -18,6 +18,7 @@ import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesigner
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
+import { useLoading } from "@/hooks/useLoading";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useOpenInChat } from "@/modules/di/useOpenInChat";
 import { fetchLatestProjectDiagramVersionId } from "@/modules/di/fetchLatestProjectDiagramVersionId";
@@ -215,6 +216,9 @@ export default function PatternsView({
     return () => setPatternsGraphFullscreen(false);
   }, [setPatternsGraphFullscreen]);
 
+  const exportImageRef = useRef<
+    (() => string | null | Promise<string | null>) | null
+  >(null);
   const exportDiagramPngRef = useRef<
     (() => string | null | Promise<string | null>) | null
   >(null);
@@ -407,6 +411,7 @@ export default function PatternsView({
     if (onReturnToChat) {
       onReturnToChat();
     } else if (projectId) {
+      useLoading.getState().setLoading(true);
       void (async () => {
         try {
           const fromCanvas = last?.version_id?.trim();
@@ -416,6 +421,7 @@ export default function PatternsView({
           await openInChat(projectId, { diagramVersionId });
         } catch {
           showToast("Could not open chat", "error");
+          useLoading.getState().setLoading(false);
         }
       })();
     } else {
@@ -471,6 +477,32 @@ export default function PatternsView({
     a.remove();
     URL.revokeObjectURL(url);
     showToast("JSON downloaded", "success");
+  }
+
+  async function handleDownloadImage() {
+    const fn = exportImageRef.current;
+    if (!fn) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    const dataUrl = await Promise.resolve(fn());
+    if (!dataUrl) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = "architecture-graph.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast("Image downloaded", "success");
   }
 
   async function handleDownloadReport() {
@@ -718,6 +750,7 @@ export default function PatternsView({
 
   return (
     <div
+      data-amg-patterns-workspace
       className={
         fullscreenOpen
           ? "mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
@@ -837,6 +870,14 @@ export default function PatternsView({
                 Download Report
               </button>
 
+              <button
+                type="button"
+                onClick={() => void handleDownloadImage()}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+              >
+                Download Image
+              </button>
+
               {!onReturnToChat && (
                 <button
                   type="button"
@@ -907,6 +948,9 @@ export default function PatternsView({
               isGenerating={regenerating}
               showRegeneratingOverlay={regenerating}
               layoutMode={fullscreenOpen ? "fullscreen" : "default"}
+              onExportImageReady={(fn) => {
+                exportImageRef.current = fn;
+              }}
               onExportDiagramPngReady={(fn) => {
                 exportDiagramPngRef.current = fn;
               }}
@@ -920,6 +964,7 @@ export default function PatternsView({
                 })
               }
               onResetCanvas={handleResetCanvas}
+              onRequestOpenSimulationModal={onRequestOpenSimulationModal}
               fullscreenButton={{
                 onClick: () => setFullscreenOpen((o) => !o),
                 isFullscreen: fullscreenOpen,
@@ -1059,7 +1104,7 @@ export default function PatternsView({
                 <button
                   type="button"
                   onClick={() => setDesignerResetAckOpen(false)}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white p-0 text-black shadow-sm transition-colors hover:bg-gray-200"
                   aria-label="Close"
                 >
                   <X className="h-4 w-4" aria-hidden />
@@ -1086,7 +1131,7 @@ export default function PatternsView({
                 <button
                   type="button"
                   onClick={() => setDesignerResetAckOpen(false)}
-                  className="w-full rounded-full bg-white py-2.5 text-sm font-medium text-black transition-all duration-150 hover:bg-white/80"
+                  className="w-full rounded-md bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-200"
                 >
                   Got it
                 </button>

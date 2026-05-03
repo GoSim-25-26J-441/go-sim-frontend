@@ -83,7 +83,10 @@ export default function VersionSidebar({
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      const target = e.target as Node;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-patterns-designer-tour-layer]")) return;
+      if (target.closest("[data-patterns-designer-tour-marker]")) return;
       if (buttonRef.current?.contains(target)) return;
       const portal = document.getElementById("versions-dropdown-portal");
       if (portal?.contains(target)) return;
@@ -352,7 +355,7 @@ export default function VersionSidebar({
                     ? `/project/${projectId}/patterns/compare`
                     : "/dashboard/patterns/compare"
                 }
-                className="inline-flex items-center rounded-md border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/15"
+                className="inline-flex items-center rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-200"
                 onClick={() => {
                   closePanel();
                   useLoading.getState().setLoading(true);
@@ -414,14 +417,14 @@ export default function VersionSidebar({
                             disabled={
                               savingTitleId === v.id || !editingTitle.trim()
                             }
-                            className="rounded-md border border-gray-600 bg-gray-700/90 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-45"
+                            className="rounded-md bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-sm transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-45"
                           >
                             {savingTitleId === v.id ? "Saving…" : "Save"}
                           </button>
                           <button
                             type="button"
                             onClick={cancelRename}
-                            className="rounded-md border border-white/15 px-3 py-1.5 text-[11px] font-medium text-white/75 transition-colors hover:bg-white/10"
+                            className="rounded-md bg-zinc-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-zinc-500"
                           >
                             Cancel
                           </button>
@@ -464,11 +467,15 @@ export default function VersionSidebar({
                                     : undefined
                                 }
                                 onClick={() => startRename(v)}
-                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-white/85 transition-colors hover:border-white/25 hover:bg-white/10"
+                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-white shadow-none transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/35"
                                 title="Rename this version"
                                 aria-label="Rename this version"
                               >
-                                <PenLine className="h-3 w-3" aria-hidden />
+                                <PenLine
+                                  className="h-3.5 w-3.5"
+                                  strokeWidth={2}
+                                  aria-hidden
+                                />
                               </button>
                               <button
                                 type="button"
@@ -492,9 +499,13 @@ export default function VersionSidebar({
                                     ? "Delete this version"
                                     : "Cannot delete the main diagram snapshot"
                                 }
-                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-red-400/35 bg-red-500/12 text-red-200/95 transition-colors hover:bg-red-500/22 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-500/12"
+                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-red-500 shadow-none transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400/50 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:opacity-35"
                               >
-                                <Trash className="h-3 w-3" aria-hidden />
+                                <Trash
+                                  className="h-3.5 w-3.5"
+                                  strokeWidth={2}
+                                  aria-hidden
+                                />
                               </button>
                             </>
                           ) : (

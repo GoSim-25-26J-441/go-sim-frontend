@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
+import {
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  Minus,
+  Plus,
+  RotateCcw,
+} from "lucide-react";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
@@ -54,6 +61,9 @@ type Props = {
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onZoomPercentCommit?: (percent: number) => void;
+
+  /** Fullscreen only: in-header Simulation is hidden; tour + users need this control on the control strip. */
+  simulationTourOnOpen?: () => void;
 };
 
 export default function ControlPanel({
@@ -75,6 +85,7 @@ export default function ControlPanel({
   onZoomIn,
   onZoomOut,
   onZoomPercentCommit,
+  simulationTourOnOpen,
 }: Props) {
   void guidesActive;
   void onGuidesToggle;
@@ -118,17 +129,23 @@ export default function ControlPanel({
           <button
             type="button"
             onClick={onFit}
+            data-amg-designer={showZoom ? undefined : AMG_DESIGNER.layoutZoom}
             className="flex shrink-0 items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-medium text-black transition-all duration-150 hover:bg-gray-200"
           >
             Fit to Screen
           </button>
           {showZoom && (
-            <ZoomPercentControl
-              zoomPercent={zoomPercent}
-              onZoomIn={onZoomIn}
-              onZoomOut={onZoomOut}
-              onCommitPercent={onZoomPercentCommit}
-            />
+            <div
+              className="inline-flex shrink-0"
+              data-amg-designer={AMG_DESIGNER.layoutZoom}
+            >
+              <ZoomPercentControl
+                zoomPercent={zoomPercent}
+                onZoomIn={onZoomIn}
+                onZoomOut={onZoomOut}
+                onCommitPercent={onZoomPercentCommit}
+              />
+            </div>
           )}
         </div>
 
@@ -173,6 +190,18 @@ export default function ControlPanel({
               </button>
             )}
 
+            {simulationTourOnOpen && fullscreenButton?.isFullscreen && (
+              <button
+                type="button"
+                data-amg-designer={AMG_DESIGNER.simulator}
+                onClick={() => simulationTourOnOpen()}
+                className="flex items-center gap-1 rounded-md bg-emerald-600/80 px-2.5 py-1 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500"
+                title="Open performance simulation (pick a version next)"
+              >
+                Simulation
+                <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              </button>
+            )}
             {fullscreenButton && (
               <>
                 <button

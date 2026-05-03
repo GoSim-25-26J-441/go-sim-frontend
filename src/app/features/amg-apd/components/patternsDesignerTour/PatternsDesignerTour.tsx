@@ -24,8 +24,11 @@ import {
 export { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 export type { AmgDesignerAnchor } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
-/** Above suggestion modal (200000) and version portal (99999) so Compare + tour card stay visible */
-const ACTIVE_TOUR_Z = 210000;
+/**
+ * Above simulation / patterns modals (220000), suggestion modal (200000), and
+ * version portal (99999). Children do not need higher z — the wrapper establishes the layer.
+ */
+const ACTIVE_TOUR_Z = 230000;
 
 /** Idle hint pips — below sticky patterns toolbar (z-20) */
 const DESIGNER_PIP_Z = 12;
@@ -36,15 +39,30 @@ const DESIGNER_WELCOME_GLEAM_Z = 19;
 /** Sticky toolbar band from viewport top (px) — used with pip position to hide scrolled-under workspace */
 const STICKY_TOOLBAR_GUARD_PX = 108;
 
-/** Same visual as Legend “Anti-patterns: ?” help control (Legend.tsx). */
+/** Blue chip, white “?”, ~90% opacity (no glow). */
 const GUIDE_MARKER_INTERACTIVE =
-  "amg-designer-q-glow inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15 hover:text-white";
+  "inline-flex h-5 min-w-[1.25rem] shrink-0 items-center justify-center rounded-full bg-blue-800/90 px-0.5 text-[10px] font-semibold tabular-nums text-white ring-2 ring-black/30 transition-colors hover:bg-blue-700/90";
 const GUIDE_MARKER_STATIC =
-  "amg-designer-q-glow inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90";
+  "inline-flex h-5 min-w-[1.25rem] shrink-0 items-center justify-center rounded-full bg-blue-800/90 px-0.5 text-[10px] font-semibold tabular-nums text-white ring-2 ring-black/30";
+
+/** Same as Versions control: white primary, gray secondary, white icon exits. */
+const TOUR_BTN_NEXT =
+  "rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-200";
+const TOUR_BTN_NEXT_COMPACT =
+  "inline-flex items-center justify-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-[11px] font-semibold text-black shadow-sm transition-colors hover:bg-gray-200";
+/** Secondary / dismiss — solid gray (not white). */
+const TOUR_BTN_BACK =
+  "rounded-md bg-zinc-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-zinc-500";
+const TOUR_BTN_BACK_COMPACT =
+  "inline-flex items-center justify-center gap-1 rounded-md bg-zinc-600 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-zinc-500";
+const TOUR_BTN_CLOSE_ICON =
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white p-0 text-black shadow-sm transition-colors hover:bg-gray-200";
 
 type ChapterMeta = {
   id: string;
   markerAnchor: AmgDesignerAnchor;
+  /** When the primary marker has no node (e.g. optional legend chip), use this for the idle “?” pip. */
+  markerAnchorFallback?: AmgDesignerAnchor;
   title: string;
   /** Multiple guide markers can open the same step list (e.g. canvas + details → one surface tour). */
   stepGroupKey?: string;
@@ -73,7 +91,8 @@ const CHAPTER_BASE: ChapterMeta[] = [
   },
   {
     id: "legend",
-    markerAnchor: AMG_DESIGNER.legend,
+    markerAnchor: AMG_DESIGNER.legendReadingCanvasPip,
+    markerAnchorFallback: AMG_DESIGNER.legendHelp,
     title: "Legend & anti-patterns",
   },
   {
@@ -124,9 +143,28 @@ function stepSelector(step: DesignerTourStep): string {
 }
 
 function getRectFromSelector(selector: string): DOMRect | null {
-  const el = document.querySelector(selector);
-  if (!el || !(el instanceof HTMLElement)) return null;
-  return el.getBoundingClientRect();
+  const nodes = document.querySelectorAll(selector);
+  for (let i = 0; i < nodes.length; i++) {
+    const el = nodes[i];
+    if (!(el instanceof HTMLElement)) continue;
+    const style = getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return r;
+  }
+  return null;
+}
+
+function getDesignerChapterMarkerRect(ch: {
+  markerAnchor: AmgDesignerAnchor;
+  markerAnchorFallback?: AmgDesignerAnchor;
+}): DOMRect | null {
+  const primary = getRectFromSelector(qs(ch.markerAnchor));
+  if (primary && primary.width > 0) return primary;
+  if (ch.markerAnchorFallback) {
+    return getRectFromSelector(qs(ch.markerAnchorFallback));
+  }
+  return null;
 }
 
 function inflateRect(r: DOMRect, pad: number): DOMRect {
@@ -160,7 +198,10 @@ function welcomeIntroCenteredPanelStyle(): CSSProperties {
   const vw =
     typeof window !== "undefined" ? window.innerWidth : GUIDES_INTRO_MAX_W_PX;
   const vh = typeof window !== "undefined" ? window.innerHeight : 600;
-  const maxW = Math.min(GUIDES_INTRO_MAX_W_PX, vw - GUIDES_INTRO_POPOVER_MARGIN * 2);
+  const maxW = Math.min(
+    GUIDES_INTRO_MAX_W_PX,
+    vw - GUIDES_INTRO_POPOVER_MARGIN * 2,
+  );
   const maxH = Math.min(0.88 * vh, 580);
   return {
     position: "fixed",
@@ -206,13 +247,12 @@ function SpotlightCutout({ rect, pad = 8 }: { rect: DOMRect; pad?: number }) {
   return (
     <>
       <div
-        className="pointer-events-none fixed bg-slate-950/70 backdrop-blur-[1px]"
-        style={{ zIndex: ACTIVE_TOUR_Z, top: 0, left: 0, right: 0, height: t }}
+        className="pointer-events-none fixed bg-slate-950/70"
+        style={{ top: 0, left: 0, right: 0, height: t }}
       />
       <div
-        className="pointer-events-none fixed bg-slate-950/70 backdrop-blur-[1px]"
+        className="pointer-events-none fixed bg-slate-950/70"
         style={{
-          zIndex: ACTIVE_TOUR_Z,
           top: t,
           left: 0,
           width: l,
@@ -220,9 +260,8 @@ function SpotlightCutout({ rect, pad = 8 }: { rect: DOMRect; pad?: number }) {
         }}
       />
       <div
-        className="pointer-events-none fixed bg-slate-950/70 backdrop-blur-[1px]"
+        className="pointer-events-none fixed bg-slate-950/70"
         style={{
-          zIndex: ACTIVE_TOUR_Z,
           top: t,
           left: r,
           width: Math.max(0, vw - r),
@@ -230,8 +269,8 @@ function SpotlightCutout({ rect, pad = 8 }: { rect: DOMRect; pad?: number }) {
         }}
       />
       <div
-        className="pointer-events-none fixed bg-slate-950/70 backdrop-blur-[1px]"
-        style={{ zIndex: ACTIVE_TOUR_Z, top: b, left: 0, right: 0, bottom: 0 }}
+        className="pointer-events-none fixed bg-slate-950/70"
+        style={{ top: b, left: 0, right: 0, bottom: 0 }}
       />
     </>
   );
@@ -284,6 +323,7 @@ function DesignerHintPip({
         e.stopPropagation();
         onClick();
       }}
+      data-patterns-designer-tour-marker
       className={`${GUIDE_MARKER_INTERACTIVE} fixed active:scale-95`}
       style={{
         zIndex: DESIGNER_PIP_Z,
@@ -496,9 +536,11 @@ function buildSteps(args: {
   const simModalSel = qs(AMG_DESIGNER.simulationModal);
 
   const ensureVersionsPortalOpen = async () => {
-    onOpenVersionsMenu();
-    await waitForSelector("#versions-dropdown-portal", 4000);
-    await new Promise((r) => window.setTimeout(r, 120));
+    if (!document.querySelector("#versions-dropdown-portal")) {
+      onOpenVersionsMenu();
+      await waitForSelector("#versions-dropdown-portal", 4000);
+    }
+    await new Promise((r) => window.setTimeout(r, 80));
   };
 
   const scrollToDesignerAnchor = async (anchor: AmgDesignerAnchor) => {
@@ -566,7 +608,29 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.toolbarDownloads,
         title: "Exports & downloads",
-        body: "Download YAML saves the live architecture text from the editor. Download JSON bundles the graph plus detections and version metadata. Download Report exports a compact PDF (legend reference with icons for node roles, counts, canvas-only diagram).",
+        body: (
+          <div className="text-[12px] leading-relaxed text-white/70">
+            <ul className="list-disc space-y-1.5 pl-4 marker:text-white/45">
+              <li>
+                <strong className="text-white/90">Download YAML</strong> —
+                current diagram text from the editor, as YAML.
+              </li>
+              <li>
+                <strong className="text-white/90">Download JSON</strong> —
+                graph, detections, and version metadata in one file.
+              </li>
+              <li>
+                <strong className="text-white/90">Download Report</strong> — PDF
+                overview: anti-pattern reference, counts, and a square graph
+                snapshot.
+              </li>
+              <li>
+                <strong className="text-white/90">Download Image</strong> — PNG
+                of the graph viewport.
+              </li>
+            </ul>
+          </div>
+        ),
       },
     ],
     returnToChat: [
@@ -639,6 +703,11 @@ function buildSteps(args: {
         anchor: AMG_DESIGNER.layout,
         title: "Layout algorithms",
         body: "Choose how nodes are arranged: layered (Dagre / ELK), or force-directed (Cose-Bilkent / Cola). Fit to Screen recenters the diagram. Changing layout does not edit the model; it only changes the view.",
+      },
+      {
+        anchor: AMG_DESIGNER.layoutZoom,
+        title: "Zoom",
+        body: "Use − / + to step zoom by 10% relative to the last fit or layout baseline (30–300%). Edit the percentage and press Enter to jump to a value. Fit to Screen resets the baseline to 100%. This only changes the view, not the saved model.",
       },
       {
         anchor: AMG_DESIGNER.stats,
@@ -715,6 +784,27 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.editToolboxAntiPatterns,
         title: "Anti-patterns",
+        beforeEnter: async () => {
+          onPrepareEditWorkspace();
+          await new Promise((r) => window.setTimeout(r, 120));
+          const anti = document.querySelector(
+            `[data-amg-designer="${AMG_DESIGNER.editToolboxAntiPatterns}"]`,
+          );
+          const root = document.querySelector(
+            "#amg-designer-edit-toolbox-scroll-root",
+          );
+          if (anti instanceof HTMLElement && root instanceof HTMLElement) {
+            const rootRect = root.getBoundingClientRect();
+            const antiRect = anti.getBoundingClientRect();
+            const delta = antiRect.top - rootRect.top + root.scrollTop - 8;
+            root.scrollTo({
+              top: Math.max(0, delta),
+              behavior: "smooth",
+            });
+          } else {
+            anti?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+        },
         body: (
           <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
             <p>
@@ -855,10 +945,10 @@ function buildSteps(args: {
         body: (
           <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
             <p>
-              Activate the <strong className="text-white/85">Calls</strong>{" "}
-              tool in the edit toolbox, then click a source node and a target to
-              draw a link. Defaults for REST, gRPC, Event, and sync vs async
-              apply to new edges.
+              Activate the <strong className="text-white/85">Calls</strong> tool
+              in the edit toolbox, then click a source node and a target to draw
+              a link. Defaults for REST, gRPC, Event, and sync vs async apply to
+              new edges.
             </p>
             <p>
               In edit mode this details block stays open at the top: for a node
@@ -1036,12 +1126,35 @@ export default function PatternsDesignerTour({
   /** Wider card and taller body so “Reading the canvas” fits without scrolling when possible. */
   const isLegendReadingIntro = chapterId === "legend" && stepIndex === 0;
 
+  const resetEditToolboxScroll = useCallback(() => {
+    document
+      .querySelectorAll("#amg-designer-edit-toolbox-scroll-root")
+      .forEach((el) => {
+        el.scrollTo({ top: 0, behavior: "smooth" });
+      });
+  }, []);
+
   const closeChapter = useCallback(() => {
+    resetEditToolboxScroll();
     onTourChapterClose?.();
     setChapterId(null);
     setStepIndex(0);
     setSpotRect(null);
-  }, [onTourChapterClose]);
+  }, [onTourChapterClose, resetEditToolboxScroll]);
+
+  /** Search tools → Anti-patterns is step index 2; scroll list back to top when leaving that step or chapter. */
+  const prevEditToolboxStepRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (chapterId !== "editToolbox") {
+      prevEditToolboxStepRef.current = null;
+      return;
+    }
+    const prev = prevEditToolboxStepRef.current;
+    prevEditToolboxStepRef.current = stepIndex;
+    if (prev === 2 && stepIndex !== 2) {
+      resetEditToolboxScroll();
+    }
+  }, [chapterId, stepIndex, resetEditToolboxScroll]);
 
   /** When guides are off, parent may pass new function refs each render; only react to real enabled toggles. */
   const prevEnabledRef = useRef<boolean | null>(null);
@@ -1127,7 +1240,7 @@ export default function PatternsDesignerTour({
     const measureMarkers = () => {
       const next: Partial<Record<AmgDesignerAnchor, DOMRect>> = {};
       for (const ch of chapterList) {
-        const r = getRectFromSelector(qs(ch.markerAnchor));
+        const r = getDesignerChapterMarkerRect(ch);
         if (r && r.width > 0 && r.height > 0) {
           next[ch.markerAnchor] = r;
         }
@@ -1159,7 +1272,7 @@ export default function PatternsDesignerTour({
       if (welcomeStep === 1) {
         const list: DOMRect[] = [];
         for (const ch of chapterList) {
-          const r = getRectFromSelector(qs(ch.markerAnchor));
+          const r = getDesignerChapterMarkerRect(ch);
           if (r && r.width > 0 && r.height > 0) list.push(r);
         }
         setWelcomeRects(list);
@@ -1197,13 +1310,14 @@ export default function PatternsDesignerTour({
   useEffect(() => {
     const wasEnabled = prevEnabledRef.current;
     if (wasEnabled === true && !enabled) {
+      resetEditToolboxScroll();
       onTourChapterCloseRef.current?.();
       setChapterId(null);
       setStepIndex(0);
       setSpotRect(null);
     }
     prevEnabledRef.current = enabled;
-  }, [enabled]);
+  }, [enabled, resetEditToolboxScroll]);
 
   useEffect(() => {
     if (!chapterId || !activeStep) return;
@@ -1221,11 +1335,11 @@ export default function PatternsDesignerTour({
   const portal = (
     <>
       {enabled && welcomeIntroOpen && !chapterId && (
-        <>
+        <div data-patterns-designer-tour-layer>
           <WelcomeDimWithHoles rects={welcomeRects} maskId={maskId} />
           {welcomeStep === 1 &&
             chapterList.map((ch) => {
-              const r = getRectFromSelector(qs(ch.markerAnchor));
+              const r = getDesignerChapterMarkerRect(ch);
               if (!r || r.width <= 0) return null;
               return (
                 <DesignerWelcomeGleam
@@ -1269,7 +1383,7 @@ export default function PatternsDesignerTour({
                   onWelcomeIntroComplete?.();
                   onDismissWelcomeIntro?.();
                 }}
-                className="shrink-0 rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
+                className={TOUR_BTN_CLOSE_ICON}
                 aria-label="Close and skip tour"
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
@@ -1307,7 +1421,7 @@ export default function PatternsDesignerTour({
               {welcomeStep === 1 && (
                 <>
                   <p>
-                    The blue-glowing <strong className="text-white/90">?</strong>{" "}
+                    The small red <strong className="text-white/90">?</strong>{" "}
                     markers sit on the main areas of this screen (versions,
                     exports, legend, layout, edit tools, canvas, and more).
                   </p>
@@ -1321,11 +1435,10 @@ export default function PatternsDesignerTour({
                 <>
                   {welcomeGuidesControlInHeader ? (
                     <p>
-                      Use the{" "}
-                      <strong className="text-white/90">Guides</strong> control
-                      in the header (highlighted above) to show or hide all{" "}
-                      <strong className="text-white/90">?</strong> markers and
-                      this welcome flow.
+                      Use the <strong className="text-white/90">Guides</strong>{" "}
+                      control in the header (highlighted above) to show or hide
+                      all <strong className="text-white/90">?</strong> markers
+                      and this welcome flow.
                     </p>
                   ) : (
                     <p>
@@ -1355,14 +1468,14 @@ export default function PatternsDesignerTour({
                       onWelcomeIntroComplete?.();
                       onDismissWelcomeIntro?.();
                     }}
-                    className="flex-1 rounded-md border border-gray-600 py-2.5 text-xs font-semibold text-gray-200 transition-colors hover:bg-gray-700/50"
+                    className={`flex-1 ${TOUR_BTN_BACK}`}
                   >
                     Skip
                   </button>
                   <button
                     type="button"
                     onClick={() => setWelcomeStep((s) => s + 1)}
-                    className="flex-1 rounded-md border border-gray-600 bg-gray-700/80 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
+                    className={`flex-1 ${TOUR_BTN_NEXT}`}
                   >
                     Next
                   </button>
@@ -1374,14 +1487,14 @@ export default function PatternsDesignerTour({
                     onWelcomeIntroComplete?.();
                     onDismissWelcomeIntro?.();
                   }}
-                  className="w-full rounded-md border border-gray-600 bg-gray-700/80 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
+                  className={`w-full ${TOUR_BTN_NEXT}`}
                 >
                   Got it
                 </button>
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {showIdlePips && (
@@ -1403,18 +1516,18 @@ export default function PatternsDesignerTour({
 
       {enabled && chapterId && activeStep && (
         <div
+          data-patterns-designer-tour-layer
           className="pointer-events-none fixed inset-0"
-          style={{ zIndex: ACTIVE_TOUR_Z - 1 }}
+          style={{ zIndex: ACTIVE_TOUR_Z }}
         >
           {spotRect && <SpotlightCutout rect={spotRect} />}
           <div
-            className={`pointer-events-auto fixed bottom-5 left-4 w-auto overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl sm:left-auto sm:right-6 ${
+            className={`pointer-events-auto fixed bottom-5 left-4 z-10 w-auto overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl sm:left-auto sm:right-6 ${
               isLegendReadingIntro
                 ? "right-4 max-h-[min(88vh,680px)] sm:w-[min(100vw-2rem,34rem)]"
                 : "right-4 max-h-[min(72vh,520px)] max-w-md sm:w-[min(100vw-2rem,26rem)]"
             }`}
             style={{
-              zIndex: ACTIVE_TOUR_Z + 5,
               transform: `translate(${cardDrag.x}px, ${cardDrag.y}px)`,
             }}
           >
@@ -1470,7 +1583,7 @@ export default function PatternsDesignerTour({
                 <button
                   type="button"
                   onClick={closeChapter}
-                  className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
+                  className={TOUR_BTN_CLOSE_ICON}
                   aria-label="Close guide"
                 >
                   <X className="h-4 w-4" />
@@ -1493,7 +1606,7 @@ export default function PatternsDesignerTour({
                 <button
                   type="button"
                   onClick={() => onEnabledChange(false)}
-                  className="text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-300"
+                  className={TOUR_BTN_NEXT_COMPACT}
                 >
                   Hide guides
                 </button>
@@ -1502,7 +1615,7 @@ export default function PatternsDesignerTour({
                     type="button"
                     disabled={stepIndex <= 0}
                     onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition-colors hover:bg-gray-700/50 disabled:cursor-not-allowed disabled:opacity-35"
+                    className={`${TOUR_BTN_BACK_COMPACT} disabled:cursor-not-allowed disabled:opacity-35`}
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
                     Back
@@ -1516,7 +1629,7 @@ export default function PatternsDesignerTour({
                         setStepIndex((i) => i + 1);
                       }
                     }}
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-600 bg-gray-700/80 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-gray-600"
+                    className={TOUR_BTN_NEXT_COMPACT}
                   >
                     {stepIndex >= activeSteps.length - 1 ? "Done" : "Next"}
                     {stepIndex < activeSteps.length - 1 && (

@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useLoading } from "@/hooks/useLoading";
 import { NewSimulationFlow } from "./NewSimulationFlow";
 
 function routeSegmentParam(param: string | string[] | undefined): string {
@@ -15,6 +17,10 @@ export default function ProjectNewSimulationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = routeSegmentParam(params.id);
+
+  useEffect(() => {
+    useLoading.getState().setLoading(false);
+  }, []);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col p-6">

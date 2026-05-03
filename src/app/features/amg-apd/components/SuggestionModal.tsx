@@ -116,7 +116,7 @@ export default function SuggestionModal({
               e.stopPropagation();
               onClose();
             }}
-            className="relative z-[2] -mr-0.5 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/[0.06] text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+            className="relative z-[2] -mr-0.5 -mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white p-0 text-black shadow-sm transition-colors hover:bg-gray-200"
             aria-label="Close"
           >
             <X className="h-3.5 w-3.5" strokeWidth={2} />
@@ -280,7 +280,7 @@ export default function SuggestionModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 transition-colors hover:bg-gray-700/50"
+              className="rounded-md bg-zinc-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-zinc-500"
             >
               Cancel
             </button>
@@ -288,7 +288,7 @@ export default function SuggestionModal({
               type="button"
               onClick={handleApply}
               disabled={disabledApply || applyLoading || !hasSelection || loading}
-              className="rounded-md border border-gray-600 bg-gray-700/80 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-45"
+              className="rounded-md bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}
             </button>

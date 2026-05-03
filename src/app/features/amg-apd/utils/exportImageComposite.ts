@@ -494,6 +494,38 @@ export function scaleCanvasToMinWidth(
   return out;
 }
 
+/**
+ * Pads the graph raster to a square whose side is max(width, height), with equal
+ * horizontal and vertical margins so exports are not tied to the on-screen viewport aspect.
+ * Optional `maxSide` scales the whole square down uniformly (keeps square).
+ */
+export function frameGraphExportToSquareCanvas(
+  graph: HTMLCanvasElement,
+  options?: { background?: string; maxSide?: number },
+): HTMLCanvasElement {
+  const background = options?.background ?? EXPORT_IMAGE_FRAME_BG;
+  const maxSide = options?.maxSide;
+  const bw = Math.max(1, graph.width);
+  const bh = Math.max(1, graph.height);
+  let side = Math.max(bw, bh);
+
+  const out = document.createElement("canvas");
+  out.width = side;
+  out.height = side;
+  const ctx = out.getContext("2d");
+  if (!ctx) return graph;
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, side, side);
+  const ox = Math.floor((side - bw) / 2);
+  const oy = Math.floor((side - bh) / 2);
+  ctx.drawImage(graph, ox, oy);
+
+  if (maxSide != null && maxSide > 0 && side > maxSide) {
+    return scaleCanvasToMaxDimension(out, maxSide);
+  }
+  return out;
+}
+
 /** Scale down so the longest side is at most `maxDimPx` (keeps PDF / diagram-only exports compact). */
 export function scaleCanvasToMaxDimension(
   source: HTMLCanvasElement,

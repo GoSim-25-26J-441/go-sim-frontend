@@ -13,12 +13,17 @@ export const AMG_DESIGNER = {
   suggestionFirstPreview: "amg-designer-suggestion-preview-0",
   suggestionModalFooter: "amg-designer-suggestion-modal-footer",
   legend: "amg-designer-legend",
+  /** Anti-pattern chips row inside Legend — spotlight for “Reading the canvas”. */
+  legendAntiPatternRow: "amg-designer-legend-antipattern-row",
+  /** Idle “?” pip for Legend chapter — pinned near UI Orchestrator when present. */
+  legendReadingCanvasPip: "amg-designer-legend-reading-canvas-pip",
   legendHelp: "amg-designer-legend-help",
   simulator: "amg-designer-simulator",
   simulationModal: "amg-designer-simulation-modal",
   simulationVersionSelect: "amg-designer-simulation-version-select",
   simulationModalFooter: "amg-designer-simulation-modal-footer",
   layout: "amg-designer-layout",
+  layoutZoom: "amg-designer-layout-zoom",
   stats: "amg-designer-stats",
   editGraph: "amg-designer-edit-graph",
   generate: "amg-designer-generate",

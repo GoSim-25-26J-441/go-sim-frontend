@@ -29,7 +29,9 @@ import {
   type ChatMessageItem,
   type ChatResponse,
 } from "@/app/store/chatApi";
+import { useGetProjectSummaryQuery } from "@/app/store/projectsApi";
 import { useToast } from "@/hooks/useToast";
+import { useLoading } from "@/hooks/useLoading";
 import DesignQuestionsModal from "./comp/DesignQuestionsModal";
 import Dropdown from "./comp/DropDown";
 import MessageBubble from "./comp/MessageBubble";
@@ -166,8 +168,24 @@ export default function ClientChat({ id }: Props) {
     isError: projectThreadError,
   } = useGetProjectThreadQuery(id, { skip: !id });
 
-  /** URL param wins; else PINNED thread uses pinned_diagram_version_id (param is removed after first send). */
+  const { data: projectSummary } = useGetProjectSummaryQuery(id, {
+    skip: !id,
+    refetchOnMountOrArgChange: true,
+  });
+
+  const latestDiagramVersionId = useMemo(() => {
+    const raw = projectSummary?.latest_diagram_version?.id;
+    return typeof raw === "string" && raw.trim().length > 0
+      ? raw.trim()
+      : undefined;
+  }, [projectSummary?.latest_diagram_version?.id]);
+
+  /**
+   * Prefer the project's latest saved diagram version so chat, diagram canvas, and Patterns
+   * stay aligned regardless of stale ?diagramVersion= links or older pinned ids.
+   */
   const diagramVersionForDiagramCanvas = useMemo(() => {
+    if (latestDiagramVersionId) return latestDiagramVersionId;
     const fromUrl = diagramVersionParam?.trim();
     if (fromUrl) return fromUrl;
     if (projectThread?.binding_mode === "PINNED") {
@@ -175,7 +193,38 @@ export default function ClientChat({ id }: Props) {
       if (pinned) return pinned;
     }
     return undefined;
-  }, [diagramVersionParam, projectThread]);
+  }, [
+    latestDiagramVersionId,
+    diagramVersionParam,
+    projectThread?.binding_mode,
+    projectThread?.pinned_diagram_version_id,
+  ]);
+
+  /** Version id sent with user messages — always latest when summary has loaded. */
+  const diagramVersionIdForSend = useMemo(
+    () =>
+      latestDiagramVersionId ??
+      diagramVersionParam?.trim() ??
+      undefined,
+    [latestDiagramVersionId, diagramVersionParam],
+  );
+
+  useEffect(() => {
+    if (!latestDiagramVersionId) return;
+    const param = diagramVersionParam?.trim();
+    if (!param || param === latestDiagramVersionId) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("diagramVersion");
+    params.delete("diagram_version");
+    const q = params.toString();
+    router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+  }, [
+    latestDiagramVersionId,
+    diagramVersionParam,
+    pathname,
+    router,
+    searchParams,
+  ]);
 
   const {
     data: messagesData,
@@ -197,6 +246,10 @@ export default function ClientChat({ id }: Props) {
     return () => {
       aliveRef.current = false;
     };
+  }, []);
+
+  useEffect(() => {
+    useLoading.getState().setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -346,11 +399,10 @@ export default function ClientChat({ id }: Props) {
     const startedAt = Date.now();
     setPendingResponseMs(0);
 
-    const diagramVersionId =
-      searchParams.get("diagramVersion") ??
-      searchParams.get("diagram_version") ??
-      undefined;
-    const hadDiagramVersionParam = Boolean(diagramVersionId);
+    const hadDiagramVersionParam = Boolean(
+      searchParams.get("diagramVersion")?.trim() ||
+        searchParams.get("diagram_version")?.trim(),
+    );
 
     try {
       const baseArg = {
@@ -372,7 +424,9 @@ export default function ClientChat({ id }: Props) {
               },
             }
           : {}),
-        ...(diagramVersionId ? { diagram_version_id: diagramVersionId } : {}),
+        ...(diagramVersionIdForSend
+          ? { diagram_version_id: diagramVersionIdForSend }
+          : {}),
       };
 
       let response: ChatResponse | undefined;
@@ -636,13 +690,7 @@ export default function ClientChat({ id }: Props) {
               onClick={openDiagramCanvas}
               disabled={checkingThread}
               className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 shrink-0 bg-amber-400 text-black border border-amber-500/80 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none"
-              title={
-                threadId
-                  ? diagramVersionForDiagramCanvas
-                    ? "Open diagram canvas for the version this chat is pinned to"
-                    : "Open diagram canvas (latest saved design for this project)"
-                  : "Open diagram canvas for this project"
-              }
+              title="Open diagram canvas (latest saved design for this project)"
             >
               <PenSquare className="w-3.5 h-3.5 shrink-0" />
               Diagram canvas

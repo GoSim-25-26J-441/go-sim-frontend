@@ -56,26 +56,6 @@ html.dark select {
   animation: slow-blink 2.5s ease-in-out infinite;
 }
 
-/** AMG-APD patterns: blue pulse on guide (?) markers — idle pips + welcome gleams */
-@keyframes amg-designer-q-glow {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgb(56 189 248 / 0);
-    border-color: rgb(255 255 255 / 0.22);
-  }
-  50% {
-    box-shadow:
-      0 0 6px 1px rgb(56 189 248 / 0.35),
-      0 0 18px 5px rgb(56 189 248 / 0.45),
-      0 0 28px 8px rgb(96 165 250 / 0.2);
-    border-color: rgb(125 211 252 / 0.65);
-  }
-}
-
-.amg-designer-q-glow {
-  animation: amg-designer-q-glow 2.4s ease-in-out infinite;
-}
-
 /* Check Anti Patterns loading screen */
 @keyframes fadeInUp {
   from {
@@ -245,6 +225,61 @@ html.dark select {
 
 .scrollbar-toolbox::-webkit-scrollbar-corner {
   background: rgba(15, 23, 42, 0.95);
+}
+
+/**
+ * Patterns page only (`PatternsView` root `data-amg-patterns-workspace`):
+ * toolbox + details both use `.scrollbar-toolbox` — swap sky accent for slate/gray
+ * to match the dark patterns chrome (#1F1F1F / slate-950).
+ */
+[data-amg-patterns-workspace] .scrollbar-toolbox {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(100 116 139 / 0.55) rgb(30 41 59 / 0.5);
+  scrollbar-gutter: stable;
+}
+
+[data-amg-patterns-workspace] .scrollbar-toolbox::-webkit-scrollbar {
+  width: 8px;
+}
+
+[data-amg-patterns-workspace] .scrollbar-toolbox::-webkit-scrollbar-track {
+  background: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.78),
+    rgba(30, 41, 59, 0.68)
+  );
+  border-radius: 8px;
+  margin: 6px 2px;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.1);
+}
+
+[data-amg-patterns-workspace] .scrollbar-toolbox::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgb(100 116 139 / 0.52),
+    rgb(71 85 105 / 0.48)
+  );
+  border-radius: 8px;
+  border: 2px solid rgba(15, 23, 42, 0.55);
+  background-clip: padding-box;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+[data-amg-patterns-workspace] .scrollbar-toolbox::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgb(148 163 184 / 0.62),
+    rgb(100 116 139 / 0.55)
+  );
+  border-color: rgba(15, 23, 42, 0.42);
+}
+
+[data-amg-patterns-workspace] .scrollbar-toolbox::-webkit-scrollbar-thumb:active {
+  background: rgb(100 116 139 / 0.72);
+}
+
+[data-amg-patterns-workspace] .scrollbar-toolbox::-webkit-scrollbar-corner {
+  background: rgba(15, 23, 42, 0.92);
 }
 
 /* Apply the same subtle scrollbar to the whole page (viewport scroll) */

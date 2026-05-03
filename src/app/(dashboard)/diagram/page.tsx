@@ -420,10 +420,9 @@ export default function DrawDiagram() {
   } = useGetProjectSummaryQuery(projectId || "", { skip: !projectId });
 
   const diagramVersionIdForSave = useMemo(() => {
-    const fromUrl = diagramVersionFromQuery?.trim();
-    if (fromUrl) return fromUrl;
     const id = summary?.latest_diagram_version?.id;
-    return typeof id === "string" && id.length > 0 ? id : undefined;
+    if (typeof id === "string" && id.length > 0) return id.trim();
+    return diagramVersionFromQuery?.trim() || undefined;
   }, [diagramVersionFromQuery, summary?.latest_diagram_version?.id]);
 
   const summaryProjectId = useMemo(() => {
@@ -433,7 +432,10 @@ export default function DrawDiagram() {
     return fromPublicId ?? fromId ?? null;
   }, [summary]);
 
-  /** Row whose diagram_json we paint — matches ?diagramVersion= when set, else latest. */
+  /**
+   * Row whose diagram_json we paint — always the latest saved version when available,
+   * so the editor matches chat / Patterns regardless of stale ?diagramVersion= in the URL.
+   */
   const diagramRowForLoad = useMemo(() => {
     type Row = { id?: string; diagram_json?: unknown };
     const latest = summary?.latest_diagram_version as Row | undefined;
@@ -442,13 +444,11 @@ export default function DrawDiagram() {
 
     if (!latest?.id && others.length === 0) return undefined;
 
-    if (!want) return latest;
+    if (latest?.id) return latest;
 
-    if (latest?.id === want) return latest;
+    if (!want) return undefined;
     const hit = others.find((v) => v?.id === want);
-    if (hit) return hit;
-
-    return latest;
+    return hit ?? others[0];
   }, [
     diagramVersionFromQuery,
     summary?.latest_diagram_version,

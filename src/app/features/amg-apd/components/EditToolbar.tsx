@@ -267,6 +267,7 @@ export default function EditToolbar({
 
   const scrollArea = (
     <div
+      id="amg-designer-edit-toolbox-scroll-root"
       className={scrollOuterClass}
       onWheel={(e) => e.stopPropagation()}
     >

@@ -55,11 +55,10 @@ import {
 import { getAntiPatternChunk } from "@/app/features/amg-apd/utils/antiPatternChunks";
 import { applyReciprocalCallLanes } from "@/app/features/amg-apd/utils/reciprocalCallLanes";
 import {
-  compositeHeaderAndGraph,
   EXPORT_IMAGE_FRAME_BG,
   MIN_EXPORT_GRAPH_PIXEL_WIDTH,
+  frameGraphExportToSquareCanvas,
   padCanvasUniform,
-  renderExportImageHeader,
   scaleCanvasToMaxDimension,
   scaleCanvasToMinWidth,
 } from "@/app/features/amg-apd/utils/exportImageComposite";
@@ -78,10 +77,7 @@ import GraphTooltip from "@/app/features/amg-apd/components/graph/GraphTooltip";
 import NodeColorIndicators from "@/app/features/amg-apd/components/graph/NodeColorIndicators";
 import NodeDualLineLabels from "@/app/features/amg-apd/components/graph/NodeDualLineLabels";
 import EdgeCallFlowBolts from "@/app/features/amg-apd/components/graph/EdgeCallFlowBolts";
-import {
-  getGraphStatsFromCy,
-  recomputeStats,
-} from "@/app/features/amg-apd/components/graph/recomputeStats";
+import { recomputeStats } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
@@ -369,6 +365,8 @@ type GraphCanvasProps = {
   onExportGraphJsonReady?: (getGraph: () => Graph | null) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
   onDuplicateName?: (name: string) => void;
+  /** Fullscreen patterns: opens simulation modal (same as page header). */
+  onRequestOpenSimulationModal?: () => void;
 };
 
 function GraphCanvasInner({
@@ -383,6 +381,7 @@ function GraphCanvasInner({
   onExportGraphJsonReady,
   onDuplicateName,
   onResetCanvas,
+  onRequestOpenSimulationModal,
   fullscreenButton,
   newDesignerTourEnabled,
   guidesActive,
@@ -916,7 +915,9 @@ function GraphCanvasInner({
     return () => window.removeEventListener("resize", onResize);
   }, [cy]);
 
-  const EXPORT_PADDING = 32;
+  /** Canvas-only share image: square frame, no legend header (Patterns “Download Image”). */
+  const DOWNLOAD_IMAGE_MAX_SIDE = 4096;
+  const DOWNLOAD_IMAGE_OUTER_PAD = 24;
 
   useEffect(() => {
     if (!onExportImageReady || !cyAlive(cy)) return;
@@ -924,8 +925,6 @@ function GraphCanvasInner({
       const c = cyRef.current;
       const wrap = containerRef.current;
       if (!c || !cyAlive(c)) return null;
-
-      const detections = analysis.detections;
 
       return (async (): Promise<string | null> => {
         let graphCanvas: HTMLCanvasElement | null = null;
@@ -947,22 +946,13 @@ function GraphCanvasInner({
           graphCanvas,
           MIN_EXPORT_GRAPH_PIXEL_WIDTH,
         );
-
-        const exportStats =
-          getGraphStatsFromCy(c, analysis) ?? computeStatsFromData(analysis);
-        const header = renderExportImageHeader(
-          graphCanvas.width,
-          detections,
-          exportStats,
-        );
-        const merged = compositeHeaderAndGraph(header, graphCanvas, {
-          gap: 16,
-          pad: 12,
+        graphCanvas = frameGraphExportToSquareCanvas(graphCanvas, {
           background: EXPORT_IMAGE_FRAME_BG,
+          maxSide: DOWNLOAD_IMAGE_MAX_SIDE,
         });
         const padded = padCanvasUniform(
-          merged,
-          EXPORT_PADDING,
+          graphCanvas,
+          DOWNLOAD_IMAGE_OUTER_PAD,
           EXPORT_IMAGE_FRAME_BG,
         );
 
@@ -1462,6 +1452,11 @@ function GraphCanvasInner({
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomPercentCommit={handleZoomPercentCommit}
+        simulationTourOnOpen={
+          fullscreenButton?.isFullscreen && onRequestOpenSimulationModal
+            ? onRequestOpenSimulationModal
+            : undefined
+        }
       />
 
       <div
@@ -1904,7 +1899,7 @@ function GraphCanvasInner({
               <button
                 type="button"
                 onClick={() => setAntiPresetDropKind(null)}
-                className="w-full rounded-md border border-gray-600 bg-gray-700/80 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
+                className="w-full rounded-md bg-white py-2.5 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-200"
               >
                 Got it
               </button>

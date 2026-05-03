@@ -158,10 +158,10 @@ export function ConfirmModal({
             type="button"
             disabled={busy}
             onClick={onClose}
-            className="shrink-0 ml-3 flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent disabled:opacity-50 disabled:pointer-events-none"
+            className="ml-3 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white p-0 text-black shadow-sm transition-colors hover:bg-gray-200 disabled:pointer-events-none disabled:opacity-50"
             aria-label="Close"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
@@ -184,19 +184,7 @@ export function ConfirmModal({
               type="button"
               disabled={busy}
               onClick={onClose}
-              className="rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-150 disabled:opacity-50 disabled:pointer-events-none"
-              style={{
-                color: "rgba(255,255,255,0.8)",
-                border: "1px solid rgba(255,255,255,0.12)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                  "rgba(255,255,255,0.05)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                  "transparent";
-              }}
+              className="rounded-full bg-zinc-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-500 disabled:pointer-events-none disabled:opacity-50"
             >
               {cancelLabel}
             </button>

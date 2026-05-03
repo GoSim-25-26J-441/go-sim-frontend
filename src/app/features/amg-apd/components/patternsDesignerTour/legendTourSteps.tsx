@@ -36,8 +36,8 @@ const DETECTION_KINDS = [
 export function buildLegendTourSteps(): DesignerTourStep[] {
   const intro: DesignerTourStep = {
     anchor: AMG_DESIGNER.legend,
-    /** Pin the guide to the UI Orchestrator chip (stable in fullscreen; whole-legend wrapper is full-width). */
-    anchorSelector: `[data-amg-designer-legend-kind="ui_orchestrator"]`,
+    /** Highlight the full anti-patterns row (label, “?”, and all chips), not a single chip. */
+    anchorSelector: `[data-amg-designer="${AMG_DESIGNER.legendAntiPatternRow}"]`,
     title: "Reading the canvas",
     body: (
       <div className="space-y-2">

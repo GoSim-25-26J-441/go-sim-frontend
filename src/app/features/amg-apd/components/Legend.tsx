@@ -11,6 +11,7 @@ import {
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
+import { X } from "lucide-react";
 
 function prettyLabel(key: string) {
   return key
@@ -113,19 +114,22 @@ export default function Legend({
             ))}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
+        <div
+          className="flex flex-wrap items-center gap-2"
+          data-amg-designer={AMG_DESIGNER.legendAntiPatternRow}
+        >
           <span className="font-semibold text-white/80 text-xs">Anti-patterns:</span>
           <button
             type="button"
             data-amg-designer={AMG_DESIGNER.legendHelp}
             onClick={() => setShowHelp(true)}
-            className={`${
-              patternsGuidesEnabled ? "amg-designer-q-glow " : ""
-            }${
-              versionCount === 1
-                ? "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/25 bg-white/15 text-[10px] font-semibold text-white transition-colors hover:bg-white/25"
-                : "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15"
-            }`}
+            className={
+              patternsGuidesEnabled
+                ? "inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-blue-800/90 px-0.5 text-[10px] font-semibold tabular-nums text-white ring-2 ring-black/30 transition-colors hover:bg-blue-700/90"
+                : versionCount === 1
+                  ? "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/25 bg-white/15 text-[10px] font-semibold text-white transition-colors hover:bg-white/25"
+                  : "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15"
+            }
             aria-label="What do these anti-patterns mean?"
             title="View explanations"
           >
@@ -135,6 +139,11 @@ export default function Legend({
             <span
               key={k}
               data-amg-designer-legend-kind={k}
+              data-amg-designer={
+                k === "ui_orchestrator"
+                  ? AMG_DESIGNER.legendReadingCanvasPip
+                  : undefined
+              }
               className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-[box-shadow,background] duration-150"
             >
               <span
@@ -183,10 +192,10 @@ export default function Legend({
                 <button
                   type="button"
                   onClick={closeHelp}
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/[0.06] text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white p-0 text-black shadow-sm transition-colors hover:bg-gray-200"
                   aria-label="Close"
                 >
-                  ✕
+                  <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                 </button>
               </div>
 

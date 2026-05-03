@@ -759,7 +759,7 @@ export function ToolboxNodeKindsTourCarousel() {
           type="button"
           onClick={goPrev}
           aria-label="Previous node type"
-          className="flex h-16 min-w-9 shrink-0 items-center justify-center self-center rounded-lg border border-white/15 bg-white/5 text-white/80 transition-colors hover:border-sky-500/40 hover:bg-sky-500/15 hover:text-white"
+          className="flex h-16 min-w-9 shrink-0 items-center justify-center self-center rounded-lg bg-zinc-600 text-white shadow-sm transition-colors hover:bg-zinc-500"
         >
           <ChevronLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
         </button>
@@ -787,7 +787,7 @@ export function ToolboxNodeKindsTourCarousel() {
           type="button"
           onClick={goNext}
           aria-label="Next node type"
-          className="flex h-16 min-w-9 shrink-0 items-center justify-center self-center rounded-lg border border-white/15 bg-white/5 text-white/80 transition-colors hover:border-sky-500/40 hover:bg-sky-500/15 hover:text-white"
+          className="flex h-16 min-w-9 shrink-0 items-center justify-center self-center rounded-lg bg-zinc-600 text-white shadow-sm transition-colors hover:bg-zinc-500"
         >
           <ChevronRight className="h-4 w-4" strokeWidth={2} aria-hidden />
         </button>
