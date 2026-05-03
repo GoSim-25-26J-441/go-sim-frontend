@@ -35,6 +35,7 @@ import {
   flatTimeseriesSeriesKeyFromNormalized,
   isUnscopedSeriesKey,
 } from "@/lib/simulation/metrics-series-scope";
+import { describeOptimizerActionForReplay } from "@/lib/simulation/batch-optimizer-action-display";
 import {
   formatOnlineOptimizationBestScore,
   formatOnlineOptimizationTargetLabel,
@@ -981,11 +982,6 @@ function asUnknownRecord(v: unknown): Record<string, unknown> | null {
 
 function toStr(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
-}
-
-function getOptimizationActionLabel(reasonDetails: Record<string, unknown> | undefined): string | undefined {
-  if (!reasonDetails) return undefined;
-  return toStr(reasonDetails.type) ?? toStr(reasonDetails.action);
 }
 
 function summarizeConfigDiff(previousConfig: unknown, currentConfig: unknown): string[] {
@@ -5552,7 +5548,7 @@ export default function SimulationRunPage() {
                   : undefined;
                 const blocked = isOptimizerStepBlocked(step);
                 const reasonDetails = asUnknownRecord(step.reason_details);
-                const actionLabel = getOptimizationActionLabel(reasonDetails ?? undefined);
+                const actionReplay = describeOptimizerActionForReplay(reasonDetails ?? undefined);
                 const decisionReason = toStr(reasonDetails?.decision_reason);
                 const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
                 const primitiveReasonDetails = Object.entries(reasonDetails ?? {})
@@ -5563,7 +5559,7 @@ export default function SimulationRunPage() {
                   .slice(0, 4);
                 return (
                   <div
-                    key={`${step.iteration_index ?? "na"}-${actionLabel ?? step.reason ?? "step"}-${idx}`}
+                    key={`${step.iteration_index ?? "na"}-${actionReplay.primary ?? step.reason ?? "step"}-${idx}`}
                     className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
                   >
                     <div className="flex items-center gap-2 flex-wrap">
@@ -5585,9 +5581,12 @@ export default function SimulationRunPage() {
                       <span className={`font-mono ${overTarget === undefined ? "text-white/45" : overTarget ? "text-red-300" : "text-emerald-300"}`}>
                         {formatTargetDelta(step.score_p95_ms, step.target_p95_ms)}
                       </span>
-                      {actionLabel && (
-                        <span className="inline-flex rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 px-2 py-0.5 font-medium">
-                          {actionLabel}
+                      {actionReplay.primary !== "—" && (
+                        <span className="inline-flex flex-col gap-0.5 rounded border border-blue-500/30 bg-blue-500/10 px-2 py-0.5">
+                          <span className="font-medium text-blue-200">{actionReplay.primary}</span>
+                          {actionReplay.diagnostic && (
+                            <span className="text-[10px] font-mono text-blue-200/55">{actionReplay.diagnostic}</span>
+                          )}
                         </span>
                       )}
                       {blocked && (

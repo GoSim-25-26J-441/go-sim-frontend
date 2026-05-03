@@ -37,7 +37,7 @@ import {
   buildBatchRecommendationOptimizationPayload,
   resolveBatchRecommendationObjective,
 } from "@/lib/simulation/batch-recommendation-optimization-payload";
-import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
+import { allowedActionsFromDirectional } from "@/lib/simulation/batch-scaling-actions";
 import { buildRealtimeInteractiveOnlineOptimizationCore } from "@/lib/simulation/interactive-online-optimization-payload";
 import {
   getSampleScenarioYaml,
@@ -814,7 +814,7 @@ export function NewSimulationFlow({
             break;
           }
         }
-        if (!newErrors.config && allowedActionsFromFlags(br).length === 0) {
+        if (!newErrors.config && allowedActionsFromDirectional(br.actions).length === 0) {
           newErrors.config =
             "Select at least one scaling option (Batch recommendation → Advanced search settings → Allowed scaling dimensions).";
         }
