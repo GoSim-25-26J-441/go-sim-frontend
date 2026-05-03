@@ -7,6 +7,7 @@ import {
     fetchDesignByProjectRun,
     fetchRunCandidates,
     fetchSuggestionsFromRun,
+    resolveClusterNodeCountFromRunCandidates,
     type RunCandidateItem,
 } from '@/app/api/asm/routes';
 import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft, Loader2 } from 'lucide-react';
@@ -84,12 +85,16 @@ function delay(ms: number): Promise<void> {
     });
 }
 
-function mapRunCandidatesToSuggest(candidates: RunCandidateItem[]): Candidate[] {
+function mapRunCandidatesToSuggest(
+    candidates: RunCandidateItem[],
+    nodeCount: number,
+): Candidate[] {
+    const normalizedNodes = nodeCount > 0 ? nodeCount : 1;
     return candidates.map((c) => ({
         id: c.id,
         spec: {
-            vcpu: c.spec.vcpu,
-            memory_gb: c.spec.memory_gb,
+            vcpu: c.spec.vcpu / normalizedNodes,
+            memory_gb: c.spec.memory_gb / normalizedNodes,
             label: c.spec.label ?? c.id,
         },
         metrics: {
@@ -145,8 +150,11 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     console.log('[cost/suggest] fetchRunCandidates:result', runData);
                     if (cancelled) return;
 
+                    const clusterNodes = resolveClusterNodeCountFromRunCandidates(runData);
+                    const initialNodes = clusterNodes > 0 ? clusterNodes : 1;
                     let mappedCandidates = mapRunCandidatesToSuggest(
                         runData.candidates ?? [],
+                        initialNodes,
                     );
                     let emptyPolls = 0;
                     while (
@@ -163,8 +171,11 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             candidateCount: (runData.candidates ?? []).length,
                         });
                         if (cancelled) return;
+                        const polledNodes = resolveClusterNodeCountFromRunCandidates(runData);
+                        const divisor = polledNodes > 0 ? polledNodes : initialNodes;
                         mappedCandidates = mapRunCandidatesToSuggest(
                             runData.candidates ?? [],
+                            divisor,
                         );
                         emptyPolls += 1;
                     }
@@ -176,13 +187,18 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             'No candidates were found for this run after waiting. Try again once the simulation has finished exporting candidates.',
                         );
                         setDesign(null);
-                        setSimulation(runData.simulation ?? null);
+                        setSimulation({
+                            nodes:
+                                resolveClusterNodeCountFromRunCandidates(runData) ||
+                                initialNodes,
+                        });
                         setSuggestionData(null);
                         return;
                     }
 
                     setCandidates(mappedCandidates);
-                    const sim = runData.simulation ?? { nodes: 0 };
+                    const resolvedNodes = resolveClusterNodeCountFromRunCandidates(runData);
+                    const sim = { nodes: resolvedNodes > 0 ? resolvedNodes : initialNodes };
                     setSimulation(sim);
                     const fallbackDesign: DesignRequirements = {
                         preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
@@ -236,8 +252,22 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 };
 
                 const resolvedDesign = storedRequest.design;
+                let runSimulationFromCandidates: SimulationRequirements | null =
+                    null;
+                try {
+                    const runCand = await fetchRunCandidates(
+                        runIdFromQuery,
+                    );
+                    const n = resolveClusterNodeCountFromRunCandidates(runCand);
+                    if (n > 0) {
+                        runSimulationFromCandidates = { nodes: n };
+                    }
+                } catch {
+                }
                 const resolvedSimulation =
-                    storedRequest.simulation || { nodes: 0 };
+                    runSimulationFromCandidates ??
+                    storedRequest.simulation ??
+                    { nodes: 0 };
 
                 setDesign(resolvedDesign);
                 setSimulation(resolvedSimulation);
@@ -279,11 +309,11 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
         return `${value.toFixed(1)}%`;
     };
 
-    const getWorkloadPerformanceColor = (distance: number, target: number) => {
-        const percentage = (distance / target) * 100;
-        if (percentage <= 5) return 'text-green-500';
-        if (percentage <= 20) return 'text-yellow-500';
-        return 'text-red-500';
+    const workloadVsTarget = (achieved: number, target: number) => {
+        const diff = achieved - target;
+        const isSurplus = diff >= 0;
+        const pctOfTarget = target > 0 ? (achieved / target) * 100 : null;
+        return { diff, isSurplus, pctOfTarget };
     };
 
     const handleViewCostAnalysis = () => {
@@ -366,7 +396,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
 
                 {/* Requirements Summary */}
                 {design && simulation && (
-                    <div className="bg-card border border-border rounded-lg p-6 mb-8">
+                    <div className="bg-card border-b border-border  p-6 mb-8">
                         <h2 className="text-xl font-semibold mb-4">Design Requirements</h2>
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                             <div className="bg-card border border-border p-4 rounded-lg">
@@ -405,7 +435,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 {suggestionData && design && simulation && (
                     <div className="space-y-6">
                         {/* Best Candidate */}
-                        <div className="bg-card border border-border rounded-lg p-6">
+                        <div className="bg-card border-b border-border  p-6">
                             <div className="flex items-center justify-between mb-6">
                                 <h3 className="text-xl font-semibold">Best Candidate</h3>
                             </div>
@@ -507,15 +537,25 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                     {suggestionData.best.candidate.sim_workload.concurrent_users} users
                                                 </p>
                                             </div>
-                                            <div>
-                                                <p className="text-sm opacity-60">Shortfall</p>
-                                                <p className={`text-lg font-semibold ${getWorkloadPerformanceColor(suggestionData.best.workload_distance, design.workload.concurrent_users)}`}>
-                                                    {suggestionData.best.workload_distance} users
-                                                </p>
-                                                <p className="text-xs opacity-50 mt-1">
-                                                    ({((suggestionData.best.workload_distance / design.workload.concurrent_users) * 100).toFixed(1)}% of target)
-                                                </p>
-                                            </div>
+                                            {(() => {
+                                                const { diff, isSurplus, pctOfTarget } = workloadVsTarget(
+                                                    suggestionData.best.candidate.sim_workload.concurrent_users,
+                                                    design.workload.concurrent_users,
+                                                );
+                                                return (
+                                                    <div>
+                                                        <p className="text-sm opacity-60">{isSurplus ? 'Surplus' : 'Shortfall'}</p>
+                                                        <p className={`text-lg font-semibold ${isSurplus ? 'text-green-500' : 'text-red-500'}`}>
+                                                            {isSurplus ? '+' : ''}{diff} users
+                                                        </p>
+                                                        {pctOfTarget != null && (
+                                                            <p className="text-xs opacity-50 mt-1">
+                                                                ({pctOfTarget.toFixed(1)}% of target)
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     </div>
                                 </div>
@@ -523,7 +563,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                         </div>
 
                         {/* All Candidates Comparison */}
-                        <div className="bg-card border border-border rounded-lg p-6">
+                        <div className="bg-card border-b border-border  p-6">
                             <div className="flex justify-between items-center mb-6">
                                 <div>
                                     <h3 className="text-xl font-semibold">All Candidates Comparison</h3>
@@ -552,7 +592,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                 Utilization
                                             </th>
                                             <th className="px-4 py-3 text-left text-xs font-medium opacity-60 uppercase tracking-wider">
-                                                Shortfall
+                                                vs target
                                             </th>
                                         </tr>
                                     </thead>
@@ -610,13 +650,24 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    <p className={`font-medium ${getWorkloadPerformanceColor(score.workload_distance, design.workload.concurrent_users)
-                                                        }`}>
-                                                        {score.workload_distance} users
-                                                    </p>
-                                                    <p className="text-xs opacity-50">
-                                                        {((score.workload_distance / design.workload.concurrent_users) * 100).toFixed(1)}% of target
-                                                    </p>
+                                                    {(() => {
+                                                        const { diff, isSurplus, pctOfTarget } = workloadVsTarget(
+                                                            score.candidate.sim_workload.concurrent_users,
+                                                            design.workload.concurrent_users,
+                                                        );
+                                                        return (
+                                                            <>
+                                                                <p className={`font-medium ${isSurplus ? 'text-green-500' : 'text-red-500'}`}>
+                                                                    {isSurplus ? '+' : ''}{diff} users
+                                                                </p>
+                                                                {pctOfTarget != null && (
+                                                                    <p className="text-xs opacity-50">
+                                                                        {pctOfTarget.toFixed(1)}% of target
+                                                                    </p>
+                                                                )}
+                                                            </>
+                                                        );
+                                                    })()}
                                                 </td>
                                             </tr>
                                         ))}
@@ -638,12 +689,22 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                     <h4 className="font-medium">
                                                         {index + 1}. {score.candidate.spec.label} ({score.candidate.id})
                                                     </h4>
-                                                    <span className={`px-2 py-1 text-xs rounded-full border ${score.passed_all_required
-                                                        ? 'bg-card text-green-400 border-border'
-                                                        : 'bg-card text-yellow-400 border-border'
-                                                        }`}>
-                                                        Shortfall: {score.workload_distance} users
-                                                    </span>
+                                                    {(() => {
+                                                        const { diff, isSurplus } = workloadVsTarget(
+                                                            score.candidate.sim_workload.concurrent_users,
+                                                            design.workload.concurrent_users,
+                                                        );
+                                                        return (
+                                                            <span
+                                                                className={`px-2 py-1 text-xs rounded-full border ${isSurplus
+                                                                    ? 'bg-card text-green-400 border-border'
+                                                                    : 'bg-card text-red-400 border-border'
+                                                                    }`}
+                                                            >
+                                                                {isSurplus ? 'Surplus' : 'Shortfall'}: {isSurplus ? '+' : ''}{diff} users
+                                                            </span>
+                                                        );
+                                                    })()}
                                                 </div>
                                                 <ul className="space-y-2">
                                                     {score.suggestions.map((suggestion, sIndex) => (
