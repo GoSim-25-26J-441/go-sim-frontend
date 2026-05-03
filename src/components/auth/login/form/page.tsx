@@ -316,7 +316,7 @@ export default function Form() {
       {/* Create Account Link */}
       <div className="flex justify-center items-center my-10">
         <p className="text-sm font-normal text-white/90">
-          New to GO-SIM?{" "}
+          New to ArcFind?{" "}
           <button
             onClick={handleCreateAccount}
             className="font-bold text-white hover:text-white/80 transition-colors"

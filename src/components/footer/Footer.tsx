@@ -5,7 +5,7 @@ export default function Footer() {
   return (
     <footer className="border-t border-border">
       <div className="mx-auto max-w-6xl px-4 py-6 text-sm text-muted flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <span>© {year} GO-SIM. All rights reserved.</span>
+        <span>© {year} ArcFind. All rights reserved.</span>
         <nav className="flex gap-4">
           <Link href="/docs">Docs</Link>
           <Link href="/pricing">Pricing</Link>

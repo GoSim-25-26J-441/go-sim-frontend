@@ -39,7 +39,7 @@ export function useExport(jobId: string | null | undefined) {
     if (opts?.download) {
       downloadText(
         yamlText,
-        opts.filename || `gosim-${jobId}.yaml`,
+        opts.filename || `arcfind-${jobId}.yaml`,
         "text/yaml"
       );
     }
@@ -62,7 +62,7 @@ export function useExport(jobId: string | null | undefined) {
     if (opts?.download) {
       downloadText(
         JSON.stringify(spec, null, 2),
-        opts.filename || `gosim-${jobId}.json`,
+        opts.filename || `arcfind-${jobId}.json`,
         "application/json"
       );
     }
