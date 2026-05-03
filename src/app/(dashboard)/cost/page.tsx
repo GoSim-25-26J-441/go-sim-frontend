@@ -13,11 +13,10 @@ import {
   CheckCircle,
   CalendarDays,
   Circle,
-  ChevronRight,
-  FolderOpen,
   ArrowLeft,
   Upload,
   Loader2,
+  Play,
 } from "lucide-react";
 import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
@@ -97,39 +96,7 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
         setRuns(runList.filter((r) => (r.project_id || "") === projectId));
       } catch (err) {
         console.error("Error fetching runs:", err);
-        // const fallbackData: Run[] = [
-        //   {
-        //     id: "0610bab4-a1a6-4ab2-9314-2e54caa1d126",
-        //     requestNumber: 1,
-        //     workload: 2000,
-        //     preferred_vcpu: 5,
-        //     preferred_memory_gb: 24,
-        //     created_at: "Dec 4, 2025, 22:43",
-        //     best_candidate: {
-        //       candidate: {
-        //         spec: { vcpu: 16, memory_gb: 64 }
-        //       },
-        //       workload_distance: 100
-        //     },
-        //     all_candidates: []
-        //   },
-        //   {
-        //     id: "1e9a8484-958b-42a6-99c0-1e671a21eed6",
-        //     requestNumber: 2,
-        //     workload: 2000,
-        //     preferred_vcpu: 8,
-        //     preferred_memory_gb: 16,
-        //     created_at: "Dec 4, 2025, 22:18",
-        //     best_candidate: {
-        //       candidate: {
-        //         spec: { vcpu: 4, memory_gb: 8 }
-        //       },
-        //       workload_distance: 100
-        //     },
-        //     all_candidates: []
-        //   }
-        // ];
-        // setRuns(fallbackData);
+
       } finally {
         setLoading(false);
       }
@@ -141,13 +108,6 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
     if (!firebaseUid) return;
     fetchRuns(firebaseUid);
   }, [fetchRuns, firebaseUid]);
-
-  const handleRunClick = (run: Run) => {
-    const path = projectId
-      ? `/project/${projectId}/cost/${run.id}`
-      : `/cost/${run.id}`;
-    router.push(path);
-  };
 
   if (loading) {
     return (
@@ -217,150 +177,92 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-7xl px-4">
-            <div className="mb-8">
-              <h3 className="mb-4 flex items-center gap-2 text-2xl font-bold">
-                <FolderOpen className="h-5 w-5 opacity-70" />
-                Project: {projectId}
-              </h3>
-              <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-2xl font-bold">Runs</h2>
-              </div>
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {runs
-                  .filter((run) => run.run_id != null && run.run_id !== "")
-                  .map((run, index) => (
-                    <div
+          <div className="w-full">
+            <ul className="shrink-0 divide-y divide-white/40">
+              {runs
+                .filter((run) => run.run_id != null && run.run_id !== "")
+                .map((run, index) => {
+                  const costHref = projectId
+                    ? `/project/${projectId}/cost/${run.id}`
+                    : `/cost/${run.id}`;
+                  const suggestHref = projectId
+                    ? `/project/${projectId}/cost/suggest/${run.id}`
+                    : `/cost/suggest/${run.id}`;
+                  return (
+                    <li
                       key={run.id}
-                      className="group bg-card border border-border rounded-xl p-6 hover:bg-surface cursor-pointer transition-all duration-300 hover:border-white/20"
-                      onClick={() => handleRunClick(run)}
+                      className="flex items-start justify-between gap-4 py-5"
                     >
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <Circle
-                              className="w-3 h-3 opacity-50"
-                              fill="currentColor"
-                            />
-                            <span className="text-xs opacity-60">
-                              Run #{index + 1}
-                            </span>
-                          </div>
-                          <h3 className="text-lg font-semibold transition-colors">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-medium text-white">
                             {run.workload != null
                               ? `${run.workload.toLocaleString()} Users Workload`
                               : "Workload not specified"}
-                          </h3>
-                        </div>
-                        <div className="text-right">
-                          <span className="inline-block px-3 py-1 text-xs font-medium rounded-full bg-card border border-border opacity-80">
-                            ID: {run.id.substring(0, 8)}...
+                          </p>
+                          <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-white/60 bg-white/10">
+                            <Circle
+                              className="h-2 w-2 opacity-60"
+                              fill="currentColor"
+                            />
+                            Run #{index + 1}
                           </span>
                         </div>
-                      </div>
 
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-xs opacity-60 mb-1 flex items-center gap-1">
-                              <CalendarDays className="w-3 h-3" />
-                              Created
-                            </p>
-                            <p className="text-sm opacity-90">
-                              {new Date(run.created_at).toLocaleDateString(
-                                "en-US",
-                                {
-                                  year: "numeric",
-                                  month: "short",
-                                  day: "numeric",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                  hour12: true,
-                                },
-                              )}
-                            </p>
-                          </div>
+                        <div className="flex items-center gap-1 text-[11px] text-white/40">
+                          <CalendarDays className="h-3 w-3 shrink-0 opacity-70" />
+                          <span>Created {run.created_at}</span>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-card border border-border rounded-lg p-3">
-                            <p className="text-xs opacity-60 mb-2">
-                              Preferred Spec
-                            </p>
-                            <div className="flex items-center gap-2 mb-1">
-                              <Cpu className="w-4 h-4 opacity-70" />
-                              <span className="font-medium">
-                                {run.preferred_vcpu} vCPU
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-[11px] text-white/50">
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-white/30">Preferred</span>
+                            <Cpu className="h-3 w-3 opacity-70" />
+                            <span className="font-mono text-white/70">
+                              {run.preferred_vcpu} vCPU
+                            </span>
+                            <MemoryStick className="h-3 w-3 opacity-70" />
+                            <span className="font-mono text-white/70">
+                              {run.preferred_memory_gb} GB
+                            </span>
+                          </span>
+                          {run.best_candidate?.candidate?.spec && (
+                            <span className="flex items-center gap-1.5">
+                              <span className="text-white/30">Recommended</span>
+                              <CheckCircle className="h-3 w-3 shrink-0 text-green-400/90" />
+                              <span className="font-mono text-white/70">
+                                {run.best_candidate.candidate.spec.vcpu} vCPU
                               </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <MemoryStick className="w-4 h-4 opacity-70" />
-                              <span className="font-medium">
-                                {run.preferred_memory_gb} GB RAM
+                              <CheckCircle className="h-3 w-3 shrink-0 text-green-400/90" />
+                              <span className="font-mono text-white/70">
+                                {run.best_candidate.candidate.spec.memory_gb}{" "}
+                                GB
                               </span>
-                            </div>
-                          </div>
-
-                          {run.best_candidate && (
-                            <div className="bg-card border border-border rounded-lg p-3">
-                              <p className="text-xs opacity-60 mb-2">
-                                Recommended
-                              </p>
-                              <div className="flex items-center gap-2 mb-1">
-                                <CheckCircle className="w-4 h-4 text-green-400" />
-                                <span className="font-medium">
-                                  {run.best_candidate.candidate.spec.vcpu} vCPU
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <CheckCircle className="w-4 h-4 text-green-400" />
-                                <span className="font-medium">
-                                  {run.best_candidate.candidate.spec.memory_gb} GB
-                                  RAM
-                                </span>
-                              </div>
-                            </div>
+                            </span>
                           )}
                         </div>
-
-                        <div className="pt-4 border-t border-border space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs opacity-60">
-                              Click to view cost analysis
-                            </span>
-                            <ChevronRight className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                          <Link
-                            href={
-                              projectId
-                                ? `/project/${projectId}/cost/suggest/${run.id}`
-                                : `/cost/suggest/${run.id}`
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-xs font-medium opacity-70 hover:opacity-100 flex items-center gap-1"
-                          >
-                            <BarChart3 className="w-3.5 h-3.5" />
-                            View Metrices Analysis
-                          </Link>
-                        </div>
                       </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
 
-            <div className="mt-12 pt-6">
-              <div className="text-center">
-                <p className="text-sm text-white/60">
-                  Showing {runsWithRunId.length} run
-                  {runsWithRunId.length !== 1 ? "s" : ""}
-                </p>
-                <p className="mt-2 text-xs text-white/50">
-                  Select any run to analyze cloud provider costs, compare
-                  pricing options, and optimize your infrastructure
-                </p>
-              </div>
-            </div>
+                      <div className="flex shrink-0 items-center gap-3 pt-0.5">
+                        <Link
+                          href={suggestHref}
+                          className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90"
+                        >
+                          <BarChart3 className="h-3 w-3" />
+                          Metrics
+                        </Link>
+                        <Link
+                          href={costHref}
+                          className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600/80 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500"
+                        >
+                          <Play className="h-3 w-3" />
+                          View
+                        </Link>
+                      </div>
+                    </li>
+                  );
+                })}
+            </ul>
           </div>
         )}
       </div>
