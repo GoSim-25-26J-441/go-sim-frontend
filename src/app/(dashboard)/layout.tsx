@@ -40,14 +40,22 @@ export default function DashboardLayout({
               <Topbar />
               <div className="min-h-0 overflow-hidden grid md:max-[1919px]:grid-cols-[236px_minmax(0,1fr)] min-[1920px]:grid-cols-[320px_minmax(0,1fr)]">
                 <Sidebar />
-                <main className="relative min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
-                  <img
-                    src="/logo/logo.png"
-                    alt="logo"
-                    className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-18 h-18 opacity-10"
-                  />
+                <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                  {/* Watermark: fixed within the main pane (does not scroll with page content). */}
+                  <div
+                    className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center p-4"
+                    aria-hidden
+                  >
+                    <img
+                      src="/logo/logo.png"
+                      alt=""
+                      className="h-18 w-18 select-none opacity-10"
+                    />
+                  </div>
 
-                  <div className="relative z-10 min-h-full flex flex-col">{children}</div>
+                  <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 scrollbar-subtle">
+                    {children}
+                  </div>
                 </main>
               </div>
             </div>

@@ -225,7 +225,7 @@ function GlobalRecommendPanel({
                                                 type="button"
                                                 disabled={breakdownNavBusy}
                                                 onClick={() => onViewBreakdown(globalRec.recommendation.recommended!)}
-                                                className="inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
+                                                className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black transition-colors hover:bg-white/90 disabled:pointer-events-none disabled:opacity-50"
                                             >
                                                 <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
                                                 View pricing breakdown in this region
@@ -348,13 +348,14 @@ function GlobalRecommendPanel({
                                                                 )}
                                                             </div>
                                                             {onViewBreakdown && supportsProviderBreakdownNav(r.provider) && (
-                                                                <div className="mt-3 border-t border-white/40 pt-3 sm:pl-11">
+                                                                <div className="mt-3 pt-1 sm:pl-11">
                                                                     <button
                                                                         type="button"
                                                                         disabled={breakdownNavBusy}
                                                                         onClick={() => onViewBreakdown(r)}
-                                                                        className="text-xs font-medium text-sky-300/95 underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                                                                        className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black transition-colors hover:bg-white/90 disabled:pointer-events-none disabled:opacity-50"
                                                                     >
+                                                                        <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
                                                                         View pricing breakdown in this region
                                                                     </button>
                                                                 </div>
@@ -859,10 +860,10 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                     {viewMode === "by-region" ? (
                         <div>
-                            <p className="mb-3 text-xs font-medium text-white/70">Select region:</p>
+                                <p className="mb-3 text-xs font-medium text-white/70">Select region:</p>
                             <div className="flex flex-wrap items-center gap-3">
                                 <select
-                                    className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
+                                    className="region-select w-full max-w-md rounded-lg border-0 bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
                                     value={selectedGenericRegionId}
                                     onChange={(e) => {
                                         const v = e.target.value;
@@ -871,12 +872,12 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     disabled={reloadingProviderCost}
                                 >
                                     {filteredGenericRegions.length === 0 && (
-                                        <option value="" disabled className="bg-[#1a1a1a] text-white">
+                                        <option value="" disabled className="bg-white text-black">
                                             Loading regions…
                                         </option>
                                     )}
                                     {filteredGenericRegions.map((r) => (
-                                        <option key={r.id} value={r.id} className="bg-[#1a1a1a] text-white">
+                                        <option key={r.id} value={r.id} className="bg-white text-black">
                                             {r.displayName}
                                         </option>
                                     ))}
@@ -902,9 +903,9 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             key={p}
                                             type="button"
                                             onClick={() => setSelectedProvider(p)}
-                                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${selectedProvider === p
-                                                ? "bg-white font-medium text-black shadow-sm"
-                                                : "bg-transparent text-white/60 hover:bg-white/10 hover:text-white"
+                                            className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${selectedProvider === p
+                                                ? "bg-white text-black shadow-sm"
+                                                : "border border-white/20 bg-white/10 text-white hover:bg-white/15"
                                                 }`}
                                         >
                                             {p.toUpperCase()}
@@ -950,7 +951,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             </span>
                                         ))}
                                         <select
-                                            className="region-select max-w-[220px] rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
+                                            className="region-select max-w-[220px] rounded-lg border-0 bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
                                             value=""
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -966,7 +967,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             {regions
                                                 .filter((r) => !selectedRegions.includes(r))
                                                 .map((r) => (
-                                                    <option key={r} value={r} className="bg-[#1a1a1a] text-white">
+                                                    <option key={r} value={r} className="bg-white text-black">
                                                         {getRegionDisplayName(r, selectedProvider)}
                                                     </option>
                                                 ))}
@@ -981,7 +982,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                 ) : (
                                     <div className="flex flex-wrap items-center gap-3">
                                         <select
-                                            className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
+                                            className="region-select w-full max-w-md rounded-lg border-0 bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
                                             value={selectedRegions[0] ?? ""}
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -993,7 +994,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             disabled={regions.length === 0 || reloadingProviderCost}
                                         >
                                             {regions.map((r) => (
-                                                <option key={r} value={r} className="bg-[#1a1a1a] text-white">
+                                                <option key={r} value={r} className="bg-white text-black">
                                                     {getRegionDisplayName(r, selectedProvider)}
                                                 </option>
                                             ))}
@@ -1018,23 +1019,23 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                 {/* Region comparison table (when enabled and 2+ regions) */}
                 {viewMode === "by-provider" && compareRegionsEnabled && selectedRegions.length >= 2 && currentCosts.length > 0 && (
-                    <div className="bg-card border border-border rounded-lg p-6 mb-8">
-                        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <GitCompare className="w-5 h-5" />
+                    <div className="mb-8 overflow-hidden rounded-lg bg-white/4">
+                        <h2 className="flex items-center gap-2 border-b border-white/40 px-4 py-3 text-sm font-semibold text-white">
+                            <GitCompare className="h-4 w-4 shrink-0 opacity-90" />
                             Region comparison
                         </h2>
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto px-2 pb-3 pt-1 sm:px-4 sm:pb-4">
                             <table className="min-w-full border-collapse">
                                 <thead>
-                                    <tr className="border-b border-border">
-                                        <th className="text-left py-3 px-4 text-xs font-medium opacity-80">Plan</th>
+                                    <tr className="border-b border-white/40">
+                                        <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-white/50">Plan</th>
 
                                         {selectedRegions.map((r) => (
-                                            <th key={r} className="text-left py-3 px-4 text-xs font-medium opacity-80 whitespace-nowrap">
+                                            <th key={r} className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-white/50">
                                                 {getRegionDisplayName(r, selectedProvider)}
                                             </th>
                                         ))}
-                                        <th className="text-left py-3 px-4 text-xs font-medium opacity-80">Best</th>
+                                        <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-white/50">Best</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1052,29 +1053,29 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             const validValues = monthlyValues.filter((v): v is number => v != null);
                                             const minMonthly = validValues.length > 0 ? Math.min(...validValues) : 0;
                                             return (
-                                                <tr key={planKey} className="border-b border-border hover:bg-surface/50 transition-colors">
-                                                    <td className="py-3 px-4 text-xs font-medium">{planLabel}</td>
+                                                <tr key={planKey} className="border-b border-white/25 transition-colors last:border-b-0 hover:bg-white/6">
+                                                    <td className="px-3 py-2.5 text-xs font-medium text-white/90">{planLabel}</td>
                                                     {selectedRegions.map((r) => {
                                                         const cost = byRegion.get(r);
                                                         const isMin = cost != null && validValues.length > 0 && cost.total_month === minMonthly;
                                                         return (
-                                                            <td key={r} className="py-3 px-4 text-xs align-top">
+                                                            <td key={r} className="align-top px-3 py-2.5 text-xs text-white/85">
                                                                 {cost != null ? (
                                                                     <div className="space-y-1">
                                                                         <span className={isMin ? "font-bold text-green-400" : ""}>
                                                                             {formatCurrency(cost.total_month)}
                                                                         </span>
-                                                                        <div className="text-[10px] opacity-60">
+                                                                        <div className="text-[10px] text-white/50">
                                                                             {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                                         </div>
                                                                     </div>
                                                                 ) : (
-                                                                    <span className="opacity-50">—</span>
+                                                                    <span className="text-white/40">—</span>
                                                                 )}
                                                             </td>
                                                         );
                                                     })}
-                                                    <td className="py-3 px-4 text-xs text-green-400 font-medium">
+                                                    <td className="px-3 py-2.5 text-xs font-medium text-green-400">
                                                         {validValues.length > 0 ? formatCurrency(minMonthly) : "—"}
                                                     </td>
                                                 </tr>
@@ -1089,37 +1090,50 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                 {viewMode === "by-region" && genericRegion && (
                     <div className="mb-8">
-                        <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
-                            <MapPin className="w-6 h-6" />
-                            Pricing by region — {genericRegion.displayName}
-                        </h2>
-                        <p className="text-xs opacity-60 mb-6">Costs for both AWS and Azure in this region</p>
-                        <div className="grid md:grid-cols-2 gap-8">
-                            <div className="bg-card border border-border rounded-lg p-6">
-                                <h3 className="text-lg font-semibold mb-4">AWS — {getRegionDisplayName(genericRegion.aws, "aws")}</h3>
+                        <div className="mb-4 flex items-start gap-3">
+                            <MapPin className="mt-0.5 h-5 w-5 shrink-0 opacity-90" />
+                            <div className="min-w-0">
+                                <h2 className="text-sm font-semibold text-white">
+                                    Pricing by region — {genericRegion.displayName}
+                                </h2>
+                                <p className="mt-1 text-[10px] text-white/50">
+                                    Costs for both AWS and Azure in this region
+                                </p>
+                            </div>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <div className="rounded-lg bg-white/4 p-4">
+                                <div className="mb-4">
+                                    <p className="text-[10px] font-medium uppercase tracking-wide text-white/45">
+                                        AWS
+                                    </p>
+                                    <p className="mt-0.5 text-xs font-semibold text-white">
+                                        {getRegionDisplayName(genericRegion.aws, "aws")}
+                                    </p>
+                                </div>
                                 {costsByRegionAWS.length === 0 ? (
-                                    <div className="text-center py-8 opacity-60">
-                                        <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                                    <div className="py-6 text-center text-xs text-white/50">
+                                        <Server className="mx-auto mb-2 h-8 w-8 opacity-40" />
                                         <p>No instances found for AWS in this region</p>
                                     </div>
                                 ) : (
-                                    <div className="space-y-4">
+                                    <div className="space-y-2">
                                         {costsByRegionAWS.map((cost, index) => {
                                             const isBest = bestAWS && cost.total_month === bestAWS.total_month;
                                             const isMinimal = minimalAWS && cost.total_month === minimalAWS.total_month;
                                             return (
-                                                <div key={`aws-${index}`} className="border border-border rounded-lg p-4">
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
-                                                        <span className={`text-xs font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                <div key={`aws-${index}`} className="rounded-lg bg-white/6 px-3 py-3 sm:px-4">
+                                                    <div className="mb-1.5 flex items-start justify-between gap-2">
+                                                        <span className="text-xs font-medium text-white/90">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
+                                                        <span className={`shrink-0 text-[10px] font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-xs opacity-70 mb-2">
+                                                    <div className="mb-2 text-[10px] text-white/55">
                                                         {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                     </div>
-                                                    <div className="flex justify-between items-center text-base font-bold">
-                                                        <span>Monthly</span>
+                                                    <div className="flex items-center justify-between text-sm font-bold text-white">
+                                                        <span className="text-[10px] font-medium uppercase tracking-wide text-white/50">Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
                                                     </div>
                                                     {(isBest || isMinimal) && (
@@ -1133,31 +1147,38 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     </div>
                                 )}
                             </div>
-                            <div className="bg-card border border-border rounded-lg p-6">
-                                <h3 className="text-lg font-semibold mb-4">Azure — {getRegionDisplayName(genericRegion.azure, "azure")}</h3>
+                            <div className="rounded-lg bg-white/4 p-4">
+                                <div className="mb-4">
+                                    <p className="text-[10px] font-medium uppercase tracking-wide text-white/45">
+                                        Azure
+                                    </p>
+                                    <p className="mt-0.5 text-xs font-semibold text-white">
+                                        {getRegionDisplayName(genericRegion.azure, "azure")}
+                                    </p>
+                                </div>
                                 {costsByRegionAzure.length === 0 ? (
-                                    <div className="text-center py-8 opacity-60">
-                                        <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                                    <div className="py-6 text-center text-xs text-white/50">
+                                        <Server className="mx-auto mb-2 h-8 w-8 opacity-40" />
                                         <p>No instances found for Azure in this region</p>
                                     </div>
                                 ) : (
-                                    <div className="space-y-4">
+                                    <div className="space-y-2">
                                         {costsByRegionAzure.map((cost, index) => {
                                             const isBest = bestAzure && cost.total_month === bestAzure.total_month;
                                             const isMinimal = minimalAzure && cost.total_month === minimalAzure.total_month;
                                             return (
-                                                <div key={`azure-${index}`} className="border border-border rounded-lg p-4">
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
-                                                        <span className={`text-xs font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                <div key={`azure-${index}`} className="rounded-lg bg-white/6 px-3 py-3 sm:px-4">
+                                                    <div className="mb-1.5 flex items-start justify-between gap-2">
+                                                        <span className="text-xs font-medium text-white/90">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
+                                                        <span className={`shrink-0 text-[10px] font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-xs opacity-70 mb-2">
+                                                    <div className="mb-2 text-[10px] text-white/55">
                                                         {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                     </div>
-                                                    <div className="flex justify-between items-center text-base font-bold">
-                                                        <span>Monthly</span>
+                                                    <div className="flex items-center justify-between text-sm font-bold text-white">
+                                                        <span className="text-[10px] font-medium uppercase tracking-wide text-white/50">Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
                                                     </div>
                                                     {(isBest || isMinimal) && (
@@ -1177,12 +1198,12 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                 {viewMode === "by-provider" && (!compareRegionsEnabled || selectedRegions.length < 2) && (
                     <div>
-                        <div className="flex items-center justify-between m-6">
-                            <h2 className="text-lg font-bold">Pricing Options Breakdown</h2>
-                            <div className="text-xs opacity-60">
+                        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                            <h2 className="text-sm font-semibold text-white">Pricing Options Breakdown</h2>
+                            <div className="text-[10px] text-white/50">
                                 Showing {currentCosts.length} pricing option{currentCosts.length !== 1 ? 's' : ''}
                                 {compareRegionsEnabled && selectedRegions.length > 1 && (
-                                    <span className="ml-2">
+                                    <span className="ml-1.5">
                                         across {selectedRegions.length} regions
                                     </span>
                                 )}
@@ -1190,13 +1211,13 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                         </div>
 
                         {currentCosts.length === 0 ? (
-                            <div className="text-center py-12 bg-card border border-border rounded-lg">
-                                <Server className="w-12 h-12 opacity-50 mx-auto mb-4" />
-                                <p className="opacity-60">No instances found for {selectedProvider.toUpperCase()}</p>
-                                {selectedRegions.length > 0 && <p className="text-xs opacity-50 mt-2">in selected region(s)</p>}
+                            <div className="rounded-lg bg-white/4 px-4 py-12 text-center">
+                                <Server className="mx-auto mb-3 h-10 w-10 text-white/35" />
+                                <p className="text-xs text-white/60">No instances found for {selectedProvider.toUpperCase()}</p>
+                                {selectedRegions.length > 0 && <p className="mt-2 text-[10px] text-white/45">in selected region(s)</p>}
                             </div>
                         ) : (
-                            <div className="space-y-6">
+                            <div className="overflow-hidden rounded-lg bg-white/4 divide-y divide-white/40">
                                 {currentCosts.map((cost, index) => {
                                     const planId = `${cost.provider}-${cost.purchase_type}-${cost.lease_contract_length}-${index}`;
                                     const isExpanded = expandedBreakdown === planId;
@@ -1212,28 +1233,28 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                         <div
                                             id={`cost-plan-${planId}`}
                                             key={planId}
-                                            className="border-b border-border p-6 transition-all relative overflow-hidden scroll-mt-24 bg-card"
+                                            className="relative scroll-mt-24 overflow-hidden px-4 py-5 transition-all sm:px-5"
                                         >
                                             {/* Left side accent */}
                                             {(isBest || isMinimal) && (
-                                                <div className={`absolute left-0 top-0 bottom-0 w-1 bg-white`}></div>
+                                                <div className={`absolute bottom-0 left-0 top-0 w-1 bg-white`}></div>
                                             )}
 
                                             {/* Plan Header */}
-                                            <div className="flex items-start justify-between mb-6">
-                                                <div>
-                                                    <div className="flex items-center gap-3 mb-2">
-                                                        <h3 className="text-base font-bold">
+                                            <div className="mb-4 flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                                                        <h3 className="text-sm font-semibold text-white">
                                                             {cost.purchase_type}
                                                             {cost.lease_contract_length && (
-                                                                <span className="text-base opacity-60 ml-2">
+                                                                <span className="ml-1.5 text-xs font-normal text-white/55">
                                                                     ({cost.lease_contract_length})
                                                                 </span>
                                                             )}
                                                         </h3>
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${cost.within_budget
-                                                            ? "bg-card text-green-400 border border-border"
-                                                            : "bg-card text-red-400 border border-border"
+                                                        <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${cost.within_budget
+                                                            ? "border border-green-600/40 bg-green-600/25 text-green-400"
+                                                            : "border border-red-500/30 bg-red-600/20 text-red-300"
                                                             }`}>
 
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
@@ -1248,62 +1269,63 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                             </div>
                                                         )}
                                                     </div>
-                                                    <div className="flex items-center gap-4 text-xs opacity-60">
+                                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/55">
                                                         <div className="flex items-center gap-1">
-                                                            <Building className="w-4 h-4" />
+                                                            <Building className="h-3.5 w-3.5 shrink-0" />
                                                             <span>{cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM</span>
                                                         </div>
                                                         <div className="flex items-center gap-1">
-                                                            <MapPin className="w-4 h-4" />
+                                                            <MapPin className="h-3.5 w-3.5 shrink-0" />
                                                             <span>{getRegionDisplayName(cost.region, selectedProvider)}</span>
                                                         </div>
                                                         <div className="flex items-center gap-1">
-                                                            <Users className="w-4 h-4" />
+                                                            <Users className="h-3.5 w-3.5 shrink-0" />
                                                             <span>{cost.nodes} nodes</span>
                                                         </div>
                                                     </div>
                                                 </div>
 
                                                 <button
+                                                    type="button"
                                                     onClick={() => toggleBreakdown(planId)}
-                                                    className="flex items-center gap-2 opacity-80 hover:opacity-100"
+                                                    className="flex shrink-0 items-center gap-1.5 text-xs text-white/80 transition-opacity hover:opacity-100"
                                                 >
                                                     <ChevronDown
-                                                        className={`w-5 h-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                                        className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                                                     />
                                                     {isExpanded ? 'Hide Details' : 'Show Details'}
                                                 </button>
                                             </div>
 
                                             {/* Cost Summary */}
-                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                                            <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                                                 {/* Per Node Cost */}
-                                                <div className="bg-card border border-border rounded-lg p-4">
-                                                    <h4 className="font-semibold mb-3 opacity-80 flex items-center gap-2">
-                                                        <Server className="w-4 h-4" />
+                                                <div className="rounded-lg bg-white/6 p-3">
+                                                    <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-white/80">
+                                                        <Server className="h-3.5 w-3.5" />
                                                         Per Node Cost
                                                     </h4>
-                                                    <div className="space-y-2">
-                                                        <div className="flex justify-between items-center">
-                                                            <span className="text-xs opacity-60">Hourly Rate</span>
-                                                            <span className="font-bold">
+                                                    <div className="space-y-1.5">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] text-white/50">Hourly Rate</span>
+                                                            <span className="text-xs font-semibold text-white">
                                                                 ${cost.price_per_node_hour.toFixed(3)}
                                                             </span>
                                                         </div>
-                                                        <div className="flex justify-between items-center">
-                                                            <span className="text-xs opacity-60">Monthly Estimate</span>
-                                                            <span className="font-bold">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] text-white/50">Monthly Estimate</span>
+                                                            <span className="text-xs font-semibold text-white">
                                                                 {formatCurrency(cost.price_per_node_month)}
                                                             </span>
                                                         </div>
-                                                        <div className="pt-2 mt-2 border-t border-border">
-                                                            <div className="flex justify-between items-center">
-                                                                <span className="text-xs opacity-80">Total for {cost.nodes} nodes</span>
-                                                                <span className="font-bold">
+                                                        <div className="mt-2 border-t border-white/40 pt-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-[10px] text-white/60">Total for {cost.nodes} nodes</span>
+                                                                <span className="text-xs font-semibold text-white">
                                                                     {formatCurrency(totalNodeMonthly)}
                                                                 </span>
                                                             </div>
-                                                            <div className="text-[10px] opacity-50 mt-1">
+                                                            <div className="mt-1 text-[10px] text-white/45">
                                                                 ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} nodes × 730h
                                                             </div>
                                                         </div>
@@ -1311,65 +1333,62 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                 </div>
 
                                                 {/* Control Plane Cost */}
-                                                <div className="bg-card border border-border rounded-lg p-4">
-                                                    <h4 className="font-semibold mb-3 opacity-80 flex items-center gap-2">
-                                                        <Target className="w-4 h-4" />
+                                                <div className="rounded-lg bg-white/6 p-3">
+                                                    <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-white/80">
+                                                        <Target className="h-3.5 w-3.5" />
                                                         Control Plane
                                                     </h4>
-                                                    <div className="space-y-2">
-                                                        <div className="flex justify-between items-center">
-                                                            <span className="text-xs opacity-60">Tier</span>
-                                                            <span className="font-bold">
+                                                    <div className="space-y-1.5">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] text-white/50">Tier</span>
+                                                            <span className="text-xs font-semibold text-white">
                                                                 {cost.control_plane_tier.charAt(0).toUpperCase() + cost.control_plane_tier.slice(1)}
                                                             </span>
                                                         </div>
-                                                        <div className="flex justify-between items-center">
-                                                            <span className="text-xs opacity-60">Hourly Cost</span>
-                                                            <span className="font-bold">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] text-white/50">Hourly Cost</span>
+                                                            <span className="text-xs font-semibold text-white">
                                                                 ${cost.control_plane_hour.toFixed(3)}
                                                             </span>
                                                         </div>
-                                                        <div className="flex justify-between items-center">
-                                                            <span className="text-xs opacity-60">Monthly Cost</span>
-                                                            <span className="font-bold">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] text-white/50">Monthly Cost</span>
+                                                            <span className="text-xs font-semibold text-white">
                                                                 {formatCurrency(cost.control_plane_month)}
                                                             </span>
                                                         </div>
-                                                        <div className="text-[10px] opacity-50 mt-2">
+                                                        <div className="mt-1.5 text-[10px] text-white/45">
                                                             Fixed cost for cluster management
                                                         </div>
                                                     </div>
                                                 </div>
 
                                                 {/* Total Cluster Cost */}
-                                                <div className={`bg-card border ${cost.within_budget
-                                                    ? "border-border"
-                                                    : "border-border"
-                                                    } rounded-lg p-4`}>
-                                                    <h4 className="font-semibold mb-3 flex items-center gap-2">
-                                                        <Calculator className="w-4 h-4" />
+                                                <div className="rounded-lg bg-white/6 p-3">
+                                                    <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-white">
+                                                        <Calculator className="h-3.5 w-3.5" />
                                                         Total Cluster Cost
                                                     </h4>
-                                                    <div className="space-y-3">
+                                                    <div className="space-y-2.5">
                                                         <div>
-                                                            <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-xs opacity-80">Hourly Total</span>
-                                                                <span className="font-bold text-lg">
+                                                            <div className="mb-0.5 flex items-center justify-between">
+                                                                <span className="text-[10px] text-white/60">Hourly Total</span>
+                                                                <span className="text-base font-bold text-white">
                                                                     ${cost.total_hour.toFixed(3)}
                                                                 </span>
                                                             </div>
-                                                            <div className="text-[10px] opacity-50">
+                                                            <div className="text-[10px] text-white/45">
                                                                 ${totalNodeHourly.toFixed(3)} (nodes) + ${cost.control_plane_hour.toFixed(3)} (control)
                                                             </div>
                                                         </div>
                                                         <div>
-                                                            <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-xs opacity-80">Monthly Total</span>
-                                                                <span className="font-bold text-xl">
+                                                            <div className="mb-0.5 flex items-center justify-between">
+                                                                <span className="text-[10px] uppercase tracking-wide text-white/50">Monthly Total</span>
+                                                                <span className="text-lg font-bold text-white">
                                                                     {formatCurrency(cost.total_month)}
                                                                 </span>
                                                             </div>
-                                                            <div className="text-[10px] opacity-50">
+                                                            <div className="text-[10px] text-white/45">
                                                                 ${totalNodeMonthly.toFixed(2)} (nodes) + ${cost.control_plane_month.toFixed(2)} (control)
                                                             </div>
                                                         </div>
@@ -1378,17 +1397,17 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             </div>
 
                                             {/* Budget Comparison */}
-                                            <div className="bg-card border border-border rounded-lg p-4 mb-4">
-                                                <h4 className="font-semibold mb-3 flex items-center gap-2">
-                                                    <BarChart3 className="w-4 h-4" />
+                                            <div className="mb-4 rounded-lg bg-white/6 p-3">
+                                                <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-white/80">
+                                                    <BarChart3 className="h-3.5 w-3.5" />
                                                     Budget Comparison
                                                 </h4>
-                                                <div className="space-y-3">
-                                                    <div className="flex justify-between items-center">
-                                                        <span className="opacity-80">Monthly Budget</span>
-                                                        <span className="font-bold">{formatCurrency(cost.budget_month)}</span>
+                                                <div className="space-y-2.5">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[10px] text-white/60">Monthly Budget</span>
+                                                        <span className="text-xs font-semibold text-white">{formatCurrency(cost.budget_month)}</span>
                                                     </div>
-                                                    <div className="h-2 bg-card rounded-full overflow-hidden">
+                                                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
                                                         <div
                                                             className={`h-full ${cost.within_budget ? 'bg-green-600' : 'bg-red-600'} transition-all duration-500`}
                                                             style={{
@@ -1396,16 +1415,16 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                             }}
                                                         ></div>
                                                     </div>
-                                                    <div className="flex justify-between text-xs">
-                                                        <span className="opacity-50">0%</span>
+                                                    <div className="flex justify-between text-[10px] text-white/45">
+                                                        <span>0%</span>
                                                         <span className={cost.within_budget ? 'text-green-500' : 'text-red-500'}>
                                                             {budgetPercentage.toFixed(1)}%
                                                         </span>
-                                                        <span className="opacity-50">100%+</span>
+                                                        <span>100%+</span>
                                                     </div>
-                                                    <div className="flex justify-between items-center pt-2 border-t border-border">
-                                                        <span className="opacity-60">Status</span>
-                                                        <span className={`font-bold ${cost.within_budget ? 'text-green-500' : 'text-red-500'}`}>
+                                                    <div className="flex items-center justify-between border-t border-white/40 pt-2">
+                                                        <span className="text-[10px] text-white/55">Status</span>
+                                                        <span className={`text-xs font-semibold ${cost.within_budget ? 'text-green-500' : 'text-red-500'}`}>
                                                             {cost.within_budget ? 'Within Budget' : `Over Budget by ${formatCurrency(monthlyBudgetExcess)}`}
                                                         </span>
                                                     </div>
@@ -1414,39 +1433,39 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                                             {/* Detailed Breakdown */}
                                             {isExpanded && (
-                                                <div className="mt-4 pt-4 border-t border-border">
-                                                    <h4 className="font-semibold mb-4 text-xs flex items-center gap-2">
-                                                        <PieChart className="w-5 h-5" />
+                                                <div className="border-t border-white/40 pt-4">
+                                                    <h4 className="mb-3 flex items-center gap-2 text-xs font-semibold text-white">
+                                                        <PieChart className="h-4 w-4" />
                                                         Detailed Calculation Breakdown
                                                     </h4>
 
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                                                         {/*Base Calculations */}
-                                                        <div className="space-y-4">
-                                                            <div className="bg-card border border-border rounded-lg p-4">
-                                                                <h5 className="font-medium mb-3 flex items-center gap-2">
-                                                                    <Clock className="w-4 h-4" />
+                                                        <div className="space-y-3">
+                                                            <div className="rounded-lg bg-white/6 p-3">
+                                                                <h5 className="mb-2 flex items-center gap-2 text-xs font-medium text-white/85">
+                                                                    <Clock className="h-3.5 w-3.5" />
                                                                     Hourly Cost Calculation
                                                                 </h5>
-                                                                <div className="space-y-2 text-xs">
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Node hourly cost:</span>
+                                                                <div className="space-y-1.5 text-[10px] text-white/80">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Node hourly cost:</span>
                                                                         <span className="font-mono">${cost.price_per_node_hour.toFixed(3)}</span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Total nodes hourly:</span>
-                                                                        <span className="font-mono">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Total nodes hourly:</span>
+                                                                        <span className="text-right font-mono">
                                                                             ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} = ${totalNodeHourly.toFixed(3)}
                                                                         </span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Control plane hourly:</span>
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Control plane hourly:</span>
                                                                         <span className="font-mono">${cost.control_plane_hour.toFixed(3)}</span>
                                                                     </div>
-                                                                    <div className="pt-2 mt-2 border-t border-border">
-                                                                        <div className="flex justify-between font-bold">
+                                                                    <div className="mt-2 border-t border-white/40 pt-2">
+                                                                        <div className="flex justify-between gap-2 font-semibold text-white">
                                                                             <span>TOTAL HOURLY:</span>
-                                                                            <span className="font-mono">
+                                                                            <span className="text-right font-mono">
                                                                                 ${totalNodeHourly.toFixed(3)} + ${cost.control_plane_hour.toFixed(3)} = ${cost.total_hour.toFixed(3)}
                                                                             </span>
                                                                         </div>
@@ -1454,34 +1473,34 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                 </div>
                                                             </div>
 
-                                                            <div className="bg-card border border-border rounded-lg p-4">
-                                                                <h5 className="font-medium mb-3 flex items-center gap-2">
-                                                                    <Calendar className="w-4 h-4" />
+                                                            <div className="rounded-lg bg-white/6 p-3">
+                                                                <h5 className="mb-2 flex items-center gap-2 text-xs font-medium text-white/85">
+                                                                    <Calendar className="h-3.5 w-3.5" />
                                                                     Monthly Cost Calculation
                                                                 </h5>
-                                                                <div className="space-y-2 text-xs">
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Node monthly cost:</span>
-                                                                        <span className="font-mono">
+                                                                <div className="space-y-1.5 text-[10px] text-white/80">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Node monthly cost:</span>
+                                                                        <span className="text-right font-mono">
                                                                             ${cost.price_per_node_hour.toFixed(3)} × 730h = ${cost.price_per_node_month.toFixed(2)}
                                                                         </span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Total nodes monthly:</span>
-                                                                        <span className="font-mono">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Total nodes monthly:</span>
+                                                                        <span className="text-right font-mono">
                                                                             ${cost.price_per_node_month.toFixed(2)} × {cost.nodes} = ${totalNodeMonthly.toFixed(2)}
                                                                         </span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Control plane monthly:</span>
-                                                                        <span className="font-mono">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Control plane monthly:</span>
+                                                                        <span className="text-right font-mono">
                                                                             ${cost.control_plane_hour.toFixed(3)} × 730h = ${cost.control_plane_month.toFixed(2)}
                                                                         </span>
                                                                     </div>
-                                                                    <div className="pt-2 mt-2 border-t border-border">
-                                                                        <div className="flex justify-between font-bold">
+                                                                    <div className="mt-2 border-t border-white/40 pt-2">
+                                                                        <div className="flex justify-between gap-2 font-semibold text-white">
                                                                             <span>TOTAL MONTHLY:</span>
-                                                                            <span className="font-mono">
+                                                                            <span className="text-right font-mono">
                                                                                 ${totalNodeMonthly.toFixed(2)} + ${cost.control_plane_month.toFixed(2)} = ${cost.total_month.toFixed(2)}
                                                                             </span>
                                                                         </div>
@@ -1491,33 +1510,33 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                         </div>
 
                                                         {/*Budget & Savings */}
-                                                        <div className="space-y-4">
-                                                            <div className="bg-card border border-border rounded-lg p-4">
-                                                                <h5 className="font-medium mb-3 flex items-center gap-2">
-                                                                    <Target className="w-4 h-4" />
+                                                        <div className="space-y-3">
+                                                            <div className="rounded-lg bg-white/6 p-3">
+                                                                <h5 className="mb-2 flex items-center gap-2 text-xs font-medium text-white/85">
+                                                                    <Target className="h-3.5 w-3.5" />
                                                                     Budget Analysis
                                                                 </h5>
-                                                                <div className="space-y-2 text-xs">
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Available budget:</span>
+                                                                <div className="space-y-1.5 text-[10px] text-white/80">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Available budget:</span>
                                                                         <span className="font-mono">${cost.budget_month.toFixed(2)}</span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Cluster cost:</span>
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Cluster cost:</span>
                                                                         <span className="font-mono">${cost.total_month.toFixed(2)}</span>
                                                                     </div>
-                                                                    <div className="pt-2 mt-2 border-t border-border">
-                                                                        <div className={`flex justify-between font-bold ${monthlyBudgetExcess > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                                                                    <div className="mt-2 border-t border-white/40 pt-2">
+                                                                        <div className={`flex justify-between gap-2 font-semibold ${monthlyBudgetExcess > 0 ? 'text-red-400' : 'text-green-400'}`}>
                                                                             <span>{monthlyBudgetExcess > 0 ? 'OVER BUDGET BY:' : 'UNDER BUDGET BY:'}</span>
                                                                             <span className="font-mono">
                                                                                 ${Math.abs(monthlyBudgetExcess).toFixed(2)}
                                                                             </span>
                                                                         </div>
                                                                     </div>
-                                                                    <div className="pt-2 mt-2 border-t border-border">
-                                                                        <div className="flex justify-between">
-                                                                            <span className="opacity-60">Budget utilization:</span>
-                                                                            <span className={`font-bold ${budgetPercentage > 100 ? 'text-red-500' : budgetPercentage > 80 ? 'text-yellow-500' : 'text-green-500'}`}>
+                                                                    <div className="mt-2 border-t border-white/40 pt-2">
+                                                                        <div className="flex justify-between gap-2">
+                                                                            <span className="text-white/50">Budget utilization:</span>
+                                                                            <span className={`font-semibold ${budgetPercentage > 100 ? 'text-red-500' : budgetPercentage > 80 ? 'text-yellow-500' : 'text-green-500'}`}>
                                                                                 {budgetPercentage.toFixed(1)}%
                                                                             </span>
                                                                         </div>
@@ -1525,29 +1544,29 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                 </div>
                                                             </div>
 
-                                                            <div className="bg-card border border-border rounded-lg p-4">
-                                                                <h5 className="font-medium mb-3 flex items-center gap-2">
-                                                                    <TrendingUp className="w-4 h-4" />
+                                                            <div className="rounded-lg bg-white/6 p-3">
+                                                                <h5 className="mb-2 flex items-center gap-2 text-xs font-medium text-white/85">
+                                                                    <TrendingUp className="h-3.5 w-3.5" />
                                                                     Cost Efficiency
                                                                 </h5>
-                                                                <div className="space-y-2 text-xs">
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Cost per node per hour:</span>
+                                                                <div className="space-y-1.5 text-[10px] text-white/80">
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Cost per node per hour:</span>
                                                                         <span className="font-mono">${cost.price_per_node_hour.toFixed(3)}</span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Cost per node per month:</span>
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Cost per node per month:</span>
                                                                         <span className="font-mono">{formatCurrency(cost.price_per_node_month)}</span>
                                                                     </div>
-                                                                    <div className="flex justify-between">
-                                                                        <span className="opacity-60">Control plane % of total:</span>
+                                                                    <div className="flex justify-between gap-2">
+                                                                        <span className="text-white/50">Control plane % of total:</span>
                                                                         <span className="font-mono">
                                                                             {((cost.control_plane_month / cost.total_month) * 100).toFixed(1)}%
                                                                         </span>
                                                                     </div>
-                                                                    <div className="pt-2 mt-2 border-t border-border">
-                                                                        <div className="flex justify-between">
-                                                                            <span className="opacity-60">Average hourly cost:</span>
+                                                                    <div className="mt-2 border-t border-white/40 pt-2">
+                                                                        <div className="flex justify-between gap-2">
+                                                                            <span className="text-white/50">Average hourly cost:</span>
                                                                             <span className="font-mono">${(cost.total_hour / cost.nodes).toFixed(3)}/node</span>
                                                                         </div>
                                                                     </div>
@@ -1557,22 +1576,22 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                     </div>
 
                                                     {/* Footer */}
-                                                    <div className="mt-6 pt-4 border-t border-border">
-                                                        <h5 className="text-xs font-medium opacity-60 mb-2 flex items-center gap-2">
-                                                            <Info className="w-4 h-4" />
+                                                    <div className="mt-4 border-t border-white/40 pt-3">
+                                                        <h5 className="mb-2 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wide text-white/45">
+                                                            <Info className="h-3.5 w-3.5" />
                                                             Calculation Assumptions
                                                         </h5>
-                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[10px] opacity-50">
+                                                        <div className="grid grid-cols-1 gap-3 text-[10px] text-white/45 md:grid-cols-3">
                                                             <div className="flex items-start gap-2">
-                                                                <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
+                                                                <div className="mt-1 h-1 w-1 shrink-0 rounded-full bg-white/30"></div>
                                                                 <span>1 month = 730 hours (24h × 30 days)</span>
                                                             </div>
                                                             <div className="flex items-start gap-2">
-                                                                <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
+                                                                <div className="mt-1 h-1 w-1 shrink-0 rounded-full bg-white/30"></div>
                                                                 <span>Control plane cost is fixed per cluster</span>
                                                             </div>
                                                             <div className="flex items-start gap-2">
-                                                                <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
+                                                                <div className="mt-1 h-1 w-1 shrink-0 rounded-full bg-white/30"></div>
                                                                 <span>Prices exclude taxes, discounts, and additional services</span>
                                                             </div>
                                                         </div>
@@ -1586,8 +1605,8 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                         )}
                     </div>
                 )}
-                <div className="mt-8 pt-6 border-t border-border">
-                    <div className="text-center text-xs opacity-50">
+                <div className="mt-8 border-t border-white/40 pt-6">
+                    <div className="text-center text-[10px] text-white/45">
                         <p className="mt-1">Prices are estimates based on public pricing and may vary based on actual usage, commitments, and additional services</p>
                     </div>
                 </div>
