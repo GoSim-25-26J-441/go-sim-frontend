@@ -85,7 +85,9 @@ import {
 } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
-import { padDataUrlToSquareWhite } from "@/app/features/amg-apd/utils/architectureReportMedia";
+import {
+  padDataUrlToSquareWhite,
+} from "@/app/features/amg-apd/utils/architectureReportMedia";
 import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
 import { ANTI_PATTERN_TOUR_HELP } from "@/app/features/amg-apd/components/patternsDesignerTour/antiPatternTourCopy";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
@@ -380,6 +382,8 @@ type GraphCanvasProps = {
   projectPatternsGuideChrome?: boolean;
   /** Set when PatternsView is scoped to a project (not dashboard-only patterns) */
   projectPatternsPage?: boolean;
+  /** Project patterns: PNG download is viewport canvas only, square-padded (no legend/header strip). */
+  projectPatternsImageExportCanvasOnly?: boolean;
 };
 
 function GraphCanvasInner({
@@ -402,6 +406,7 @@ function GraphCanvasInner({
   designerTourExpandDetailsNonce = 0,
   projectPatternsGuideChrome = false,
   projectPatternsPage = false,
+  projectPatternsImageExportCanvasOnly = false,
 }: GraphCanvasProps & { data: AnalysisResult }) {
   const analysis = data;
   /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
@@ -937,6 +942,21 @@ function GraphCanvasInner({
       const detections = analysis.detections;
 
       return (async (): Promise<string | null> => {
+        if (projectPatternsImageExportCanvasOnly) {
+          try {
+            c.resize();
+            const uri = c.png({
+              bg: "#ffffff",
+              full: false,
+              scale: 2,
+            } as any);
+            const squared = await padDataUrlToSquareWhite(uri);
+            return squared ?? uri;
+          } catch {
+            return null;
+          }
+        }
+
         let graphCanvas: HTMLCanvasElement | null = null;
 
         if (wrap) {
@@ -982,7 +1002,12 @@ function GraphCanvasInner({
         }
       })();
     });
-  }, [cy, onExportImageReady, analysis]);
+  }, [
+    cy,
+    onExportImageReady,
+    analysis,
+    projectPatternsImageExportCanvasOnly,
+  ]);
 
   useEffect(() => {
     if (!projectPatternsPage || !onExportReportDiagramReady || !cyAlive(cy))

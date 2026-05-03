@@ -20,18 +20,21 @@ export default function VersionSidebar({
   refreshTrigger = 0,
   projectId,
   designerTourForceOpenNonce = 0,
-  /** Project `/project/.../patterns` layout chrome */
   projectPatternsPage = false,
-  /** When true on project page, count badge is replaced by a blue ? (guides active) */
   guidesActive = false,
+  onCompareNavigate,
 }: {
   refreshTrigger?: number;
   /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
   projectId?: string;
   /** Incremented by the designer tour to open the versions menu */
   designerTourForceOpenNonce?: number;
+  /** Project `/project/.../patterns` layout chrome */
   projectPatternsPage?: boolean;
+  /** When true on project page, count badge is replaced by a blue ? (guides active) */
   guidesActive?: boolean;
+  /** Project patterns: invoked when user clicks Compare (before navigation). */
+  onCompareNavigate?: () => void;
 } = {}) {
   const { userId } = useAuth();
   const headers = () =>
@@ -88,6 +91,12 @@ export default function VersionSidebar({
       if (buttonRef.current?.contains(target)) return;
       const portal = document.getElementById("versions-dropdown-portal");
       if (portal?.contains(target)) return;
+      if (
+        target instanceof HTMLElement &&
+        target.closest("[data-amg-apd-designer-tour-popover]")
+      ) {
+        return;
+      }
       setOpen(false);
     }
     if (open) {
@@ -357,7 +366,10 @@ export default function VersionSidebar({
                     ? "inline-flex items-center rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
                     : "inline-flex items-center rounded-md border border-white/20 bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-gray-200"
                 }
-                onClick={closePanel}
+                onClick={() => {
+                  onCompareNavigate?.();
+                  closePanel();
+                }}
               >
                 Compare
               </Link>

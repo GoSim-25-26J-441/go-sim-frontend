@@ -39,6 +39,8 @@ type PatternsViewProps = {
   onRequestOpenSimulationModal?: () => void;
   /** Close parent simulation modal when a tour chapter ends. */
   onCloseSimulationModal?: () => void;
+  /** Project patterns: show full-page transition overlay (compare / chat / simulation). */
+  onPageTransitionStart?: (label: string) => void;
 };
 
 export default function PatternsView({
@@ -47,6 +49,7 @@ export default function PatternsView({
   stickyToolbar = true,
   onRequestOpenSimulationModal,
   onCloseSimulationModal,
+  onPageTransitionStart,
 }: PatternsViewProps) {
   const router = useRouter();
   const last = useAmgApdStore((s) => s.last);
@@ -684,7 +687,7 @@ export default function PatternsView({
         applyLoading={applyLoading}
         disabledApply={!hasDetections || loadingSug}
         designerTourExpandFirstPreviewNonce={designerTourSuggestionPreviewExpandNonce}
-        projectPatternsGuideChrome={guideChromeLayout}
+        projectPatternsGuideChrome={useProjectPatterns}
       />
 
       <PatternsDesignerTour
@@ -703,6 +706,7 @@ export default function PatternsView({
         onRunSuggestionsForTour={openSuggestions}
         onRequestExpandSuggestionFirstPreview={expandSuggestionFirstPreviewForTour}
         onRequestOpenSimulationModal={onRequestOpenSimulationModal}
+        onCloseSimulationModal={onCloseSimulationModal}
         hasReturnToChatTour={!onReturnToChat}
         welcomeIntroOpen={designerWelcomeOpen}
         onDismissWelcomeIntro={dismissDesignerWelcome}
@@ -744,6 +748,14 @@ export default function PatternsView({
               designerTourForceOpenNonce={designerTourVersionsNonce}
               projectPatternsPage={useProjectPatterns}
               guidesActive={useProjectPatterns && newDesignerTourEnabled}
+              onCompareNavigate={
+                useProjectPatterns
+                  ? () =>
+                      onPageTransitionStart?.(
+                        "Opening version compare…",
+                      )
+                  : undefined
+              }
             />
 
             <button
@@ -827,7 +839,7 @@ export default function PatternsView({
               <Legend
                 versionCount={versionCount ?? undefined}
                 showNodeTypes={false}
-                projectPatternsGuidePip={useProjectPatterns}
+                projectPatternsGuidePip={guideChromeLayout}
               />
             </div>
           </div>
@@ -860,7 +872,7 @@ export default function PatternsView({
                 <Legend
                   versionCount={versionCount ?? undefined}
                   showNodeTypes={false}
-                  projectPatternsGuidePip={useProjectPatterns}
+                  projectPatternsGuidePip={guideChromeLayout}
                 />
               </div>
             </div>
@@ -913,6 +925,7 @@ export default function PatternsView({
               designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
               projectPatternsGuideChrome={guideChromeLayout}
               projectPatternsPage={useProjectPatterns}
+              projectPatternsImageExportCanvasOnly={useProjectPatterns}
             />
           </div>
         </div>
