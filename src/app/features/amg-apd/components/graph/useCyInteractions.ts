@@ -33,19 +33,6 @@ const TOOL_TO_KIND: Record<EditTool, NodeKind> = {
   "delete-element": "SERVICE",
 };
 
-const TOOL_TO_LABEL: Record<EditTool, string> = {
-  select: "node",
-  "add-service": "new-service",
-  "add-api-gateway": "new-api-gateway",
-  "add-database": "new-database",
-  "add-event-topic": "new-event-topic",
-  "add-external-system": "new-external-system",
-  "add-client": "new-client",
-  "add-user-actor": "new-user-actor",
-  "connect-calls": "node",
-  "delete-element": "node",
-};
-
 /** Prefix used for next unique label per tool (e.g. "service", "database"). */
 const TOOL_TO_LABEL_PREFIX: Record<EditTool, string> = {
   select: "node",
