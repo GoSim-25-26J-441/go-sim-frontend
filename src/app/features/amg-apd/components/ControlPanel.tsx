@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  ChevronRight,
   Maximize2,
   Minimize2,
   Minus,
@@ -61,9 +60,6 @@ type Props = {
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onZoomPercentCommit?: (percent: number) => void;
-
-  /** Fullscreen only: in-header Simulation is hidden; tour + users need this control on the control strip. */
-  simulationTourOnOpen?: () => void;
 };
 
 export default function ControlPanel({
@@ -85,7 +81,6 @@ export default function ControlPanel({
   onZoomIn,
   onZoomOut,
   onZoomPercentCommit,
-  simulationTourOnOpen,
 }: Props) {
   void guidesActive;
   void onGuidesToggle;
@@ -190,18 +185,6 @@ export default function ControlPanel({
               </button>
             )}
 
-            {simulationTourOnOpen && fullscreenButton?.isFullscreen && (
-              <button
-                type="button"
-                data-amg-designer={AMG_DESIGNER.simulator}
-                onClick={() => simulationTourOnOpen()}
-                className="flex items-center gap-1 rounded-md bg-emerald-600/80 px-2.5 py-1 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500"
-                title="Open performance simulation (pick a version next)"
-              >
-                Simulation
-                <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              </button>
-            )}
             {fullscreenButton && (
               <>
                 <button

@@ -1,9 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 import Link from "next/link";
-import { use, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import { getProjectThreadId } from "@/modules/di/getProjectThread";
+import { useOpenInChat } from "@/modules/di/useOpenInChat";
+import { resolveDiagramVersionIdForChat } from "@/modules/di/resolveDiagramVersionIdForChat";
+import { useLoading } from "@/hooks/useLoading";
+import { useToast } from "@/hooks/useToast";
 import {
   ShieldAlert,
   Upload,
@@ -30,9 +33,12 @@ export default function Summary({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const router = useRouter();
+  const openInChat = useOpenInChat();
+  const showToast = useToast((s) => s.showToast);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [loadingThread, setLoadingThread] = useState(true);
+  const [chatNavigating, setChatNavigating] = useState(false);
+  const chatNavigatingRef = useRef(false);
   const [activeNav, setActiveNav] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [showImagesModal, setShowImagesModal] = useState(false);
@@ -47,14 +53,34 @@ export default function Summary({
       .catch(() => setLoadingThread(false));
   }, [id]);
 
-  const handleChatClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    router.push(
-      threadId
-        ? `/project/${id}/chat?thread=${threadId}`
-        : `/project/${id}/chat`,
-    );
-  };
+  const handleChatClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      if (chatNavigatingRef.current || loadingThread) return;
+      chatNavigatingRef.current = true;
+      setChatNavigating(true);
+      void (async () => {
+        try {
+          const diagramVersionId =
+            (await resolveDiagramVersionIdForChat(id)) ?? undefined;
+          await openInChat(id, {
+            diagramVersionId,
+            onLoadingChange: (loading) =>
+              useLoading.getState().setLoading(loading),
+          });
+        } catch (err) {
+          showToast(
+            (err as Error)?.message ?? "Failed to open chat",
+            "error",
+          );
+        } finally {
+          chatNavigatingRef.current = false;
+          setChatNavigating(false);
+        }
+      })();
+    },
+    [id, openInChat, showToast, loadingThread],
+  );
 
   const navItems = [
     { key: "chat", label: "Chat", icon: Icons.Chat, action: handleChatClick },
@@ -145,7 +171,7 @@ export default function Summary({
                   {item.icon}
                 </span>
                 <span className="truncate flex-1 text-left">{item.label}</span>
-                {item.key === "chat" && loadingThread && (
+                {item.key === "chat" && (loadingThread || chatNavigating) && (
                   <span className="text-[10px] text-muted-foreground animate-pulse">
                     …
                   </span>
@@ -176,7 +202,9 @@ export default function Summary({
                   setActiveNav(item.key);
                   item.action?.(e as any);
                 }}
-                disabled={item.key === "chat" && loadingThread}
+                disabled={
+                  item.key === "chat" && (loadingThread || chatNavigating)
+                }
                 className={sharedClass}
               >
                 {content}

@@ -964,7 +964,6 @@ export default function PatternsView({
                 })
               }
               onResetCanvas={handleResetCanvas}
-              onRequestOpenSimulationModal={onRequestOpenSimulationModal}
               fullscreenButton={{
                 onClick: () => setFullscreenOpen((o) => !o),
                 isFullscreen: fullscreenOpen,

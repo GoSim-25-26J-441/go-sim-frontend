@@ -2,12 +2,14 @@
 
 import { useState, useCallback } from "react";
 import { useOpenInChat } from "./useOpenInChat";
-import { fetchLatestProjectDiagramVersionId } from "./fetchLatestProjectDiagramVersionId";
+import { resolveDiagramVersionIdForChat } from "./resolveDiagramVersionIdForChat";
+
 /**
  * Hook for "Return to Chat" on the patterns page.
  * Reuses the same flow as "Open in Chat" (diagram): resolve or create project thread,
- * then navigate to chat. Always pins/opens with the project's latest diagram version so
- * chat and the diagram canvas stay aligned with Patterns regardless of stale canvas state.
+ * then navigate to chat. Pins/opens with the diagram version currently loaded on
+ * patterns (e.g. after Move to this version) when available; otherwise the latest
+ * version from the project summary API.
  */
 export function useReturnToChatFromPatterns(projectId: string | undefined) {
   const openInChat = useOpenInChat();
@@ -18,7 +20,7 @@ export function useReturnToChatFromPatterns(projectId: string | undefined) {
     setReturning(true);
     try {
       const diagramVersionId =
-        (await fetchLatestProjectDiagramVersionId(projectId)) ?? undefined;
+        (await resolveDiagramVersionIdForChat(projectId)) ?? undefined;
       await openInChat(projectId, {
         onLoadingChange: (loading) => setReturning(loading),
         diagramVersionId,
