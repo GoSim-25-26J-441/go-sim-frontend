@@ -16,6 +16,7 @@ import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesigner
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AmgApdVersionSummary } from "@/app/features/amg-apd/types";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { usePatternsGuidesWithProfile } from "@/app/features/amg-apd/hooks/usePatternsGuidesWithProfile";
 import { useReturnToChatFromPatterns } from "@/modules/di/useReturnToChatFromPatterns";
 import { useAuth } from "@/providers/auth-context";
 import { useToast } from "@/hooks/useToast";
@@ -31,8 +32,7 @@ export default function ProjectPatternsPage({
   const patternsGraphFullscreen = useAmgApdStore(
     (s) => s.patternsGraphFullscreen,
   );
-  const guidesActive = useAmgApdStore((s) => s.patternsGuidesEnabled);
-  const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
+  const { guidesActive, toggleGuides } = usePatternsGuidesWithProfile();
   const { userId } = useAuth();
   const showToast = useToast((s) => s.showToast);
 
@@ -126,7 +126,11 @@ export default function ProjectPatternsPage({
             <button
               type="button"
               data-amg-designer={AMG_DESIGNER.guides}
-              onClick={() => togglePatternsGuides()}
+              onClick={() =>
+                void toggleGuides().catch(() =>
+                  showToast("Could not save guide preference", "error"),
+                )
+              }
               title={
                 guidesActive
                   ? "Hide guided highlights"
