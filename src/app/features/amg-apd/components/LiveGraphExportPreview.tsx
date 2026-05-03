@@ -24,12 +24,15 @@ type Props = {
   graphFallback?: Graph | null;
   /** Bumps when analysis/version changes so export text refreshes after relayout. */
   graphRev?: string;
+  /** Optional thin scrollbar (e.g. `scrollbar-patterns-workspace` on project patterns). */
+  scrollbarClassName?: string;
 };
 
 export default function LiveGraphExportPreview({
   cy,
   graphFallback,
   graphRev,
+  scrollbarClassName,
 }: Props) {
   const [tab, setTab] = useState<Tab>("json");
   const [tick, setTick] = useState(0);
@@ -102,7 +105,12 @@ export default function LiveGraphExportPreview({
           YAML
         </button>
       </div>
-      <pre className="max-h-40 overflow-auto rounded border border-slate-800 bg-slate-900 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap wrap-break-word text-slate-100">
+      <pre
+        className={[
+          "max-h-40 overflow-auto rounded border border-slate-800 bg-slate-900 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap wrap-break-word text-slate-100",
+          scrollbarClassName ?? "scrollbar-toolbox",
+        ].join(" ")}
+      >
         {display}
       </pre>
     </div>
