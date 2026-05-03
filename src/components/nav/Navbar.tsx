@@ -15,7 +15,7 @@ export default function Navbar() {
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-bg/80 backdrop-blur">
       <nav className="mx-auto max-w-6xl h-14 px-4 flex items-center justify-between">
-        <Link href="/" className="font-semibold">GO-SIM</Link>
+        <Link href="/" className="font-semibold">ArcFind</Link>
 
         <ul className="flex gap-6 text-sm">
           {links.map(l => (

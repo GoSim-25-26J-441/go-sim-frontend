@@ -363,7 +363,7 @@ export default function SignUpForm() {
           <div>
             <TextAreaField
               name="purpose"
-              label="What will you use GO-SIM for?"
+              label="What will you use ArcFind for?"
               placeholder="e.g., Academic research, production system design..."
               value={formData.purpose}
               onChange={handleChange}

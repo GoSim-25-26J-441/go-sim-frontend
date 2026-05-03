@@ -14,7 +14,7 @@ export default function RightSection() {
     <div className="flex h-full flex-col justify-around items-end">
       <div className="">
         <h1 className="text-end text-2xl font-bold text-white">
-          {"What you get with a free GO-SIM account ?"}
+          {"What you get with a free ArcFind account?"}
         </h1>
         <p className="text-end mt-3 text-sm font-normal text-white">
           {

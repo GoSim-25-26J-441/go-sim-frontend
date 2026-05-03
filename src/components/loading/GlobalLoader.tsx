@@ -12,7 +12,7 @@ export function GlobalLoader() {
   return (
     <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="relative animate-pulse-glow">
-        <Image src={logo} alt="GO-SIM Logo" width={60} height={60} priority />
+        <Image src={logo} alt="ArcFind Logo" width={60} height={60} priority />
       </div>
 
       <style jsx>{`

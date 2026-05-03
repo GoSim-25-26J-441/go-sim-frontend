@@ -126,7 +126,7 @@ export default function ForgotPasswordPage() {
     <section className="max-w-7xl mx-auto min-h-screen px-4 sm:px-6 lg:px-8 flex items-center justify-center">
       <div className="w-full max-w-md">
         <div className="flex flex-col justify-start gap-6 py-5">
-          <h1 className="text-2xl font-bold text-white">GO-SIM</h1>
+          <h1 className="text-2xl font-bold text-white">ArcFind</h1>
           <h1 className="text-6xl font-bold text-white">Forgot Password</h1>
           <div>
             <p className="text-white/60 text-base">
