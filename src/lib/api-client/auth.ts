@@ -11,6 +11,8 @@ export interface UserProfile {
   role?: string;
   organization?: string;
   preferences?: Record<string, unknown>;
+  /** Backend: "Yes" show AMG-APD patterns guides; "No" hide them. */
+  new_designer?: "Yes" | "No";
   created_at: string;
   updated_at: string;
   last_login_at?: string;
@@ -82,8 +84,12 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 
+export type UpdateUserProfileBody = Partial<SyncUserRequest> & {
+  new_designer?: "Yes" | "No";
+};
+
 export async function updateUserProfile(
-  data: Partial<SyncUserRequest>,
+  data: UpdateUserProfileBody,
 ): Promise<UserProfile> {
   const token = await getFirebaseIdToken();
   if (!token) {

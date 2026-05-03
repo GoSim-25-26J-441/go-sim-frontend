@@ -16,6 +16,7 @@ import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
 import PatternsDesignerTour from "@/app/features/amg-apd/components/patternsDesignerTour/PatternsDesignerTour";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { usePatternsGuidesWithProfile } from "@/app/features/amg-apd/hooks/usePatternsGuidesWithProfile";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
@@ -87,10 +88,8 @@ export default function PatternsView({
   const newDesignerTourEnabled = useAmgApdStore(
     (s) => s.patternsGuidesEnabled,
   );
-  const setNewDesignerTourEnabled = useAmgApdStore(
-    (s) => s.setPatternsGuidesEnabled,
-  );
-  const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
+  const { toggleGuides, setGuidesEnabledAndPersist } =
+    usePatternsGuidesWithProfile();
   const patternsGuidesWelcomeOnEnable = useAmgApdStore(
     (s) => s.patternsGuidesWelcomeOnEnable,
   );
@@ -645,7 +644,13 @@ export default function PatternsView({
 
       <PatternsDesignerTour
         enabled={newDesignerTourEnabled}
-        onEnabledChange={setNewDesignerTourEnabled}
+        onEnabledChange={(enabled) => {
+          if (!enabled) {
+            void setGuidesEnabledAndPersist(false).catch(() =>
+              showToast("Could not save guide preference", "error"),
+            );
+          }
+        }}
         onRequestVersionsMenuOpen={openVersionsForTour}
         onRequestEditWorkspace={prepareEditWorkspaceForTour}
         onRequestExpandDetailAccordions={expandDetailAccordionsForTour}
@@ -831,7 +836,11 @@ export default function PatternsView({
               }}
               newDesignerTourEnabled={newDesignerTourEnabled}
               guidesActive={newDesignerTourEnabled}
-              onGuidesToggle={togglePatternsGuides}
+              onGuidesToggle={() =>
+                void toggleGuides().catch(() =>
+                  showToast("Could not save guide preference", "error"),
+                )
+              }
               designerTourWorkspaceNonce={designerTourWorkspaceNonce}
               designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
             />
