@@ -1,5 +1,5 @@
 import type { BatchRecommendationFormState } from "@/app/(dashboard)/project/[id]/simulation/new/BatchRecommendationFields";
-import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
+import { allowedActionsFromDirectional } from "@/lib/simulation/batch-scaling-actions";
 
 export type BatchRecommendationOptimizationObjective = "recommended_config" | "cpu_utilization";
 
@@ -54,7 +54,7 @@ export function buildBatchRecommendationOptimizationPayload(
       infeasible_beam_width: br.infeasible_beam_width,
       freeze_workload: br.freeze_workload,
       freeze_policies: br.freeze_policies,
-      allowed_actions: allowedActionsFromFlags(br),
+      allowed_actions: allowedActionsFromDirectional(br.actions),
     },
   };
 }

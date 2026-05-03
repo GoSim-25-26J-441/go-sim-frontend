@@ -15,6 +15,21 @@ export function formatOnlineOptimizationTargetLabel(key: string | undefined | nu
   return ONLINE_TARGET_LABELS[k] ?? k.replace(/_/g, " ");
 }
 
+/** Format best_score / optimization progress for online runs by metadata.objective (aligned with optimization_target_primary). */
+export function formatOnlineOptimizationBestScore(
+  value: number,
+  objective: string | undefined | null
+): string {
+  const o = objective ?? "";
+  if (o === "cpu_utilization" || o === "memory_utilization") {
+    return `${(value * 100).toFixed(2)}%`;
+  }
+  if (o === "p95_latency" || o === "p95_latency_ms") {
+    return `${value.toFixed(2)} ms`;
+  }
+  return value.toFixed(4);
+}
+
 /** True when metadata indicates an interactive online run (not batch / legacy batch). */
 export function isInteractiveOnlineRunMode(mode: unknown): boolean {
   return mode === "online" || mode === "online_optimization";
