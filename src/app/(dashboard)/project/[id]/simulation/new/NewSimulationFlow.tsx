@@ -816,7 +816,7 @@ export function NewSimulationFlow({
         }
         if (!newErrors.config && allowedActionsFromDirectional(br.actions).length === 0) {
           newErrors.config =
-            "Select at least one scaling option (Batch recommendation → Advanced search settings → Allowed scaling dimensions).";
+            "Select at least one allowed action (Batch recommendation → Advanced search settings → Allowed actions).";
         }
         if (!newErrors.config) {
           if (br.min_hosts > br.max_hosts) {

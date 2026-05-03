@@ -3299,18 +3299,26 @@ export default function SimulationRunPage() {
   const onlineConfigModel: OnlineConfigModel = useMemo(() => {
     const latestStepConfig =
       [...optSteps].reverse().find((step) => step.current_config != null)?.current_config ?? null;
+    const metaObj =
+      runInfo?.metadata && typeof runInfo.metadata === "object"
+        ? (runInfo.metadata as Record<string, unknown>)
+        : null;
+    const batchLike =
+      metaObj &&
+      (isBatchOptimizationMeta(runInfo?.metadata) ||
+        metaObj.mode === "batch_recommendation" ||
+        metaObj.mode === "batch");
     return buildOnlineConfigModel({
-      runMetadata:
-        runInfo?.metadata && typeof runInfo.metadata === "object"
-          ? (runInfo.metadata as Record<string, unknown>)
-          : null,
+      runMetadata: metaObj,
+      /** Batch runs: omit generic zero-filled online `optimization_config` from locked-field sources — active batch knobs live in create-run `optimization.batch` / engine metadata. */
       optimizationConfigMetadata:
-        runInfo?.metadata &&
-        typeof runInfo.metadata === "object" &&
-        (runInfo.metadata as Record<string, unknown>).optimization_config &&
-        typeof (runInfo.metadata as Record<string, unknown>).optimization_config === "object"
-          ? ((runInfo.metadata as Record<string, unknown>).optimization_config as Record<string, unknown>)
-          : null,
+        batchLike
+          ? null
+          : metaObj &&
+              metaObj.optimization_config &&
+              typeof metaObj.optimization_config === "object"
+            ? (metaObj.optimization_config as Record<string, unknown>)
+            : null,
       latestOptimizationConfig: latestStepConfig,
       latestResources: placementSource.resources ?? null,
       scenarioServiceIds: runDerivedOptions.serviceIds,
@@ -3747,6 +3755,28 @@ export default function SimulationRunPage() {
                           Batch search: interpret feasibility, violation, and efficiency —{" "}
                           <span className="text-amber-200/90">best_score</span> is a legacy efficiency-only field, not the full winner score.
                         </p>
+                        <p className="text-[11px] text-white/40 leading-relaxed">
+                          Tunables for batch runs are submitted under create-run{" "}
+                          <span className="font-mono text-white/50">optimization.batch</span> (latency caps, throughput,
+                          utilization bands, host bounds, beam settings, <span className="font-mono text-white/50">allowed_actions</span>).{" "}
+                          Generic <span className="font-mono text-white/50">metadata.optimization_config</span> often reflects online-mode
+                          placeholders and may show zeros — prefer engine summaries here or payload echoes below when the API returns them.
+                        </p>
+                        {(() => {
+                          const metaRec = m as Record<string, unknown>;
+                          const snap = metaRec.batch_config ?? metaRec.batch;
+                          if (snap == null || typeof snap !== "object") return null;
+                          return (
+                            <details className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                              <summary className="cursor-pointer text-[11px] text-white/45">
+                                Batch config echo (metadata)
+                              </summary>
+                              <pre className="mt-2 max-h-48 overflow-auto text-[10px] text-white/55 font-mono">
+                                {JSON.stringify(snap, null, 2)}
+                              </pre>
+                            </details>
+                          );
+                        })()}
                         <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3">
                           {typeof m.batch_recommendation_feasible === "boolean" && (
                             <div>
