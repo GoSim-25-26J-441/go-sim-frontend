@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
+import { usePathname } from "next/navigation";
 import { SessionProvider } from "@/modules/session/context";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { ConnectionMonitor } from "@/components/connection/ConnectionMonitor";
@@ -8,31 +9,49 @@ import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import { ReduxProvider } from "../store/uidp/ReduxProvider";
 
+function isDiagramFullViewPath(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return (
+    pathname === "/diagram/full" || pathname.startsWith("/diagram/full/")
+  );
+}
+
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  const diagramFullView = isDiagramFullViewPath(pathname);
+
+  // One persistent provider tree — do not duplicate branches, or /diagram <-> /diagram/full
+  // unmounts all children and drops in-memory diagram handoff state.
   return (
     <AuthGuard>
       <SessionProvider>
         <ReduxProvider>
           <ConnectionMonitor />
-          <div className="h-screen overflow-hidden grid grid-rows-[80px_minmax(0,1fr)] bg-linear-to-b from-[#1F1F1F] to-black">
-            <Topbar />
-            <div className="min-h-0 overflow-hidden grid md:max-[1919px]:grid-cols-[236px_minmax(0,1fr)] min-[1920px]:grid-cols-[320px_minmax(0,1fr)]">
-              <Sidebar />
-              <main className="relative min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
-                <img
-                  src="/logo/logo.png"
-                  alt="logo"
-                  className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-18 h-18 opacity-10"
-                />
-
-                <div className="relative z-10 min-h-full flex flex-col">{children}</div>
-              </main>
+          {diagramFullView ? (
+            <div className="h-[100dvh] min-h-0 w-full overflow-hidden bg-slate-950">
+              {children}
             </div>
-          </div>
+          ) : (
+            <div className="h-screen overflow-hidden grid grid-rows-[80px_minmax(0,1fr)] bg-linear-to-b from-[#1F1F1F] to-black">
+              <Topbar />
+              <div className="min-h-0 overflow-hidden grid md:max-[1919px]:grid-cols-[236px_minmax(0,1fr)] min-[1920px]:grid-cols-[320px_minmax(0,1fr)]">
+                <Sidebar />
+                <main className="relative min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
+                  <img
+                    src="/logo/logo.png"
+                    alt="logo"
+                    className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-18 h-18 opacity-10"
+                  />
+
+                  <div className="relative z-10 min-h-full flex flex-col">{children}</div>
+                </main>
+              </div>
+            </div>
+          )}
         </ReduxProvider>
       </SessionProvider>
     </AuthGuard>

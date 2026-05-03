@@ -1241,14 +1241,14 @@ export function NewSimulationFlow({
               <button
                 type="button"
                 onClick={() => onClose?.()}
-                className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                className="rounded-md bg-white px-5 py-2 text-sm font-bold text-black transition-all duration-150 hover:bg-gray-200"
               >
                 Cancel
               </button>
             ) : (
               <Link
                 href={`/project/${projectId}/simulation`}
-                className="rounded-lg border border-white/20 bg-white/5 px-4 py-2 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                className="inline-flex items-center justify-center rounded-md bg-white px-5 py-2 text-sm font-bold text-black transition-all duration-150 hover:bg-gray-200"
               >
                 Cancel
               </Link>
@@ -2027,7 +2027,7 @@ export function NewSimulationFlow({
                 <button
                   type="button"
                   onClick={() => setCurrentStep(1)}
-                  className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                  className="rounded-md bg-white px-5 py-2 text-sm font-bold text-black transition-all duration-150 hover:bg-gray-200"
                 >
                   Back
                 </button>
@@ -2037,7 +2037,7 @@ export function NewSimulationFlow({
                   onClick={() => {
                     if (validateScenarioStep() && validateConfigStep()) setCurrentStep(3);
                   }}
-                  className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black shadow-sm transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md bg-emerald-600/80 px-6 py-2 text-sm font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Next: Review
                 </button>
@@ -2154,7 +2154,7 @@ export function NewSimulationFlow({
                       setCurrentStep(2);
                     }
                   }}
-                  className="rounded-full bg-white px-6 py-2 text-sm font-medium text-black shadow-sm transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md bg-emerald-600/80 px-6 py-2 text-sm font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Next: Configuration
                 </button>
@@ -2435,7 +2435,7 @@ export function NewSimulationFlow({
                   <button
                     type="button"
                     onClick={() => setCurrentStep(2)}
-                    className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                    className="rounded-md bg-white px-5 py-2 text-sm font-bold text-black transition-all duration-150 hover:bg-gray-200"
                   >
                     Back
                   </button>
@@ -2448,14 +2448,14 @@ export function NewSimulationFlow({
                       <button
                         type="button"
                         onClick={() => onClose?.()}
-                        className="inline-flex items-center rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                        className="inline-flex items-center justify-center rounded-md bg-white px-5 py-2 text-sm font-bold text-black transition-all duration-150 hover:bg-gray-200"
                       >
                         Cancel
                       </button>
                     ) : (
                       <Link
                         href={`/project/${projectId}/simulation`}
-                        className="inline-flex items-center rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                        className="inline-flex items-center justify-center rounded-md bg-white px-5 py-2 text-sm font-bold text-black transition-all duration-150 hover:bg-gray-200"
                       >
                         Cancel
                       </Link>
@@ -2483,11 +2483,11 @@ export function NewSimulationFlow({
                       <button
                         type="submit"
                         disabled={isSubmitting || diagramScenarioDraftBlocked}
-                        className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-lg hover:bg-white/90 transition-colors font-medium disabled:bg-white/50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 rounded-md bg-emerald-600/80 px-6 py-2 text-sm font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {isSubmitting ? (
                           <>
-                            <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             Starting…
                           </>
                         ) : (

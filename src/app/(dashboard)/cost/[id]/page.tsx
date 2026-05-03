@@ -129,59 +129,73 @@ function GlobalRecommendPanel({
     }, []);
 
     return (
-        <div className="bg-card border border-border rounded-lg p-6 my-6">
-            <div className="flex items-start gap-3 mb-4">
+        <div className="space-y-4">
+            <div className="flex items-start gap-3">
                 <Target className="w-5 h-5 mt-0.5 shrink-0 opacity-90" />
                 <div className="min-w-0 flex-1">
-                    <h2 className="text-lg font-semibold text-white">
+                    <h2 className="text-sm font-semibold text-white">
                         Best option across all providers &amp; regions
                     </h2>
                 </div>
             </div>
             {globalRecLoading && (
-                <p className="text-sm opacity-60 flex items-center gap-2">
+                <p className="flex items-center gap-2 text-xs text-white/60">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     Scanning catalog…
                 </p>
             )}
             {globalRecError && !globalRecLoading && (
-                <p className="text-sm text-red-400/90">{globalRecError}</p>
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+                    <p className="text-sm text-red-300">{globalRecError}</p>
+                </div>
             )}
             {!globalRecLoading && !globalRecError && globalRec?.recommendation && (
                 <div className="space-y-4">
                     {!globalRec.recommendation.recommended ? (
-                        <p className="text-sm opacity-75">
-                            {globalRec.recommendation.rationale?.[0] ??
-                                "No recommendation could be built from stored prices."}
-                        </p>
+                        <div className="overflow-hidden rounded-lg bg-white/4 p-4">
+                            {globalRec.recommendation.rationale.length > 0 ? (
+                                <ul className="m-0 list-none space-y-1.5 p-0 text-xs text-white/75">
+                                    {globalRec.recommendation.rationale.map((line, i) => (
+                                        <li key={i} className="flex gap-2">
+                                            <span className="mt-0.5 shrink-0 text-white/40">•</span>
+                                            <span>{line}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-xs text-white/70">
+                                    No recommendation could be built from stored prices.
+                                </p>
+                            )}
+                        </div>
                     ) : (
                         <>
                             <div className="flex flex-wrap items-center gap-2">
                                 {globalRec.recommendation.fits_budget ? (
-                                    <span className="text-xs font-medium px-2 py-0.5 rounded bg-green-600/25 text-green-400 border border-green-600/40">
+                                    <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-green-600/25 text-green-400 border border-green-600/40">
                                         Within budget
                                     </span>
                                 ) : (
-                                    <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-600/20 text-amber-300 border border-amber-500/35">
+                                    <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-600/20 text-amber-300 border border-amber-500/35">
                                         Over budget — cheapest overall
                                     </span>
                                 )}
                             </div>
-                            <div className="rounded-lg border border-border/80 bg-black/20 p-4">
-                                <div className="flex flex-wrap justify-between gap-3">
+                            <div className="overflow-hidden rounded-lg bg-white/4">
+                                <div className="flex flex-wrap justify-between gap-3 p-4">
                                     <div>
-                                        <p className="text-xs uppercase tracking-wide opacity-50">
+                                        <p className="text-[10px] uppercase tracking-wide text-white/50">
                                             Monthly total
                                         </p>
-                                        <p className="text-2xl font-bold text-white">
+                                        <p className="text-xl font-bold text-white">
                                             {formatCurrency(globalRec.recommendation.recommended.total_month)}
                                         </p>
                                     </div>
-                                    <div className="text-right text-sm opacity-90">
+                                    <div className="text-right text-xs text-white/90">
                                         <p className="font-medium capitalize">
                                             {globalRec.recommendation.recommended.provider}
                                         </p>
-                                        <p className="opacity-70">
+                                        <p className="text-white/70">
                                             {getRegionDisplayName(
                                                 globalRec.recommendation.recommended.region,
                                                 globalRec.recommendation.recommended.provider as
@@ -191,51 +205,58 @@ function GlobalRecommendPanel({
                                         </p>
                                     </div>
                                 </div>
-                                <p className="text-sm mt-3 opacity-85">
-                                    <span className="font-mono">
-                                        {globalRec.recommendation.recommended.instance_type}
-                                    </span>
-                                    <span className="opacity-60"> · </span>
-                                    {globalRec.recommendation.recommended.purchase_type}
-                                    {globalRec.recommendation.recommended.lease_contract_length
-                                        ? ` (${globalRec.recommendation.recommended.lease_contract_length})`
-                                        : ""}
-                                </p>
+                                <div className="border-t border-white/40 px-4 py-3">
+                                    <p className="text-xs text-white/85">
+                                        <span className="font-mono">
+                                            {globalRec.recommendation.recommended.instance_type}
+                                        </span>
+                                        <span className="text-white/60"> · </span>
+                                        {globalRec.recommendation.recommended.purchase_type}
+                                        {globalRec.recommendation.recommended.lease_contract_length
+                                            ? ` (${globalRec.recommendation.recommended.lease_contract_length})`
+                                            : ""}
+                                    </p>
+                                </div>
                                 {onViewBreakdown &&
                                     supportsProviderBreakdownNav(globalRec.recommendation.recommended.provider) && (
-                                        <button
-                                            type="button"
-                                            disabled={breakdownNavBusy}
-                                            onClick={() => onViewBreakdown(globalRec.recommendation.recommended!)}
-                                            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
-                                        >
-                                            <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
-                                            View pricing breakdown in this region
-                                        </button>
+                                        <div className="border-t border-white/40 px-4 pb-4 pt-3">
+                                            <button
+                                                type="button"
+                                                disabled={breakdownNavBusy}
+                                                onClick={() => onViewBreakdown(globalRec.recommendation.recommended!)}
+                                                className="inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
+                                            >
+                                                <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
+                                                View pricing breakdown in this region
+                                            </button>
+                                        </div>
                                     )}
                             </div>
                             {globalRec.recommendation.rationale.length > 0 && (
-                                <ul className="text-sm space-y-2 opacity-85 list-disc pl-5">
+                                <ul className="m-0 list-none space-y-1.5 p-0 text-xs text-white/75">
                                     {globalRec.recommendation.rationale.map((line, i) => (
-                                        <li key={i}>{line}</li>
+                                        <li key={i} className="flex gap-2">
+                                            <span className="mt-0.5 shrink-0 text-white/40">•</span>
+                                            <span>{line}</span>
+                                        </li>
                                     ))}
                                 </ul>
                             )}
                             {runnersCount > 0 && globalRec.recommendation.recommended && (
-                                <div className="pt-2 border-t border-border/40">
+                                <div className="border-t border-white/40 pt-4">
                                     <button
                                         type="button"
                                         onClick={toggleRunners}
-                                        className="flex w-full items-start justify-between gap-3 rounded-xl border border-border/70 bg-gradient-to-b from-white/[0.04] to-transparent px-4 py-3 text-left transition-colors hover:border-border hover:from-white/[0.06]"
+                                        className="flex w-full items-start justify-between gap-3 rounded-lg border border-white/15 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/6"
                                         aria-expanded={runnersOpen}
                                     >
                                         <div className="min-w-0 flex items-start gap-3">
                                             <GitCompare className="h-5 w-5 shrink-0 mt-0.5 text-white/50" aria-hidden />
                                             <div>
-                                                <span className="block font-semibold text-white">
+                                                <span className="block text-xs font-semibold text-white">
                                                     Other low-cost options
                                                 </span>
-                                                <span className="mt-0.5 block text-xs leading-relaxed text-white/50">
+                                                <span className="mt-0.5 block text-[10px] leading-relaxed text-white/50">
                                                     {!runnersOpen ? " Tap to expand." : ""}
                                                 </span>
                                             </div>
@@ -247,12 +268,12 @@ function GlobalRecommendPanel({
                                     </button>
                                     {runnersOpen && (
                                         <div className="mt-3 space-y-2">
-                                            <p className="text-[11px] uppercase tracking-wider text-white/40 px-1">
+                                            <p className="px-1 text-[10px] uppercase tracking-wider text-white/40">
                                                 Compared to your pick (
                                                 {formatCurrency(globalRec.recommendation.recommended.total_month)}
                                                 /mo)
                                             </p>
-                                            <ol className="space-y-2 list-none p-0 m-0">
+                                            <ol className="m-0 list-none space-y-2 p-0">
                                                 {runnersUp.map((r, idx) => {
                                                     const pick = globalRec.recommendation.recommended!;
                                                     const delta = r.total_month - pick.total_month;
@@ -264,20 +285,20 @@ function GlobalRecommendPanel({
                                                     return (
                                                         <li
                                                             key={`${r.provider}-${r.region}-${r.instance_type}-${idx}`}
-                                                            className="rounded-lg border border-border/50 bg-black/25 px-3 py-3 sm:px-4"
+                                                            className="rounded-lg bg-white/4 px-3 py-3 sm:px-4"
                                                         >
                                                             <div className="flex flex-wrap items-start justify-between gap-3">
                                                                 <div className="flex min-w-0 items-center gap-3">
                                                                     <span
-                                                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs font-bold text-white/90"
+                                                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/10 text-[10px] font-bold text-white/90"
                                                                         title={`Rank ${rank} by price`}
                                                                     >
                                                                         #{rank}
                                                                     </span>
                                                                     <div className="min-w-0">
-                                                                        <p className="text-lg font-semibold tabular-nums text-white">
+                                                                        <p className="text-base font-semibold tabular-nums text-white">
                                                                             {formatCurrency(r.total_month)}
-                                                                            <span className="ml-2 text-xs font-normal text-amber-200/90">
+                                                                            <span className="ml-2 text-[10px] font-normal text-amber-200/90">
                                                                                 +{formatCurrency(delta)} / mo
                                                                                 {deltaPct > 0.05 ? (
                                                                                     <span className="text-white/45">
@@ -287,7 +308,7 @@ function GlobalRecommendPanel({
                                                                                 ) : null}
                                                                             </span>
                                                                         </p>
-                                                                        <p className="mt-1 text-sm text-white/80">
+                                                                        <p className="mt-1 text-xs text-white/80">
                                                                             <span className="font-medium capitalize">
                                                                                 {r.provider}
                                                                             </span>
@@ -301,7 +322,7 @@ function GlobalRecommendPanel({
                                                                                 )}
                                                                             </span>
                                                                         </p>
-                                                                        <p className="mt-0.5 font-mono text-xs text-white/55">
+                                                                        <p className="mt-0.5 font-mono text-[10px] text-white/55">
                                                                             {r.instance_type}
                                                                             <span className="text-white/30"> · </span>
                                                                             {r.purchase_type}
@@ -314,11 +335,11 @@ function GlobalRecommendPanel({
                                                                 {globalRec.budget > 0 && (
                                                                     <div className="shrink-0">
                                                                         {r.within_budget ? (
-                                                                            <span className="inline-block rounded-md border border-green-600/35 bg-green-600/15 px-2 py-1 text-[11px] font-medium text-green-400">
+                                                                            <span className="inline-block rounded-md border border-green-600/35 bg-green-600/15 px-2 py-1 text-[10px] font-medium text-green-400">
                                                                                 Within budget
                                                                             </span>
                                                                         ) : (
-                                                                            <span className="inline-block rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300/90">
+                                                                            <span className="inline-block rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] font-medium text-red-300/90">
                                                                                 Over budget
                                                                             </span>
                                                                         )}
@@ -326,12 +347,12 @@ function GlobalRecommendPanel({
                                                                 )}
                                                             </div>
                                                             {onViewBreakdown && supportsProviderBreakdownNav(r.provider) && (
-                                                                <div className="mt-3 border-t border-white/10 pt-3 sm:pl-11">
+                                                                <div className="mt-3 border-t border-white/40 pt-3 sm:pl-11">
                                                                     <button
                                                                         type="button"
                                                                         disabled={breakdownNavBusy}
                                                                         onClick={() => onViewBreakdown(r)}
-                                                                        className="text-sm font-medium text-sky-300/95 underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                                                                        className="text-xs font-medium text-sky-300/95 underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
                                                                     >
                                                                         View pricing breakdown in this region
                                                                     </button>
@@ -684,37 +705,34 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     if (loading) {
         return (
-            <div className="p-6 space-y-4">
-                <div
-                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-                >
-                    <button
-                        type="button"
-                        onClick={() => router.back()}
-                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
-                        aria-label="Go back"
-                    >
-                        <ArrowLeft className="w-4 h-4" />
-                    </button>
-                    <div>
-                        <h1 className="text-md font-bold text-white flex items-center gap-2">
-                            Cluster Cost Analysis
-                        </h1>
+            <div className="flex min-h-0 w-full flex-1 flex-col p-6">
+                <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/40 py-2.5">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => router.back()}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+                            aria-label="Go back"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <h1 className="text-md font-bold text-white">Cluster Cost Analysis</h1>
                     </div>
                 </div>
-                <GlobalRecommendPanel
-                    globalRec={globalRec}
-                    globalRecLoading={globalRecLoading}
-                    globalRecError={globalRecError}
-                    formatCurrency={formatCurrency}
-                    onViewBreakdown={jumpToBreakdownForPick}
-                    breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
-                />
-                <div className="flex items-center justify-center min-h-[40vh]">
-                    <div className="text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-border mx-auto mb-4"></div>
-                        <p className="text-lg opacity-70">Loading cluster costs...</p>
+                <div className="mt-2 flex min-h-0 flex-1 flex-col space-y-5">
+                    <GlobalRecommendPanel
+                        globalRec={globalRec}
+                        globalRecLoading={globalRecLoading}
+                        globalRecError={globalRecError}
+                        formatCurrency={formatCurrency}
+                        onViewBreakdown={jumpToBreakdownForPick}
+                        breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
+                    />
+                    <div className="flex min-h-[40vh] flex-1 items-center justify-center">
+                        <div className="text-center">
+                            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-t-2 border-border"></div>
+                            <p className="text-base opacity-70">Loading cluster costs...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -726,8 +744,8 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
             <div className="p-6 min-h-[80vh] flex items-center justify-center">
                 <div className="max-w-md w-full rounded-2xl border border-border bg-surface/30 px-8 py-10 text-center shadow-sm">
                     <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-                    <h2 className="text-xl font-semibold mb-2">Resource Not Found</h2>
-                    <p className="text-sm opacity-70">
+                    <h2 className="text-lg font-semibold mb-2">Resource Not Found</h2>
+                    <p className="text-xs opacity-70">
                         We could not find the requested resource. It may have been removed or is no longer available.
                     </p>
                     <button
@@ -747,7 +765,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
             <div className="p-6 flex items-center justify-center min-h-[60vh]">
                 <div className="text-center">
                     <AlertCircle className="w-12 h-12 opacity-70 mx-auto mb-4" />
-                    <p className="text-lg mb-4 opacity-80">No data available for this request</p>
+                    <p className="text-base mb-4 opacity-80">No data available for this request</p>
                     <button
                         onClick={handleBackClick}
                         className="px-4 py-2 rounded-lg font-medium border border-border flex items-center gap-2 hover:bg-surface transition-colors"
@@ -772,39 +790,22 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
     const { best: bestRegion, minimal: minimalRegion } = identifyBestOptions(combinedRegionCosts);
 
     return (
-        <div className="p-6 space-y-4">
-            <div className="">
-                {/* Header */}
-                {/* <div className="flex items-center justify-between mb-8">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={handleBackClick}
-                            className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity"
-                        >
-                            <ChevronLeft className="w-5 h-5" />
-                        </button>
-                        <h1 className="text-4xl font-bold">Cluster Cost Analysis</h1>
-                    </div>
-                </div> */}
-                <div
-                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-                >
+        <div className="flex min-h-0 w-full flex-1 flex-col p-6">
+            <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/40 py-2.5">
+                <div className="flex flex-wrap items-center gap-3">
                     <button
+                        type="button"
                         onClick={() => router.back()}
-                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
                         aria-label="Go back"
                     >
-                        <ArrowLeft className="w-4 h-4" />
+                        <ArrowLeft className="h-4 w-4" />
                     </button>
-
-                    <div>
-                        <h1 className="text-md font-bold text-white flex items-center gap-2">
-                            Cluster Cost Analysis
-                        </h1>
-                    </div>
+                    <h1 className="text-md font-bold text-white">Cluster Cost Analysis</h1>
                 </div>
+            </div>
 
+            <div className="mt-2 flex min-h-0 flex-1 flex-col space-y-5">
                 <GlobalRecommendPanel
                     globalRec={globalRec}
                     globalRecLoading={globalRecLoading}
@@ -815,8 +816,8 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                 />
 
                 {/* Provider & Region Selection */}
-                <div className="bg-card border border-border rounded-lg p-6 my-8">
-                    <h2 className="text-xl font-semibold mb-4">Cloud Provider & Region</h2>
+                <div className="bg-card border-b border-border p-6 my-8">
+                    <h2 className="text-lg font-semibold mb-4">Cloud Provider & Region</h2>
 
                     <div className="mb-6">
                         <div className="border-b border-border">
@@ -826,7 +827,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     role="tab"
                                     onClick={() => setViewMode("by-provider")}
                                     aria-selected={viewMode === "by-provider"}
-                                    className={`pb-3 px-1 font-medium text-sm border-b-2 transition-colors -mb-px ${viewMode === "by-provider"
+                                    className={`pb-3 px-1 font-medium text-xs border-b-2 transition-colors -mb-px ${viewMode === "by-provider"
                                         ? "border-white text-white"
                                         : "border-transparent opacity-60 hover:opacity-100"
                                         }`}
@@ -838,7 +839,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     role="tab"
                                     onClick={() => setViewMode("by-region")}
                                     aria-selected={viewMode === "by-region"}
-                                    className={`pb-3 px-1 font-medium text-sm border-b-2 transition-colors -mb-px ${viewMode === "by-region"
+                                    className={`pb-3 px-1 font-medium text-xs border-b-2 transition-colors -mb-px ${viewMode === "by-region"
                                         ? "border-white text-white"
                                         : "border-transparent opacity-60 hover:opacity-100"
                                         }`}
@@ -847,7 +848,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                 </button>
                             </nav>
                         </div>
-                        <p className="text-xs opacity-50 mt-3">
+                        <p className="text-[10px] opacity-50 mt-3">
                             {viewMode === "by-region"
                                 ? "Select a region to see costs for both AWS and Azure in that area."
                                 : "Select a provider, then region(s) to compare."}
@@ -856,10 +857,10 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                     {viewMode === "by-region" ? (
                         <div>
-                            <p className="text-sm opacity-60 mb-3">Select region:</p>
-                            <div className="flex gap-3 items-center flex-wrap">
+                            <p className="mb-3 text-xs font-medium text-white/70">Select region:</p>
+                            <div className="flex flex-wrap items-center gap-3">
                                 <select
-                                    className="region-select bg-card text-white p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md [color-scheme:dark]"
+                                    className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                     value={selectedGenericRegionId}
                                     onChange={(e) => {
                                         const v = e.target.value;
@@ -879,28 +880,29 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     ))}
                                 </select>
                                 {reloadingProviderCost && (
-                                    <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
+                                    <span className="text-xs opacity-70 animate-pulse flex items-center gap-2">
                                         <RefreshCw className="w-3 h-3" />
                                         Updating…
                                     </span>
                                 )}
                             </div>
-                            <p className="text-xs opacity-50 mt-2">
+                            <p className="text-[10px] opacity-50 mt-2">
                                 Only regions where both AWS and Azure have matching instances are shown.
                             </p>
                         </div>
                     ) : (
                         <>
                             <div className="mb-6">
-                                <p className="text-sm opacity-60 mb-3">Select Provider:</p>
-                                <div className="flex flex-wrap gap-3">
+                                <p className="mb-3 text-xs font-medium text-white/70">Select Provider:</p>
+                                <div className="flex flex-wrap gap-2">
                                     {(["aws", "azure"] as const).map((p) => (
                                         <button
                                             key={p}
+                                            type="button"
                                             onClick={() => setSelectedProvider(p)}
-                                            className={`px-6 py-2 rounded-lg font-medium capitalize transition-all ${selectedProvider === p
-                                                ? "bg-surface border border-border"
-                                                : "border border-border hover:bg-surface opacity-80"
+                                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${selectedProvider === p
+                                                ? "bg-white font-medium text-black shadow-sm"
+                                                : "bg-transparent text-white/60 hover:bg-white/10 hover:text-white"
                                                 }`}
                                         >
                                             {p.toUpperCase()}
@@ -917,13 +919,13 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                         onChange={(e) => setCompareRegionsEnabled(e.target.checked)}
                                         className="rounded border-border bg-card text-green-500 focus:ring-green-500"
                                     />
-                                    <span className="text-sm font-medium">Compare multiple regions</span>
+                                    <span className="text-xs font-medium">Compare multiple regions</span>
                                 </label>
-                                <p className="text-xs opacity-50 mt-1 ml-6">Enable to add and compare costs across up to {MAX_REGIONS} regions</p>
+                                <p className="text-[10px] opacity-50 mt-1 ml-6">Enable to add and compare costs across up to {MAX_REGIONS} regions</p>
                             </div>
 
                             <div>
-                                <p className="text-sm opacity-60 mb-3">
+                                <p className="mb-3 text-xs font-medium text-white/70">
                                     {compareRegionsEnabled ? "Regions to compare:" : "Select region:"}
                                 </p>
                                 {compareRegionsEnabled ? (
@@ -931,7 +933,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                         {selectedRegions.map((r) => (
                                             <span
                                                 key={r}
-                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border text-sm"
+                                                className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-black/40 px-2 py-1 text-xs text-white"
                                             >
                                                 <MapPin className="w-3.5 h-3.5 opacity-70" />
                                                 {getRegionDisplayName(r, selectedProvider)}
@@ -946,7 +948,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             </span>
                                         ))}
                                         <select
-                                            className="region-select bg-card text-white p-2.5 rounded-lg border border-border focus:border-white/30 focus:outline-none text-sm max-w-[220px] [color-scheme:dark]"
+                                            className="region-select max-w-[220px] rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                             value=""
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -968,16 +970,16 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                 ))}
                                         </select>
                                         {reloadingProviderCost && (
-                                            <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
+                                            <span className="text-xs opacity-70 animate-pulse flex items-center gap-2">
                                                 <RefreshCw className="w-3 h-3" />
                                                 Updating…
                                             </span>
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="flex gap-3 items-center">
+                                    <div className="flex flex-wrap items-center gap-3">
                                         <select
-                                            className="region-select bg-card text-white p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md [color-scheme:dark]"
+                                            className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                             value={selectedRegions[0] ?? ""}
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -995,17 +997,17 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             ))}
                                         </select>
                                         {reloadingProviderCost && (
-                                            <span className="text-sm opacity-70 animate-pulse flex items-center gap-2">
+                                            <span className="text-xs opacity-70 animate-pulse flex items-center gap-2">
                                                 <RefreshCw className="w-3 h-3" />
                                                 Updating…
                                             </span>
                                         )}
                                     </div>
                                 )}
-                                <p className="text-xs opacity-50 mt-2">
+                                <p className="text-[10px] opacity-50 mt-2">
                                     {compareRegionsEnabled
-                                        ? `Add multiple regions to compare pricing. Default: ${getRegionDisplayName(DEFAULT_REGIONS[selectedProvider] ?? "", selectedProvider)}`
-                                        : `Default: ${getRegionDisplayName(DEFAULT_REGIONS[selectedProvider] ?? "", selectedProvider)}`}
+                                        ? `Add multiple regions to compare pricing.`
+                                        : ` `}
                                 </p>
                             </div>
                         </>
@@ -1015,7 +1017,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                 {/* Region comparison table (when enabled and 2+ regions) */}
                 {viewMode === "by-provider" && compareRegionsEnabled && selectedRegions.length >= 2 && currentCosts.length > 0 && (
                     <div className="bg-card border border-border rounded-lg p-6 mb-8">
-                        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                             <GitCompare className="w-5 h-5" />
                             Region comparison
                         </h2>
@@ -1023,14 +1025,14 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                             <table className="min-w-full border-collapse">
                                 <thead>
                                     <tr className="border-b border-border">
-                                        <th className="text-left py-3 px-4 text-sm font-medium opacity-80">Plan</th>
+                                        <th className="text-left py-3 px-4 text-xs font-medium opacity-80">Plan</th>
 
                                         {selectedRegions.map((r) => (
-                                            <th key={r} className="text-left py-3 px-4 text-sm font-medium opacity-80 whitespace-nowrap">
+                                            <th key={r} className="text-left py-3 px-4 text-xs font-medium opacity-80 whitespace-nowrap">
                                                 {getRegionDisplayName(r, selectedProvider)}
                                             </th>
                                         ))}
-                                        <th className="text-left py-3 px-4 text-sm font-medium opacity-80">Best</th>
+                                        <th className="text-left py-3 px-4 text-xs font-medium opacity-80">Best</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1049,18 +1051,18 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             const minMonthly = validValues.length > 0 ? Math.min(...validValues) : 0;
                                             return (
                                                 <tr key={planKey} className="border-b border-border hover:bg-surface/50 transition-colors">
-                                                    <td className="py-3 px-4 font-medium">{planLabel}</td>
+                                                    <td className="py-3 px-4 text-xs font-medium">{planLabel}</td>
                                                     {selectedRegions.map((r) => {
                                                         const cost = byRegion.get(r);
                                                         const isMin = cost != null && validValues.length > 0 && cost.total_month === minMonthly;
                                                         return (
-                                                            <td key={r} className="py-3 px-4 align-top">
+                                                            <td key={r} className="py-3 px-4 text-xs align-top">
                                                                 {cost != null ? (
                                                                     <div className="space-y-1">
                                                                         <span className={isMin ? "font-bold text-green-400" : ""}>
                                                                             {formatCurrency(cost.total_month)}
                                                                         </span>
-                                                                        <div className="text-xs opacity-60">
+                                                                        <div className="text-[10px] opacity-60">
                                                                             {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                                         </div>
                                                                     </div>
@@ -1070,7 +1072,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                             </td>
                                                         );
                                                     })}
-                                                    <td className="py-3 px-4 text-green-400 font-medium">
+                                                    <td className="py-3 px-4 text-xs text-green-400 font-medium">
                                                         {validValues.length > 0 ? formatCurrency(minMonthly) : "—"}
                                                     </td>
                                                 </tr>
@@ -1085,14 +1087,14 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                 {viewMode === "by-region" && genericRegion && (
                     <div className="mb-8">
-                        <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                        <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
                             <MapPin className="w-6 h-6" />
                             Pricing by region — {genericRegion.displayName}
                         </h2>
-                        <p className="text-sm opacity-60 mb-6">Costs for both AWS and Azure in this region</p>
+                        <p className="text-xs opacity-60 mb-6">Costs for both AWS and Azure in this region</p>
                         <div className="grid md:grid-cols-2 gap-8">
                             <div className="bg-card border border-border rounded-lg p-6">
-                                <h3 className="text-xl font-semibold mb-4">AWS — {getRegionDisplayName(genericRegion.aws, "aws")}</h3>
+                                <h3 className="text-lg font-semibold mb-4">AWS — {getRegionDisplayName(genericRegion.aws, "aws")}</h3>
                                 {costsByRegionAWS.length === 0 ? (
                                     <div className="text-center py-8 opacity-60">
                                         <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
@@ -1107,19 +1109,19 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                 <div key={`aws-${index}`} className="border border-border rounded-lg p-4">
                                                     <div className="flex justify-between items-start mb-2">
                                                         <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
-                                                        <span className={`text-sm font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                        <span className={`text-xs font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-sm opacity-70 mb-2">
+                                                    <div className="text-xs opacity-70 mb-2">
                                                         {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                     </div>
-                                                    <div className="flex justify-between items-center text-lg font-bold">
+                                                    <div className="flex justify-between items-center text-base font-bold">
                                                         <span>Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
                                                     </div>
                                                     {(isBest || isMinimal) && (
-                                                        <span className="text-xs font-bold text-blue-400 mt-2 inline-block">
+                                                        <span className="text-[10px] font-bold text-blue-400 mt-2 inline-block">
                                                             {isMinimal ? "MINIMAL COST" : "BEST IN BUDGET"}
                                                         </span>
                                                     )}
@@ -1130,7 +1132,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                 )}
                             </div>
                             <div className="bg-card border border-border rounded-lg p-6">
-                                <h3 className="text-xl font-semibold mb-4">Azure — {getRegionDisplayName(genericRegion.azure, "azure")}</h3>
+                                <h3 className="text-lg font-semibold mb-4">Azure — {getRegionDisplayName(genericRegion.azure, "azure")}</h3>
                                 {costsByRegionAzure.length === 0 ? (
                                     <div className="text-center py-8 opacity-60">
                                         <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
@@ -1145,19 +1147,19 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                 <div key={`azure-${index}`} className="border border-border rounded-lg p-4">
                                                     <div className="flex justify-between items-start mb-2">
                                                         <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
-                                                        <span className={`text-sm font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                        <span className={`text-xs font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                     </div>
-                                                    <div className="text-sm opacity-70 mb-2">
+                                                    <div className="text-xs opacity-70 mb-2">
                                                         {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                     </div>
-                                                    <div className="flex justify-between items-center text-lg font-bold">
+                                                    <div className="flex justify-between items-center text-base font-bold">
                                                         <span>Monthly</span>
                                                         <span>{formatCurrency(cost.total_month)}</span>
                                                     </div>
                                                     {(isBest || isMinimal) && (
-                                                        <span className="text-xs font-bold text-blue-400 mt-2 inline-block">
+                                                        <span className="text-[10px] font-bold text-blue-400 mt-2 inline-block">
                                                             {isMinimal ? "MINIMAL COST" : "BEST IN BUDGET"}
                                                         </span>
                                                     )}
@@ -1174,8 +1176,8 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                 {viewMode === "by-provider" && (!compareRegionsEnabled || selectedRegions.length < 2) && (
                     <div>
                         <div className="flex items-center justify-between m-6">
-                            <h2 className="text-2xl font-bold">Pricing Options Breakdown</h2>
-                            <div className="text-sm opacity-60">
+                            <h2 className="text-lg font-bold">Pricing Options Breakdown</h2>
+                            <div className="text-xs opacity-60">
                                 Showing {currentCosts.length} pricing option{currentCosts.length !== 1 ? 's' : ''}
                                 {compareRegionsEnabled && selectedRegions.length > 1 && (
                                     <span className="ml-2">
@@ -1189,7 +1191,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                             <div className="text-center py-12 bg-card border border-border rounded-lg">
                                 <Server className="w-12 h-12 opacity-50 mx-auto mb-4" />
                                 <p className="opacity-60">No instances found for {selectedProvider.toUpperCase()}</p>
-                                {selectedRegions.length > 0 && <p className="text-sm opacity-50 mt-2">in selected region(s)</p>}
+                                {selectedRegions.length > 0 && <p className="text-xs opacity-50 mt-2">in selected region(s)</p>}
                             </div>
                         ) : (
                             <div className="space-y-6">
@@ -1208,10 +1210,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                         <div
                                             id={`cost-plan-${planId}`}
                                             key={planId}
-                                            className={`border rounded-xl p-6 transition-all relative overflow-hidden scroll-mt-24 ${cost.within_budget
-                                                ? "bg-card border-border"
-                                                : "bg-card border-border"
-                                                }`}
+                                            className="border-b border-border p-6 transition-all relative overflow-hidden scroll-mt-24 bg-card"
                                         >
                                             {/* Left side accent */}
                                             {(isBest || isMinimal) && (
@@ -1222,35 +1221,32 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             <div className="flex items-start justify-between mb-6">
                                                 <div>
                                                     <div className="flex items-center gap-3 mb-2">
-                                                        <h3 className="text-2xl font-bold">
+                                                        <h3 className="text-base font-bold">
                                                             {cost.purchase_type}
                                                             {cost.lease_contract_length && (
-                                                                <span className="text-lg opacity-60 ml-2">
+                                                                <span className="text-base opacity-60 ml-2">
                                                                     ({cost.lease_contract_length})
                                                                 </span>
                                                             )}
                                                         </h3>
-                                                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${cost.within_budget
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${cost.within_budget
                                                             ? "bg-card text-green-400 border border-border"
                                                             : "bg-card text-red-400 border border-border"
                                                             }`}>
-                                                            {cost.within_budget ?
-                                                                <CheckCircle className="w-3 h-3 inline mr-1" /> :
-                                                                <XCircle className="w-3 h-3 inline mr-1" />
-                                                            }
+
                                                             {cost.within_budget ? "Within Budget" : "Over Budget"}
                                                         </span>
                                                         {(isMinimal) && (
                                                             <div>
                                                                 {isMinimal && (
-                                                                    <div className="bg-blue-900 text-blue-300 px-3 py-1 text-xs font-bold rounded-bl-lg">
+                                                                    <div className="bg-blue-900 text-blue-300 px-3 py-1 text-[10px] font-bold rounded-bl-lg">
                                                                         MINIMAL COST
                                                                     </div>
                                                                 )}
                                                             </div>
                                                         )}
                                                     </div>
-                                                    <div className="flex items-center gap-4 text-sm opacity-60">
+                                                    <div className="flex items-center gap-4 text-xs opacity-60">
                                                         <div className="flex items-center gap-1">
                                                             <Building className="w-4 h-4" />
                                                             <span>{cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM</span>
@@ -1287,25 +1283,25 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                     </h4>
                                                     <div className="space-y-2">
                                                         <div className="flex justify-between items-center">
-                                                            <span className="text-sm opacity-60">Hourly Rate</span>
+                                                            <span className="text-xs opacity-60">Hourly Rate</span>
                                                             <span className="font-bold">
                                                                 ${cost.price_per_node_hour.toFixed(3)}
                                                             </span>
                                                         </div>
                                                         <div className="flex justify-between items-center">
-                                                            <span className="text-sm opacity-60">Monthly Estimate</span>
+                                                            <span className="text-xs opacity-60">Monthly Estimate</span>
                                                             <span className="font-bold">
                                                                 {formatCurrency(cost.price_per_node_month)}
                                                             </span>
                                                         </div>
                                                         <div className="pt-2 mt-2 border-t border-border">
                                                             <div className="flex justify-between items-center">
-                                                                <span className="text-sm opacity-80">Total for {cost.nodes} nodes</span>
+                                                                <span className="text-xs opacity-80">Total for {cost.nodes} nodes</span>
                                                                 <span className="font-bold">
                                                                     {formatCurrency(totalNodeMonthly)}
                                                                 </span>
                                                             </div>
-                                                            <div className="text-xs opacity-50 mt-1">
+                                                            <div className="text-[10px] opacity-50 mt-1">
                                                                 ${cost.price_per_node_hour.toFixed(3)} × {cost.nodes} nodes × 730h
                                                             </div>
                                                         </div>
@@ -1320,24 +1316,24 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                     </h4>
                                                     <div className="space-y-2">
                                                         <div className="flex justify-between items-center">
-                                                            <span className="text-sm opacity-60">Tier</span>
+                                                            <span className="text-xs opacity-60">Tier</span>
                                                             <span className="font-bold">
                                                                 {cost.control_plane_tier.charAt(0).toUpperCase() + cost.control_plane_tier.slice(1)}
                                                             </span>
                                                         </div>
                                                         <div className="flex justify-between items-center">
-                                                            <span className="text-sm opacity-60">Hourly Cost</span>
+                                                            <span className="text-xs opacity-60">Hourly Cost</span>
                                                             <span className="font-bold">
                                                                 ${cost.control_plane_hour.toFixed(3)}
                                                             </span>
                                                         </div>
                                                         <div className="flex justify-between items-center">
-                                                            <span className="text-sm opacity-60">Monthly Cost</span>
+                                                            <span className="text-xs opacity-60">Monthly Cost</span>
                                                             <span className="font-bold">
                                                                 {formatCurrency(cost.control_plane_month)}
                                                             </span>
                                                         </div>
-                                                        <div className="text-xs opacity-50 mt-2">
+                                                        <div className="text-[10px] opacity-50 mt-2">
                                                             Fixed cost for cluster management
                                                         </div>
                                                     </div>
@@ -1355,23 +1351,23 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                     <div className="space-y-3">
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-sm opacity-80">Hourly Total</span>
-                                                                <span className="font-bold text-xl">
+                                                                <span className="text-xs opacity-80">Hourly Total</span>
+                                                                <span className="font-bold text-lg">
                                                                     ${cost.total_hour.toFixed(3)}
                                                                 </span>
                                                             </div>
-                                                            <div className="text-xs opacity-50">
+                                                            <div className="text-[10px] opacity-50">
                                                                 ${totalNodeHourly.toFixed(3)} (nodes) + ${cost.control_plane_hour.toFixed(3)} (control)
                                                             </div>
                                                         </div>
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-sm opacity-80">Monthly Total</span>
-                                                                <span className="font-bold text-2xl">
+                                                                <span className="text-xs opacity-80">Monthly Total</span>
+                                                                <span className="font-bold text-xl">
                                                                     {formatCurrency(cost.total_month)}
                                                                 </span>
                                                             </div>
-                                                            <div className="text-xs opacity-50">
+                                                            <div className="text-[10px] opacity-50">
                                                                 ${totalNodeMonthly.toFixed(2)} (nodes) + ${cost.control_plane_month.toFixed(2)} (control)
                                                             </div>
                                                         </div>
@@ -1398,7 +1394,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                             }}
                                                         ></div>
                                                     </div>
-                                                    <div className="flex justify-between text-sm">
+                                                    <div className="flex justify-between text-xs">
                                                         <span className="opacity-50">0%</span>
                                                         <span className={cost.within_budget ? 'text-green-500' : 'text-red-500'}>
                                                             {budgetPercentage.toFixed(1)}%
@@ -1417,7 +1413,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             {/* Detailed Breakdown */}
                                             {isExpanded && (
                                                 <div className="mt-4 pt-4 border-t border-border">
-                                                    <h4 className="font-semibold mb-4 text-lg flex items-center gap-2">
+                                                    <h4 className="font-semibold mb-4 text-xs flex items-center gap-2">
                                                         <PieChart className="w-5 h-5" />
                                                         Detailed Calculation Breakdown
                                                     </h4>
@@ -1430,7 +1426,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                     <Clock className="w-4 h-4" />
                                                                     Hourly Cost Calculation
                                                                 </h5>
-                                                                <div className="space-y-2 text-sm">
+                                                                <div className="space-y-2 text-xs">
                                                                     <div className="flex justify-between">
                                                                         <span className="opacity-60">Node hourly cost:</span>
                                                                         <span className="font-mono">${cost.price_per_node_hour.toFixed(3)}</span>
@@ -1461,7 +1457,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                     <Calendar className="w-4 h-4" />
                                                                     Monthly Cost Calculation
                                                                 </h5>
-                                                                <div className="space-y-2 text-sm">
+                                                                <div className="space-y-2 text-xs">
                                                                     <div className="flex justify-between">
                                                                         <span className="opacity-60">Node monthly cost:</span>
                                                                         <span className="font-mono">
@@ -1499,7 +1495,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                     <Target className="w-4 h-4" />
                                                                     Budget Analysis
                                                                 </h5>
-                                                                <div className="space-y-2 text-sm">
+                                                                <div className="space-y-2 text-xs">
                                                                     <div className="flex justify-between">
                                                                         <span className="opacity-60">Available budget:</span>
                                                                         <span className="font-mono">${cost.budget_month.toFixed(2)}</span>
@@ -1532,7 +1528,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                                                     <TrendingUp className="w-4 h-4" />
                                                                     Cost Efficiency
                                                                 </h5>
-                                                                <div className="space-y-2 text-sm">
+                                                                <div className="space-y-2 text-xs">
                                                                     <div className="flex justify-between">
                                                                         <span className="opacity-60">Cost per node per hour:</span>
                                                                         <span className="font-mono">${cost.price_per_node_hour.toFixed(3)}</span>
@@ -1560,11 +1556,11 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                                                     {/* Footer */}
                                                     <div className="mt-6 pt-4 border-t border-border">
-                                                        <h5 className="text-sm font-medium opacity-60 mb-2 flex items-center gap-2">
+                                                        <h5 className="text-xs font-medium opacity-60 mb-2 flex items-center gap-2">
                                                             <Info className="w-4 h-4" />
                                                             Calculation Assumptions
                                                         </h5>
-                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs opacity-50">
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[10px] opacity-50">
                                                             <div className="flex items-start gap-2">
                                                                 <div className="w-1 h-1 bg-border rounded-full mt-1"></div>
                                                                 <span>1 month = 730 hours (24h × 30 days)</span>
@@ -1589,7 +1585,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                     </div>
                 )}
                 <div className="mt-8 pt-6 border-t border-border">
-                    <div className="text-center text-sm opacity-50">
+                    <div className="text-center text-xs opacity-50">
                         <p className="mt-1">Prices are estimates based on public pricing and may vary based on actual usage, commitments, and additional services</p>
                     </div>
                 </div>
