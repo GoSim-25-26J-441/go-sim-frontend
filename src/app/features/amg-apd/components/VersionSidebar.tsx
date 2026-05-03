@@ -172,6 +172,11 @@ export default function VersionSidebar({
     return !s || s === "amg_apd";
   }
 
+  /** Rename/delete only from version 2+; v1 is the locked baseline snapshot. */
+  function versionAllowsEditActions(v: AmgApdVersionSummary) {
+    return v.version_number > 1;
+  }
+
   async function handleDelete(id: string) {
     const row = versions.find((x) => x.id === id);
     if (row && !versionCanDeleteFromList(row)) {
@@ -371,7 +376,12 @@ export default function VersionSidebar({
               )}
 
               <ul className="space-y-2">
-                {versions.map((v, idx) => (
+                {versions.map((v, idx) => {
+                  const showRenameDelete = versionAllowsEditActions(v);
+                  const firstTourActionIdx = versions.findIndex(
+                    (x) => versionAllowsEditActions(x),
+                  );
+                  return (
                   <li
                     key={v.id}
                     className="rounded-md border border-white/[0.08] bg-[#252525] p-3 text-xs transition-colors hover:border-white/12"
@@ -440,51 +450,67 @@ export default function VersionSidebar({
                           >
                             Move to this version
                           </button>
-                          <button
-                            type="button"
-                            data-amg-designer={
-                              idx === 0
-                                ? AMG_DESIGNER.versionRename
-                                : undefined
-                            }
-                            onClick={() => startRename(v)}
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-white/85 transition-colors hover:border-white/25 hover:bg-white/10"
-                            title="Rename this version"
-                            aria-label="Rename this version"
-                          >
-                            <PenLine className="h-3 w-3" aria-hidden />
-                          </button>
-                          <button
-                            type="button"
-                            data-amg-designer={
-                              idx === 0
-                                ? AMG_DESIGNER.versionDelete
-                                : undefined
-                            }
-                            onClick={() => handleDelete(v.id)}
-                            disabled={
-                              deletingId === v.id ||
-                              !versionCanDeleteFromList(v)
-                            }
-                            title={
-                              versionCanDeleteFromList(v)
-                                ? "Delete this version"
-                                : "The main diagram snapshot cannot be deleted from this list. Save an AMG-APD version first if you need to remove others."
-                            }
-                            aria-label={
-                              versionCanDeleteFromList(v)
-                                ? "Delete this version"
-                                : "Cannot delete the main diagram snapshot"
-                            }
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-red-400/35 bg-red-500/12 text-red-200/95 transition-colors hover:bg-red-500/22 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-500/12"
-                          >
-                            <Trash className="h-3 w-3" aria-hidden />
-                          </button>
+                          {showRenameDelete ? (
+                            <>
+                              <button
+                                type="button"
+                                data-amg-designer={
+                                  idx === firstTourActionIdx
+                                    ? AMG_DESIGNER.versionRename
+                                    : undefined
+                                }
+                                onClick={() => startRename(v)}
+                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-white/85 transition-colors hover:border-white/25 hover:bg-white/10"
+                                title="Rename this version"
+                                aria-label="Rename this version"
+                              >
+                                <PenLine className="h-3 w-3" aria-hidden />
+                              </button>
+                              <button
+                                type="button"
+                                data-amg-designer={
+                                  idx === firstTourActionIdx
+                                    ? AMG_DESIGNER.versionDelete
+                                    : undefined
+                                }
+                                onClick={() => handleDelete(v.id)}
+                                disabled={
+                                  deletingId === v.id ||
+                                  !versionCanDeleteFromList(v)
+                                }
+                                title={
+                                  versionCanDeleteFromList(v)
+                                    ? "Delete this version"
+                                    : "The main diagram snapshot cannot be deleted from this list. Save an AMG-APD version first if you need to remove others."
+                                }
+                                aria-label={
+                                  versionCanDeleteFromList(v)
+                                    ? "Delete this version"
+                                    : "Cannot delete the main diagram snapshot"
+                                }
+                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-red-400/35 bg-red-500/12 text-red-200/95 transition-colors hover:bg-red-500/22 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-500/12"
+                              >
+                                <Trash className="h-3 w-3" aria-hidden />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span
+                                className="inline-flex h-7 w-7 shrink-0"
+                                aria-hidden
+                              />
+                              <span
+                                className="inline-flex h-7 w-7 shrink-0"
+                                aria-hidden
+                              />
+                            </>
+                          )}
                         </div>
                       </>
                     )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           </div>,

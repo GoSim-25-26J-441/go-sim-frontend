@@ -41,7 +41,6 @@ import CollapsibleDetailsSection from "@/app/features/amg-apd/components/Collaps
 import LiveGraphExportPreview from "@/app/features/amg-apd/components/LiveGraphExportPreview";
 import {
   AntiPatternDetailsPanel,
-  ConnectionsToolsPanel,
   SelectionDetailsMain,
 } from "@/app/features/amg-apd/components/SelectedDetails";
 
@@ -439,6 +438,10 @@ function GraphCanvasInner({
     computeStatsFromData(analysis),
   );
 
+  /** Zoom % is relative to this level (set on layout + Fit); Fit resets % to 100. */
+  const zoomBaselineRef = useRef<number | null>(null);
+  const [zoomPercent, setZoomPercent] = useState(100);
+
   useEffect(() => {
     if (!designerTourWorkspaceNonce) return;
     if (readOnly) return;
@@ -531,12 +534,6 @@ function GraphCanvasInner({
       : 0;
     return `${n}-${e}-${d}`;
   }, [analysis]);
-
-  const handleToolChange = useCallback((t: EditTool) => {
-    setPendingAntiPatternKind(null);
-    setPendingSource(null);
-    setTool(t);
-  }, []);
 
   const addNodeAt = useCallback(
     (kind: NodeKind, pos: { x: number; y: number }) => {
@@ -794,8 +791,110 @@ function GraphCanvasInner({
         animate: false,
       } as any);
       layoutInstance.run();
+      zoomBaselineRef.current = cy.zoom();
+      setZoomPercent(100);
     } catch {}
   }, [cy, layout, analysis]);
+
+  const applyZoomAtPercent = useCallback((pct: number) => {
+    const c = cyRef.current;
+    if (!cyAlive(c)) return;
+    const dom = c.container();
+    if (!dom) return;
+    const w = dom.clientWidth;
+    const h = dom.clientHeight;
+    const stored = zoomBaselineRef.current;
+    const base = stored != null && stored > 0 ? stored : c.zoom();
+    const clampedPct = Math.min(300, Math.max(30, Math.round(pct)));
+    let target = base * (clampedPct / 100);
+    const minZ = c.minZoom();
+    const maxZ = c.maxZoom();
+    target = Math.min(maxZ, Math.max(minZ, target));
+    try {
+      c.zoom({ level: target, renderedPosition: { x: w / 2, y: h / 2 } });
+    } catch {}
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoomPercent((prev) => {
+      const next = Math.min(300, prev + 10);
+      queueMicrotask(() => applyZoomAtPercent(next));
+      return next;
+    });
+  }, [applyZoomAtPercent]);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomPercent((prev) => {
+      const next = Math.max(30, prev - 10);
+      queueMicrotask(() => applyZoomAtPercent(next));
+      return next;
+    });
+  }, [applyZoomAtPercent]);
+
+  const handleZoomPercentCommit = useCallback(
+    (p: number) => {
+      const next = Math.min(300, Math.max(30, Math.round(p)));
+      setZoomPercent(next);
+      applyZoomAtPercent(next);
+    },
+    [applyZoomAtPercent],
+  );
+
+  useEffect(() => {
+    if (!cyAlive(cy)) return;
+    const onZoom = () => {
+      const c = cyRef.current;
+      if (!cyAlive(c)) return;
+      const b = zoomBaselineRef.current;
+      if (b == null || b <= 0) return;
+      const p = Math.round((c.zoom() / b) * 100);
+      const clamped = Math.min(300, Math.max(30, p));
+      setZoomPercent((old) => (old === clamped ? old : clamped));
+    };
+    cy.on("zoom", onZoom);
+    return () => {
+      try {
+        cy.off("zoom", onZoom);
+      } catch {}
+    };
+  }, [cy]);
+
+  /** Discrete ±10% zoom on wheel/trackpad (Cytoscape wheel zoom is disabled). */
+  useEffect(() => {
+    const wrap = containerRef.current;
+    if (!wrap || !cyAlive(cy)) return;
+
+    const accum = { y: 0 };
+    const THRESH = 55;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      accum.y += e.deltaY;
+
+      let deltaPct = 0;
+      while (accum.y >= THRESH) {
+        accum.y -= THRESH;
+        deltaPct -= 10;
+      }
+      while (accum.y <= -THRESH) {
+        accum.y += THRESH;
+        deltaPct += 10;
+      }
+
+      if (deltaPct === 0) return;
+
+      setZoomPercent((prev) => {
+        const next = Math.min(300, Math.max(30, prev + deltaPct));
+        queueMicrotask(() => applyZoomAtPercent(next));
+        return next;
+      });
+    };
+
+    wrap.addEventListener("wheel", onWheel, { passive: false });
+    return () => wrap.removeEventListener("wheel", onWheel);
+  }, [cy, applyZoomAtPercent]);
 
   useEffect(() => {
     if (!cyAlive(cy)) return;
@@ -1014,6 +1113,8 @@ function GraphCanvasInner({
     try {
       cy.resize();
       cy.fit(cy.elements(), 40);
+      zoomBaselineRef.current = cy.zoom();
+      setZoomPercent(100);
     } catch {}
   }
 
@@ -1113,6 +1214,23 @@ function GraphCanvasInner({
     patchSelectedNodeLabel(id, trimmed);
     return true;
   }
+
+  /** Live canvas labels for Details copy (edge endpoints, neighbor lists). */
+  const resolveNodeLabel = useCallback(
+    (id: string) => {
+      if (cyAlive(cy)) {
+        const el = cy.getElementById(id);
+        if (!el.empty()) {
+          const lab = el.data("label") as string | undefined;
+          if (typeof lab === "string" && lab.trim()) return lab.trim();
+        }
+      }
+      const n = analysis.graph.nodes[id];
+      if (typeof n?.name === "string" && n.name.trim()) return n.name.trim();
+      return id;
+    },
+    [cy, analysis.graph.nodes],
+  );
 
   function handleContextRename(nodeId: string) {
     if (!cyAlive(cy)) return;
@@ -1294,6 +1412,10 @@ function GraphCanvasInner({
         fullscreenButton={fullscreenButton}
         guidesActive={guidesActive}
         onGuidesToggle={onGuidesToggle}
+        zoomPercent={zoomPercent}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomPercentCommit={handleZoomPercentCommit}
       />
 
       <div
@@ -1460,7 +1582,7 @@ function GraphCanvasInner({
             autounselectify={false}
             boxSelectionEnabled={true}
             userPanningEnabled={true}
-            userZoomingEnabled={true}
+            userZoomingEnabled={false}
             style={{
               width: "100%",
               height: "100%",
@@ -1468,7 +1590,6 @@ function GraphCanvasInner({
             }}
             minZoom={0.2}
             maxZoom={3}
-            wheelSensitivity={0.2}
           />
 
           <EdgeCallFlowBolts cy={cy} containerEl={containerRef.current} />
@@ -1616,28 +1737,6 @@ function GraphCanvasInner({
               </div>
               {/* Single scroll surface — matches main diagram Inspector */}
               <div className="isolate flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1 [scrollbar-gutter:stable] scrollbar-toolbox">
-                {!readOnly && effectiveEditMode && (
-                  <div
-                    className="space-y-2 text-xs"
-                    data-amg-designer={AMG_DESIGNER.connectionTools}
-                  >
-                    <div className="text-[11px] text-slate-400">
-                      Connection tools
-                    </div>
-                    <ConnectionsToolsPanel
-                      editMode={effectiveEditMode}
-                      currentTool={tool}
-                      onToolChange={handleToolChange}
-                      defaultCallProtocol={defaultCallProtocol}
-                      defaultCallSync={defaultCallSync}
-                      onDefaultCallChange={(kind, sync) => {
-                        setDefaultCallProtocol(kind);
-                        setDefaultCallSync(sync);
-                      }}
-                    />
-                  </div>
-                )}
-
                 <div data-amg-designer={AMG_DESIGNER.detailsSelection}>
                   <CollapsibleDetailsSection
                     collapsedLabel={
@@ -1654,6 +1753,7 @@ function GraphCanvasInner({
                           ? "Connection details"
                           : "Selection"
                     }
+                    alwaysExpanded={!!effectiveEditMode}
                     forceExpandKey={nodeDetailsExpandNonce}
                   >
                     <SelectionDetailsMain
@@ -1664,6 +1764,7 @@ function GraphCanvasInner({
                       onRenameNode={handleRenameNode}
                       onRenameNodeLive={handleRenameNodeLive}
                       onUpdateEdge={handleUpdateEdge}
+                      resolveNodeLabel={resolveNodeLabel}
                     />
                   </CollapsibleDetailsSection>
                 </div>
@@ -1703,45 +1804,61 @@ function GraphCanvasInner({
       antiPresetDropKind &&
       createPortal(
         <div
-          className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md"
+          className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
           onClick={(e) => {
             if (e.target === e.currentTarget) setAntiPresetDropKind(null);
           }}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
+            className="pointer-events-auto relative w-full max-w-md overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-labelledby="anti-preset-drop-title"
           >
-            <div className="border-b border-white/10 px-5 py-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
+            <div
+              className="pointer-events-none absolute top-0 right-0 left-0 h-px"
+              style={{
+                background:
+                  "linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent)",
+              }}
+            />
+            <div
+              className="px-4 py-3"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                 Guides
               </p>
               <h2
                 id="anti-preset-drop-title"
-                className="mt-1 text-base font-semibold text-white"
+                className="mt-0.5 text-sm font-semibold leading-snug text-white"
               >
                 {antipatternKindLabel(antiPresetDropKind)} sample placed
               </h2>
-              <p className="mt-2 text-[12px] leading-relaxed text-white/65">
-                You dropped a preset subgraph that illustrates this anti-pattern. The analyzer reports it
-                because the shape matches what the detectors look for in real architectures, not because the
+              <p className="mt-2 text-xs leading-relaxed text-gray-400">
+                You dropped a preset subgraph that illustrates this anti-pattern.
+                The analyzer reports it because the shape matches what the
+                detectors look for in real architectures, not because the
                 template is random noise.
               </p>
             </div>
-            <div className="max-h-[min(52vh,22rem)] overflow-y-auto px-5 py-4">
+            <div className="max-h-[min(52vh,22rem)] overflow-y-auto px-4 py-3">
               <div className="flex justify-center">
                 <AntiPatternTourDiagram kind={antiPresetDropKind} />
               </div>
-              <p className="mt-3 text-[12px] leading-relaxed text-white/70">{antiPresetExplain}</p>
+              <p className="mt-3 text-xs leading-relaxed text-gray-400">
+                {antiPresetExplain}
+              </p>
             </div>
-            <div className="border-t border-white/10 px-5 py-4">
+            <div
+              className="px-4 py-3"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
+            >
               <button
                 type="button"
                 onClick={() => setAntiPresetDropKind(null)}
-                className="w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+                className="w-full rounded-md border border-gray-600 bg-gray-700/80 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
               >
                 Got it
               </button>

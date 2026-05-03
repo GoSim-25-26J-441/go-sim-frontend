@@ -1,6 +1,7 @@
 "use client";
 
-import { Maximize2, Minimize2, RotateCcw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
@@ -47,6 +48,12 @@ type Props = {
   /** Toggle guided highlights (welcome + ? markers). */
   guidesActive?: boolean;
   onGuidesToggle?: () => void;
+
+  /** View zoom vs last fit/layout baseline (30–300%). Fit resets baseline and 100%. */
+  zoomPercent?: number;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onZoomPercentCommit?: (percent: number) => void;
 };
 
 export default function ControlPanel({
@@ -62,7 +69,16 @@ export default function ControlPanel({
   fullscreenButton,
   onResetCanvas,
   resetDisabled = false,
+  guidesActive,
+  onGuidesToggle,
+  zoomPercent,
+  onZoomIn,
+  onZoomOut,
+  onZoomPercentCommit,
 }: Props) {
+  void guidesActive;
+  void onGuidesToggle;
+
   const {
     services,
     gateways,
@@ -74,6 +90,12 @@ export default function ControlPanel({
     edges,
     detections,
   } = stats;
+
+  const showZoom =
+    typeof zoomPercent === "number" &&
+    onZoomIn &&
+    onZoomOut &&
+    onZoomPercentCommit;
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-white/10 bg-gray-800/50 px-4 py-3 text-xs">
@@ -96,10 +118,18 @@ export default function ControlPanel({
           <button
             type="button"
             onClick={onFit}
-            className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 shrink-0"
+            className="flex shrink-0 items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-medium text-black transition-all duration-150 hover:bg-gray-200"
           >
             Fit to Screen
           </button>
+          {showZoom && (
+            <ZoomPercentControl
+              zoomPercent={zoomPercent}
+              onZoomIn={onZoomIn}
+              onZoomOut={onZoomOut}
+              onCommitPercent={onZoomPercentCommit}
+            />
+          )}
         </div>
 
         {!readOnly && (
@@ -214,6 +244,75 @@ export default function ControlPanel({
           <strong className="font-semibold text-white">{detections}</strong>
         </span>
       </div>
+    </div>
+  );
+}
+
+function ZoomPercentControl({
+  zoomPercent,
+  onZoomIn,
+  onZoomOut,
+  onCommitPercent,
+}: {
+  zoomPercent: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onCommitPercent: (percent: number) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(String(zoomPercent));
+
+  useEffect(() => {
+    if (!focused) setDraft(String(zoomPercent));
+  }, [zoomPercent, focused]);
+
+  return (
+    <div
+      className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F]"
+      title="Zoom relative to last fit (±10%). Fit resets to 100%."
+    >
+      <button
+        type="button"
+        onClick={onZoomOut}
+        className="flex h-7 w-7 shrink-0 items-center justify-center text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+        aria-label="Zoom out 10%"
+      >
+        <Minus className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
+      <div className="flex min-w-[2.75rem] max-w-[3.25rem] items-center justify-center border-x border-gray-700 px-1">
+        <input
+          type="text"
+          inputMode="numeric"
+          aria-label="Zoom percent"
+          className="w-full bg-transparent py-1 text-center text-[11px] font-semibold tabular-nums text-white outline-none focus:ring-0"
+          value={focused ? draft : String(zoomPercent)}
+          onFocus={() => {
+            setFocused(true);
+            setDraft(String(zoomPercent));
+          }}
+          onChange={(e) => {
+            const digits = e.target.value.replace(/\D/g, "").slice(0, 3);
+            setDraft(digits);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            const n = parseInt(draft, 10);
+            if (!Number.isNaN(n)) onCommitPercent(n);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />
+        <span className="pr-0.5 text-[10px] font-medium text-gray-500">%</span>
+      </div>
+      <button
+        type="button"
+        onClick={onZoomIn}
+        className="flex h-7 w-7 shrink-0 items-center justify-center text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+        aria-label="Zoom in 10%"
+      >
+        <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
     </div>
   );
 }

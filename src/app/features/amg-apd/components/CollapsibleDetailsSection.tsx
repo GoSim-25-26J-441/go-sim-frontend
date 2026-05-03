@@ -11,6 +11,8 @@ type Props = {
   defaultOpen?: boolean;
   /** Increment (e.g. from parent) to force this section open — e.g. context menu “Rename”. */
   forceExpandKey?: number;
+  /** When true, section is always expanded with no toggle (e.g. selection block in edit mode). */
+  alwaysExpanded?: boolean;
   children: React.ReactNode;
   className?: string;
 };
@@ -24,14 +26,30 @@ export default function CollapsibleDetailsSection({
   expandedTitle,
   defaultOpen = false,
   forceExpandKey = 0,
+  alwaysExpanded = false,
   children,
   className = "",
 }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen || alwaysExpanded);
 
   useEffect(() => {
     if (forceExpandKey > 0) setOpen(true);
   }, [forceExpandKey]);
+
+  useEffect(() => {
+    if (alwaysExpanded) setOpen(true);
+  }, [alwaysExpanded]);
+
+  if (alwaysExpanded) {
+    return (
+      <div className={`w-full shrink-0 ${className}`}>
+        <div className="px-1 py-1.5 text-xs font-semibold leading-snug text-slate-200 sm:text-[13px]">
+          {expandedTitle}
+        </div>
+        <div className="mt-1 border-t border-slate-800 pt-3">{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div className={`w-full shrink-0 ${className}`}>

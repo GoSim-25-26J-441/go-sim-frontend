@@ -151,38 +151,53 @@ export default function Legend({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
             onClick={(e) => e.target === e.currentTarget && closeHelp()}
           >
             <div
-              className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur-sm"
+              className="pointer-events-auto relative flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 bg-slate-900/90 px-5 py-4">
+              <div
+                className="pointer-events-none absolute top-0 right-0 left-0 h-px"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent)",
+                }}
+              />
+              <div
+                className="flex shrink-0 items-start justify-between gap-3 px-4 py-3"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+              >
                 <div className="min-w-0 pr-2">
-                  <h2 className="text-sm font-semibold text-white">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                    Guides
+                  </p>
+                  <h2 className="mt-0.5 text-sm font-semibold leading-snug text-white">
                     Anti-pattern explanations
                   </h2>
-                  <p className="mt-1 text-[11px] text-white/50">
+                  <p className="mt-1 text-[11px] leading-relaxed text-gray-400">
                     How we label issues in your architecture graph.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={closeHelp}
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white text-sm font-medium text-black shadow-sm transition-colors hover:bg-gray-200"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/[0.06] text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
                   aria-label="Close"
                 >
                   ✕
                 </button>
               </div>
 
-              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-5 scrollbar-dark">
-                <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-                  <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 scrollbar-dark">
+                <section
+                  className="rounded-md border border-white/[0.08] bg-white/[0.04] p-3"
+                >
+                  <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
                     Low, medium &amp; high severity
                   </h3>
-                  <pre className="font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-white/65">
+                  <pre className="font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-gray-400">
                     {SEVERITY_EXPLANATION}
                   </pre>
                 </section>
@@ -191,17 +206,17 @@ export default function Legend({
                   {kinds.map((k) => (
                     <li
                       key={k}
-                      className="flex items-start gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-3"
+                      className="flex items-start gap-3 rounded-md border border-white/[0.08] bg-white/[0.04] p-2.5"
                     >
                       <span
                         style={{ background: colorForDetectionKind(k) }}
-                        className="mt-[3px] inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/15"
+                        className="mt-[3px] inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/10"
                       />
                       <div className="min-w-0">
                         <div className="text-[11px] font-semibold text-white/90">
                           {antipatternKindLabel(k)}
                         </div>
-                        <div className="mt-0.5 text-[11px] leading-relaxed text-white/55">
+                        <div className="mt-0.5 text-[11px] leading-relaxed text-gray-400">
                           {HELP[k] ?? "Detected issue in the architecture."}
                         </div>
                       </div>

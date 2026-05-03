@@ -152,68 +152,10 @@ function getVisibleGuidesControlRect(): DOMRect | null {
   return null;
 }
 
-const GUIDES_INTRO_POPOVER_GAP = 12;
 const GUIDES_INTRO_POPOVER_MARGIN = 12;
 const GUIDES_INTRO_MAX_W_PX = 352;
-/** Rough minimum vertical space desired below anchor before flipping above */
-const GUIDES_INTRO_MIN_SPACE_BELOW = 168;
 
-function welcomeIntroPanelStyle(anchor: DOMRect | null): CSSProperties {
-  const vw =
-    typeof window !== "undefined" ? window.innerWidth : GUIDES_INTRO_MAX_W_PX;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 600;
-  const maxW = Math.min(GUIDES_INTRO_MAX_W_PX, vw - GUIDES_INTRO_POPOVER_MARGIN * 2);
-
-  if (!anchor || anchor.width <= 0) {
-    return {
-      position: "fixed",
-      zIndex: 30,
-      right: GUIDES_INTRO_POPOVER_MARGIN + 6,
-      bottom: GUIDES_INTRO_POPOVER_MARGIN + 8,
-      left: "auto",
-      top: "auto",
-      width: maxW,
-      maxWidth: maxW,
-    };
-  }
-
-  let left = anchor.left;
-  left = Math.max(
-    GUIDES_INTRO_POPOVER_MARGIN,
-    Math.min(left, vw - GUIDES_INTRO_POPOVER_MARGIN - maxW),
-  );
-
-  const topBelow = anchor.bottom + GUIDES_INTRO_POPOVER_GAP;
-  const spaceBelow = vh - topBelow - GUIDES_INTRO_POPOVER_MARGIN;
-  const spaceAbove = anchor.top - GUIDES_INTRO_POPOVER_MARGIN * 2;
-  const placeAbove =
-    spaceBelow < GUIDES_INTRO_MIN_SPACE_BELOW && spaceAbove > spaceBelow;
-
-  if (placeAbove) {
-    return {
-      position: "fixed",
-      zIndex: 30,
-      left,
-      bottom: vh - anchor.top + GUIDES_INTRO_POPOVER_GAP,
-      top: "auto",
-      width: maxW,
-      maxWidth: maxW,
-      maxHeight: Math.min(0.55 * vh, anchor.top - GUIDES_INTRO_POPOVER_GAP * 2),
-    };
-  }
-
-  return {
-    position: "fixed",
-    zIndex: 30,
-    left,
-    top: topBelow,
-    width: maxW,
-    maxWidth: maxW,
-    maxHeight: Math.min(0.55 * vh, vh - topBelow - GUIDES_INTRO_POPOVER_MARGIN),
-  };
-}
-
-/** Centered modal for welcome step 0 (initial intro). */
+/** Centered modal for all welcome intro steps (spotlight stays on page behind). */
 function welcomeIntroCenteredPanelStyle(): CSSProperties {
   const vw =
     typeof window !== "undefined" ? window.innerWidth : GUIDES_INTRO_MAX_W_PX;
@@ -324,7 +266,6 @@ function DesignerHintPip({
   onClick: () => void;
   title: string;
 }) {
-  const pip = 22;
   const { left, top } = pipPosition(rect);
   const off =
     rect.bottom < -2 ||
@@ -709,7 +650,7 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.fullscreen,
         title: "Fullscreen workspace",
-        body: "Fullscreen maximizes the graph workspace: the legend moves into the chrome and the page header hides so you can edit large diagrams with less clutter. Exit fullscreen to reach versions, downloads, and the rest of the page again.",
+        body: "Fullscreen uses the whole window: the app top bar and project sidebar hide, the patterns page header hides, and the legend moves into the graph chrome so the canvas can grow. Exit fullscreen to reach versions, downloads, and navigation again.",
       },
     ],
     editButton: [
@@ -905,27 +846,8 @@ function buildSteps(args: {
         ),
       },
       {
-        anchor: AMG_DESIGNER.connectionTools,
-        title: "Connection tools",
-        beforeEnter: () => {
-          onPrepareEditWorkspace();
-          onExpandDetailAccordions();
-        },
-        body: (
-          <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
-            <p>
-              Choose the active edge tool (for example{" "}
-              <strong className="text-white/85">Calls</strong>), then click a
-              source node and a target to draw a link. Defaults for REST, gRPC,
-              Event, sync vs async apply to new edges; you can still refine a
-              selected edge in the details block.
-            </p>
-          </div>
-        ),
-      },
-      {
         anchor: AMG_DESIGNER.detailsSelection,
-        title: "Selection details",
+        title: "Selection & connection details",
         beforeEnter: () => {
           onPrepareEditWorkspace();
           onExpandDetailAccordions();
@@ -933,11 +855,16 @@ function buildSteps(args: {
         body: (
           <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
             <p>
-              This accordion opens when you care about the current selection.
-              For a node it exposes rename (inline when edit mode is on),
-              metadata, and incident lists; for an edge it surfaces protocol,
-              direction, and edit controls so call lanes stay consistent with
-              the graph.
+              Activate the <strong className="text-white/85">Calls</strong>{" "}
+              tool in the edit toolbox, then click a source node and a target to
+              draw a link. Defaults for REST, gRPC, Event, and sync vs async
+              apply to new edges.
+            </p>
+            <p>
+              In edit mode this details block stays open at the top: for a node
+              it exposes rename (inline), metadata, and incident lists; for an
+              edge it surfaces protocol, direction, and edit controls so call
+              lanes stay consistent with the graph.
             </p>
           </div>
         ),
@@ -1057,9 +984,6 @@ export default function PatternsDesignerTour({
     Partial<Record<AmgDesignerAnchor, DOMRect>>
   >({});
   const [welcomeRects, setWelcomeRects] = useState<DOMRect[]>([]);
-  const [guidesButtonRect, setGuidesButtonRect] = useState<DOMRect | null>(
-    null,
-  );
 
   const chapterList = useMemo(() => {
     let list = CHAPTER_BASE.filter(
@@ -1270,25 +1194,6 @@ export default function PatternsDesignerTour({
     welcomeGuidesControlInHeader,
   ]);
 
-  useLayoutEffect(() => {
-    if (!enabled || !welcomeIntroOpen || chapterId) {
-      setGuidesButtonRect(null);
-      return;
-    }
-    const measure = () => {
-      setGuidesButtonRect(getVisibleGuidesControlRect());
-    };
-    measure();
-    const id = window.setInterval(measure, 400);
-    window.addEventListener("scroll", measure, true);
-    window.addEventListener("resize", measure);
-    return () => {
-      window.clearInterval(id);
-      window.removeEventListener("scroll", measure, true);
-      window.removeEventListener("resize", measure);
-    };
-  }, [enabled, welcomeIntroOpen, chapterId]);
-
   useEffect(() => {
     const wasEnabled = prevEnabledRef.current;
     if (wasEnabled === true && !enabled) {
@@ -1335,15 +1240,7 @@ export default function PatternsDesignerTour({
             aria-labelledby="designer-welcome-intro-title"
             aria-describedby="designer-welcome-intro-desc"
             className="pointer-events-auto relative flex min-h-0 flex-col gap-2 overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] px-3 py-2.5 shadow-xl sm:min-w-[min(18rem,calc(100vw-1.5rem))]"
-            style={
-              welcomeStep === 0
-                ? welcomeIntroCenteredPanelStyle()
-                : welcomeIntroPanelStyle(
-                    welcomeStep === 2 && welcomeGuidesControlInHeader
-                      ? guidesButtonRect
-                      : null,
-                  )
-            }
+            style={welcomeIntroCenteredPanelStyle()}
           >
             <div
               className="pointer-events-none absolute top-0 right-0 left-0 h-px"

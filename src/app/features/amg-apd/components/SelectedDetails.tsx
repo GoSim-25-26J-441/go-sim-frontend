@@ -134,6 +134,8 @@ type SelectionProps = {
   onUpdateEdge?: (edgeId: string, attrs: { kind: CallProtocol; sync: boolean }) => void;
   /** Increment from parent (e.g. context menu “Rename”) to focus the node name field. */
   renameFocusNonce?: number;
+  /** Prefer live Cytoscape labels over static `graph.nodes[].name` (renames, display names). */
+  resolveNodeLabel?: (nodeId: string) => string;
 };
 
 /** Node / edge / empty selection — without anti-pattern list or Calls toolbox. */
@@ -145,10 +147,21 @@ export function SelectionDetailsMain({
   onRenameNodeLive,
   onUpdateEdge,
   renameFocusNonce = 0,
+  resolveNodeLabel,
 }: SelectionProps) {
   const detections = useMemo(
     () => detectionsForSelection(data, selected),
     [selected, data],
+  );
+
+  const formatNodeRef = useMemo(
+    () => (nodeId: string) => {
+      const fromCy = resolveNodeLabel?.(nodeId)?.trim();
+      const fromGraph = data.graph.nodes[nodeId]?.name?.trim();
+      const raw = fromCy || fromGraph || nodeId;
+      return toDisplayName(raw);
+    },
+    [resolveNodeLabel, data.graph.nodes],
   );
 
   const antiPatternCountLabel = useMemo(() => {
@@ -353,7 +366,7 @@ export function SelectionDetailsMain({
                   {nodeConnectionSummary.uniqOut.slice(0, 10).map((t, i) => (
                     <span key={`o-${t}-${i}`}>
                       {i > 0 ? ", " : ""}
-                      {toDisplayName(t)}
+                      {formatNodeRef(t)}
                     </span>
                   ))}
                   {nodeConnectionSummary.uniqOut.length > 10 ? "…" : ""}
@@ -367,7 +380,7 @@ export function SelectionDetailsMain({
                   {nodeConnectionSummary.uniqIn.slice(0, 10).map((t, i) => (
                     <span key={`i-${t}-${i}`}>
                       {i > 0 ? ", " : ""}
-                      {toDisplayName(t)}
+                      {formatNodeRef(t)}
                     </span>
                   ))}
                   {nodeConnectionSummary.uniqIn.length > 10 ? "…" : ""}
@@ -479,7 +492,7 @@ export function SelectionDetailsMain({
           Connection
         </div>
         <div className="text-[11px] text-slate-300">
-          {toDisplayName(fromName)} → {toDisplayName(toName)}
+          {formatNodeRef(fromName)} → {formatNodeRef(toName)}
         </div>
       </div>
 
@@ -510,8 +523,8 @@ export function SelectionDetailsMain({
         )}
         <p className="text-[11px] leading-relaxed text-slate-500">
           Models a <span className="text-slate-300">{kind}</span> dependency from{" "}
-          <span className="text-slate-300">{toDisplayName(fromName)}</span> to{" "}
-          <span className="text-slate-300">{toDisplayName(toName)}</span>.
+          <span className="text-slate-300">{formatNodeRef(fromName)}</span> to{" "}
+          <span className="text-slate-300">{formatNodeRef(toName)}</span>.
         </p>
       </div>
 

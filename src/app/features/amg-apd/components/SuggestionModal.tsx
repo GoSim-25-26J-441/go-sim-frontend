@@ -82,17 +82,30 @@ export default function SuggestionModal({
   if (!open) return null;
 
   const modal = (
-    <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+    <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
       <div
-        className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40"
+        className="pointer-events-auto relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl"
         data-amg-designer={AMG_DESIGNER.suggestionModal}
       >
-        <div className="relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95">
+        <div
+          className="pointer-events-none absolute top-0 right-0 left-0 h-px"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent)",
+          }}
+        />
+        <div
+          className="relative z-[1] flex shrink-0 items-start justify-between gap-4 px-4 py-3"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+        >
           <div className="min-w-0 pr-2">
-            <h2 className="text-lg font-semibold text-white">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              Suggestions
+            </p>
+            <h2 className="mt-0.5 text-sm font-semibold leading-snug text-white">
               Fix anti-patterns
             </h2>
-            <p className="mt-0.5 text-xs text-white/50">
+            <p className="mt-1 text-[11px] leading-relaxed text-gray-400">
               Choose fixes to apply, then click Apply.
             </p>
           </div>
@@ -103,7 +116,7 @@ export default function SuggestionModal({
               e.stopPropagation();
               onClose();
             }}
-            className="relative z-[2] -mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/45 transition-colors duration-150 hover:bg-white/10 hover:text-white"
+            className="relative z-[2] -mr-0.5 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/[0.06] text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
             aria-label="Close"
           >
             <X className="h-3.5 w-3.5" strokeWidth={2} />
@@ -113,42 +126,42 @@ export default function SuggestionModal({
         {suggestions.length > 0 && (
           <div
             data-amg-designer={AMG_DESIGNER.suggestionModalToolbar}
-            className="flex items-center gap-2 px-5 py-2 border-b border-white/10 shrink-0"
+            className="flex shrink-0 items-center gap-2 border-b border-white/[0.07] px-4 py-2"
           >
             <button
               type="button"
               onClick={selectAll}
-              className="text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+              className="text-xs font-medium text-gray-400 transition-colors hover:text-white"
             >
               Select all
             </button>
-            <span className="text-white/30">|</span>
+            <span className="text-white/25">|</span>
             <button
               type="button"
               onClick={unselectAll}
-              className="text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+              className="text-xs font-medium text-gray-400 transition-colors hover:text-white"
             >
               Unselect all
             </button>
           </div>
         )}
 
-        <div className="flex-1 min-h-0 overflow-auto p-4">
+        <div className="min-h-0 flex-1 overflow-auto p-3">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#9AA4B2]" />
-              <span className="mt-4 text-sm text-white/60">Loading suggestions…</span>
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-[#9AA4B2]" />
+              <span className="mt-4 text-sm text-gray-400">Loading suggestions…</span>
             </div>
           ) : error ? (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
               {error}
             </div>
           ) : suggestions.length === 0 ? (
-            <div className="py-16 text-center text-sm text-white/50">
+            <div className="py-16 text-center text-sm text-gray-400">
               No suggestions available.
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {suggestions.map((s, idx) => {
                 const id = s.id ?? `idx:${idx}`;
                 const isSelected = selectedIds.has(id);
@@ -165,18 +178,18 @@ export default function SuggestionModal({
                         toggleSuggestion(id);
                       }
                     }}
-                    className={`group flex gap-4 rounded-xl border-2 p-4 transition-all duration-200 cursor-pointer ${
+                    className={`group flex cursor-pointer gap-3 rounded-md border p-3 transition-all duration-150 ${
                       isSelected
-                        ? "border-emerald-500/60 bg-emerald-500/10 shadow-sm"
-                        : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]"
+                        ? "border-emerald-500/45 bg-emerald-500/10"
+                        : "border-white/[0.08] bg-white/[0.04] hover:border-white/15 hover:bg-white/[0.07]"
                     }`}
                   >
                     {/* Selection indicator */}
                     <div
-                      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${
+                      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-all ${
                         isSelected
-                          ? "border-emerald-400 bg-emerald-500"
-                          : "border-white/20 bg-white/5 group-hover:border-white/30"
+                          ? "border-emerald-400 bg-emerald-600/90"
+                          : "border-white/15 bg-white/[0.06] group-hover:border-white/25"
                       }`}
                     >
                       {isSelected ? (
@@ -201,12 +214,12 @@ export default function SuggestionModal({
                         <h3 className="text-sm font-semibold text-white">
                           {s.title}
                         </h3>
-                        <span className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/70">
+                        <span className="rounded-md border border-white/10 bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-gray-300">
                           {antipatternKindLabel(s.kind)}
                         </span>
                       </div>
 
-                      <ul className="mt-2 space-y-1 pl-4 text-sm text-white/70 list-disc">
+                      <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-gray-400">
                         {s.bullets.map((b, i) => (
                           <li key={i}>{b}</li>
                         ))}
@@ -230,7 +243,7 @@ export default function SuggestionModal({
                       </div>
 
                       {s.auto_fix_notes?.length ? (
-                        <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
+                        <div className="mt-3 rounded-md border border-emerald-500/35 bg-emerald-500/10 p-2.5 text-xs text-emerald-200/95">
                           <div className="font-semibold">Auto-fix notes</div>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
                             {s.auto_fix_notes.map((n, i) => (
@@ -249,31 +262,33 @@ export default function SuggestionModal({
 
         <div
           data-amg-designer={AMG_DESIGNER.suggestionModalFooter}
-          className="flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0"
+          className="flex shrink-0 items-center justify-between gap-4 border-t border-white/[0.07] bg-black/20 px-4 py-3"
         >
-          <span className="text-sm text-white/80">
+          <span className="text-xs text-gray-400">
             {hasSelection ? (
               <>
-                <span className="font-medium text-white">
+                <span className="font-semibold text-white">
                   {selectedIds.size}
                 </span>
-                <span className="text-white/50"> of {suggestions.length} selected</span>
+                <span className="text-gray-500"> of {suggestions.length} selected</span>
               </>
             ) : (
-              <span className="text-white/50">Select one or more suggestions</span>
+              <span className="text-gray-500">Select one or more suggestions</span>
             )}
           </span>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={onClose}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-white/10 text-white/90 hover:bg-white/20 border border-white/10"
+              className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 transition-colors hover:bg-gray-700/50"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleApply}
               disabled={disabledApply || applyLoading || !hasSelection || loading}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="rounded-md border border-gray-600 bg-gray-700/80 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}
             </button>

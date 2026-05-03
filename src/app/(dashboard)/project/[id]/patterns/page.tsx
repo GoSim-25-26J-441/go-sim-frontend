@@ -245,34 +245,34 @@ export default function ProjectPatternsPage({
                 <button
                   type="button"
                   onClick={closeSimulationModal}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/12 bg-white/[0.06] text-gray-200 transition-colors hover:bg-white/10 hover:text-white"
                   aria-label="Close"
                 >
                   <X className="h-4 w-4" aria-hidden />
                 </button>
               </div>
 
-              <div className="px-5 py-4">
+              <div className="px-5 py-3">
                 <div
-                  className="flex flex-col gap-2"
+                  className="flex max-w-xs flex-col gap-1.5"
                   data-amg-designer={AMG_DESIGNER.simulationVersionSelect}
                 >
                   <label
                     htmlFor="patterns-simulation-version-select"
-                    className="text-xs font-medium text-white/70"
+                    className="text-[10px] font-semibold uppercase tracking-wider text-white/45"
                   >
                     Version
                   </label>
                   <select
                     id="patterns-simulation-version-select"
-                    className="w-full rounded-lg bg-white px-4 py-2.5 text-sm text-black scheme-light focus:outline-none focus:ring-2 focus:ring-black/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full max-w-xs rounded-md border border-white/12 bg-white/[0.06] px-2.5 py-1.5 text-xs text-white shadow-sm outline-none transition-colors focus:border-white/22 focus:ring-1 focus:ring-white/12 disabled:cursor-not-allowed disabled:opacity-45"
                     value={simulationSelectedVersion}
                     onChange={(e) =>
                       setSimulationSelectedVersion(e.target.value)
                     }
                     disabled={loadingVersions}
                   >
-                    <option value="" className="bg-white text-black">
+                    <option value="" className="bg-[#1F1F1F] text-white/80">
                       {loadingVersions
                         ? "Loading versions…"
                         : "Select version…"}
@@ -281,7 +281,7 @@ export default function ProjectPatternsPage({
                       <option
                         key={v.id}
                         value={v.id}
-                        className="bg-white text-black"
+                        className="bg-[#1F1F1F] text-white"
                       >
                         #{v.version_number} {v.title || "Untitled"}
                       </option>
@@ -298,11 +298,7 @@ export default function ProjectPatternsPage({
                 <button
                   type="button"
                   onClick={closeSimulationModal}
-                  className="rounded-full px-4 py-2 text-xs font-medium text-white transition-all duration-150 hover:bg-white/10"
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    backgroundColor: "rgba(255,255,255,0.06)",
-                  }}
+                  className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 transition-colors hover:bg-gray-700/50"
                 >
                   Cancel
                 </button>
@@ -310,7 +306,7 @@ export default function ProjectPatternsPage({
                   type="button"
                   onClick={handleSimulationConfirm}
                   disabled={!simulationSelectedVersion}
-                  className="rounded-full px-4 py-2 text-xs font-medium text-black transition-all duration-150 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45 bg-white"
+                  className="rounded-md border border-gray-600 bg-gray-700/80 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   Proceed
                 </button>
