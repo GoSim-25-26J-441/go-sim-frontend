@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchMetricsAnalysisById } from "@/app/api/asm/routes";
-import { Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft, ArrowLeft } from "lucide-react";
+import { Cpu, MemoryStick, AlertCircle, ChevronDown, ChevronLeft, ArrowLeft, Loader2 } from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 
 interface Candidate {
@@ -88,8 +88,12 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center p-6">
-        <div className="text-sm text-white/70">Loading metrics analysis…</div>
+      <div className="flex min-h-[70vh] flex-col items-center justify-center gap-3 p-6">
+        <Loader2
+          className="h-8 w-8 animate-spin text-white/80"
+          aria-hidden
+        />
+        <p className="text-sm text-white/70">Loading metrics analysis…</p>
       </div>
     );
   }
