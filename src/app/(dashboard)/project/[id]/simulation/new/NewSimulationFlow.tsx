@@ -38,6 +38,7 @@ import {
   resolveBatchRecommendationObjective,
 } from "@/lib/simulation/batch-recommendation-optimization-payload";
 import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
+import { buildRealtimeInteractiveOnlineOptimizationCore } from "@/lib/simulation/interactive-online-optimization-payload";
 import {
   getSampleScenarioYaml,
   isSampleScenarioId,
@@ -977,15 +978,14 @@ export function NewSimulationFlow({
         };
       } else if (runMode === "online_optimization") {
         const primary = optimization.optimization_target_primary || "p95_latency";
-        /** Engine / BFF `optimization.objective` (valid metric names). UI primary `p95_latency` maps to `p95_latency_ms`. */
-        const onlineEngineObjective =
-          primary === "p95_latency" ? "p95_latency_ms" : primary;
 
         if (formData.real_time_mode) {
+          const modWallClock = parseOptionalInt(onlineTuning.max_online_duration_ms);
           const extra: Record<string, unknown> = {
-            online: true,
-            objective: onlineEngineObjective,
-            optimization_target_primary: primary,
+            ...buildRealtimeInteractiveOnlineOptimizationCore(
+              primary,
+              modWallClock != null && modWallClock > 0 ? modWallClock : undefined
+            ),
             target_p95_latency_ms: optimization.target_p95_latency_ms,
             control_interval_ms: optimization.control_interval_ms,
             min_hosts: optimization.min_hosts,
@@ -995,20 +995,7 @@ export function NewSimulationFlow({
             scale_down_cpu_util_max: optimization.scale_down_cpu_util_max,
             scale_down_mem_util_max: optimization.scale_down_mem_util_max,
             scale_down_host_cpu_util_max: optimization.scale_down_host_cpu_util_max,
-            max_controller_steps: 0,
-            max_noop_intervals: -1,
-            max_online_duration_ms: 0,
-            allow_unbounded_online: true,
           };
-
-          const modWallClock = parseOptionalInt(onlineTuning.max_online_duration_ms);
-          if (modWallClock != null && modWallClock > 0) {
-            extra.max_online_duration_ms = modWallClock;
-            extra.allow_unbounded_online = false;
-          }
-
-          const lt = parseOptionalInt(onlineTuning.lease_ttl_ms);
-          if (lt != null && lt > 0) extra.lease_ttl_ms = lt;
 
           const sdc = parseOptionalInt(onlineTuning.scale_down_cooldown_ms);
           if (sdc != null && sdc >= 0) extra.scale_down_cooldown_ms = sdc;
@@ -1021,7 +1008,7 @@ export function NewSimulationFlow({
         } else {
           const extra: Record<string, unknown> = {
             online: true,
-            objective: onlineEngineObjective,
+            objective: primary,
             optimization_target_primary: primary,
             target_p95_latency_ms: optimization.target_p95_latency_ms,
             control_interval_ms: optimization.control_interval_ms,
@@ -1970,14 +1957,17 @@ export function NewSimulationFlow({
                       Advanced: lease, controller limits, drain timing
                     </summary>
                     <p className="text-[11px] text-white/40 mt-2 mb-3">
-                      Optional fields forwarded to the engine; leave empty to omit. Interactive real-time runs do not send{" "}
-                      <span className="text-white/50">lease_ttl_ms</span> unless you set it here — the run detail page only
-                      schedules automatic renewal when a lease TTL was provided at creation.
+                      Optional fields forwarded to the engine; leave empty to omit. Interactive real-time online runs never
+                      send <span className="font-mono text-white/55">lease_ttl_ms</span> from this form — the run page only
+                      enables scheduled lease renewal when the backend echoes a positive lease TTL from create-run (set below
+                      for non-real-time online runs).
                     </p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                       {(
                         [
-                          ["lease_ttl_ms", "Lease TTL (ms)"],
+                          ...(formData.real_time_mode
+                            ? []
+                            : ([["lease_ttl_ms", "Lease TTL (ms)"]] as const)),
                           ["max_controller_steps", "Max controller steps"],
                           ["max_online_duration_ms", "Max online duration (ms)"],
                           ["max_noop_intervals", "Max noop intervals"],

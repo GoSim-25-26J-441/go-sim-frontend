@@ -36,6 +36,7 @@ import {
   isUnscopedSeriesKey,
 } from "@/lib/simulation/metrics-series-scope";
 import {
+  formatOnlineOptimizationBestScore,
   formatOnlineOptimizationTargetLabel,
   isInteractiveOnlineRunMode,
 } from "@/lib/simulation/objective-labels";
@@ -3737,9 +3738,7 @@ export default function SimulationRunPage() {
                 const isOnlineRunMeta = isInteractiveOnlineRunMode(m.mode);
                 const fmtScore = (v: unknown, objective?: string) => {
                   if (typeof v !== "number") return String(v);
-                  return objective === "cpu_utilization" || objective === "memory_utilization"
-                    ? `${(v * 100).toFixed(2)}%`
-                    : v.toFixed(4);
+                  return formatOnlineOptimizationBestScore(v, objective);
                 };
                 return (
                   <div className="border-t border-border pt-4">
@@ -3921,8 +3920,9 @@ export default function SimulationRunPage() {
                       <>
                         {isOnlineRunMeta && (
                           <p className="text-[11px] text-white/45 mb-3">
-                            Online optimization: <span className="font-mono text-white/55">metadata.objective</span> is the
-                            same primary target as controller settings (not a separate batch metric).
+                            Online optimization: <span className="font-mono text-white/55">metadata.objective</span> matches
+                            the run&apos;s primary target (same semantics as{" "}
+                            <span className="font-mono text-white/55">optimization.objective</span> at create time).
                           </p>
                         )}
                         <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
@@ -5178,8 +5178,9 @@ export default function SimulationRunPage() {
                     </div>
                     {leaseTtlMs == null && (
                       <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
-                        No wall-clock lease TTL was set for this run — automatic renewal is off (typical for unbounded
-                        interactive sessions). Set <span className="font-mono text-white/55">lease_ttl_ms</span> when creating a run to enable renewal timers here.
+                        No lease TTL on this run — scheduled renewal is off. Interactive real-time creates omit{" "}
+                        <span className="font-mono text-white/55">lease_ttl_ms</span>; only runs created with a positive
+                        lease TTL (or backend metadata) get renewal timers here.
                       </p>
                     )}
                     {leaseRenewError && (
