@@ -1234,7 +1234,7 @@ function RequestCountChart({ series, onClear }: RequestCountChartProps) {
   };
 
   return (
-    <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+    <div className="space-y-3 border-t border-white/40 pt-6 pb-6">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-white">
           Request count
@@ -3563,27 +3563,30 @@ export default function SimulationRunPage() {
 
   return (
     <div className="p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link
-          href={`/project/${projectId}/simulation`}
-          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5 text-white" />
-        </Link>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-white truncate">{runName}</h1>
-          <p className="text-xs text-white/40 font-mono mt-0.5 truncate">run / {runId}</p>
+      {/* Header — align with other project pages (e.g. New simulation) */}
+      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <Link
+            href={`/project/${projectId}/simulation`}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+            aria-label="Back to simulation runs"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-md font-bold text-white">{runName}</h1>
+            <p className="mt-0.5 truncate font-mono text-xs text-white/40">run / {runId}</p>
+          </div>
         </div>
         {runInfo && (
-          <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${statusStyle}`}>
+          <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${statusStyle}`}>
             {status}
           </span>
         )}
       </div>
 
       {/* Action bar */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-white/40 pb-5">
         {stopError && (
           <span className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
             Stop failed: {stopError}
@@ -3593,9 +3596,9 @@ export default function SimulationRunPage() {
           <button
             onClick={handleStart}
             disabled={isStarting}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white text-black font-medium hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex min-w-27 items-center justify-center gap-1.5 rounded-md bg-emerald-600/80 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isStarting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            {isStarting ? <RefreshCw className="h-3.5 w-3.5 animate-spin text-white" /> : <Play className="h-3.5 w-3.5" />}
             Start Run
           </button>
         )}
@@ -3635,24 +3638,25 @@ export default function SimulationRunPage() {
         {isTerminal && (
           <Link
             href={`/project/${projectId}/cost/suggest?run_id=${runId}`}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+            className="inline-flex items-center justify-center gap-1.5 rounded-md bg-emerald-600/80 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500"
           >
-            <BarChart2 className="w-4 h-4" />
+            <BarChart2 className="h-3.5 w-3.5 shrink-0" />
             Go to analysis
           </Link>
         )}
 
         <button
           onClick={fetchRunInfo}
-          className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors"
+          type="button"
+          className="inline-flex min-w-27 items-center justify-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
+          <RefreshCw className="h-3.5 w-3.5" />
           Refresh
         </button>
       </div>
 
       {/* Run details */}
-      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+      <div className="space-y-4 pb-6">
         <h2 className="text-sm font-semibold text-white">Run details</h2>
         {runLoading ? (
           <div className="flex items-center gap-2 text-xs text-white/50">
@@ -3977,7 +3981,7 @@ export default function SimulationRunPage() {
 
       {/* Online Control Room — online mode only */}
       {isOnlineMode && (
-        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <div className="space-y-4 border-t border-white/40 pt-6 pb-6">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h2 className="text-sm font-semibold text-white">Online Control Room</h2>
@@ -5307,11 +5311,11 @@ export default function SimulationRunPage() {
       )}
 
       {/* Scenario YAML viewer — data comes from the main run fetch */}
-      <div className="bg-card border border-border rounded-lg overflow-hidden">
+      <div className="overflow-hidden border-t border-white/40 pt-6 pb-6">
         {/* Header — always visible, acts as toggle */}
         <button
           onClick={handleScenarioToggle}
-          className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors"
+          className="flex w-full items-center justify-between py-3 hover:bg-white/5 transition-colors"
         >
           <span className="text-sm font-semibold text-white">Scenario YAML</span>
           <div className="flex items-center gap-3">
@@ -5328,40 +5332,43 @@ export default function SimulationRunPage() {
         </button>
 
         {scenarioOpen && (
-          <div className="border-t border-border">
+          <div className="border-t border-white/40">
             {scenarioYaml ? (
               <div className="relative">
                 {/* Toolbar */}
-                <div className="flex items-center justify-end gap-3 px-4 py-2 border-b border-border bg-black/20">
+                <div className="flex items-center justify-end gap-2 border-b border-white/10 bg-black/20 py-2">
                   <button
+                    type="button"
                     onClick={() => fetchRunInfo()}
-                    className="flex items-center gap-1 text-[11px] text-white/30 hover:text-white/60 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200"
                     title="Refresh (re-fetches run)"
                   >
-                    <RefreshCw className="w-3 h-3" /> Refresh
+                    <RefreshCw className="h-3 w-3 shrink-0" /> Refresh
                   </button>
                   <button
+                    type="button"
                     onClick={() => navigator.clipboard.writeText(scenarioYaml)}
-                    className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200"
                     title="Copy to clipboard"
                   >
                     Copy
                   </button>
                 </div>
-                <pre className="p-4 font-mono text-[11px] text-emerald-300/80 leading-relaxed whitespace-pre overflow-x-auto bg-black/30 max-h-[500px]">
+                <pre className="max-h-[500px] overflow-x-auto whitespace-pre bg-black/30 py-3 font-mono text-[11px] leading-relaxed text-emerald-300/80">
                   {scenarioYaml}
                 </pre>
               </div>
             ) : (
-              <div className="flex items-center justify-between px-4 py-3">
+              <div className="flex items-center justify-between py-3">
                 <p className="text-xs text-white/30 italic">
                   Scenario YAML not available for this run yet.
                 </p>
                 <button
+                  type="button"
                   onClick={() => fetchRunInfo()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200"
                 >
-                  <RefreshCw className="w-3 h-3" /> Refresh
+                  <RefreshCw className="h-3 w-3 shrink-0" /> Refresh
                 </button>
               </div>
             )}
@@ -5371,7 +5378,7 @@ export default function SimulationRunPage() {
 
       {/* Current load (concurrent_requests) — shown when we have at least one value */}
       {Object.keys(concurrentRequestsByService).length > 0 && (
-        <div className="bg-card border border-border rounded-lg p-4 space-y-2">
+        <div className="space-y-2 border-t border-white/40 pt-6 pb-6">
           <h2 className="text-sm font-semibold text-white">
             Concurrent requests
             <span className="ml-2 text-xs font-normal text-white/40">current load per service</span>
@@ -5398,7 +5405,7 @@ export default function SimulationRunPage() {
         if (hostIds.length === 0) return null;
         const toPct = (v: number) => (v <= 1 ? v * 100 : v);
         return (
-          <div className="bg-card border border-border rounded-lg p-4 space-y-2">
+          <div className="space-y-2 border-t border-white/40 pt-6 pb-6">
             <h2 className="text-sm font-semibold text-white">
               Host metrics
               <span className="ml-2 text-xs font-normal text-white/40">from stream · utilization</span>
@@ -5492,7 +5499,7 @@ export default function SimulationRunPage() {
       )}
 
       {/* Optimizer decision replay */}
-      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+      <div className="space-y-3 border-t border-white/40 pt-6 pb-6">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white">
             Optimizer decision replay
@@ -5621,7 +5628,7 @@ export default function SimulationRunPage() {
       </div>
 
       {/* Candidates panel */}
-      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+      <div className="space-y-3 border-t border-white/40 pt-6 pb-6">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white">
             Candidates
@@ -5632,11 +5639,12 @@ export default function SimulationRunPage() {
             )}
           </h2>
           <button
+            type="button"
             onClick={fetchCandidates}
             disabled={candidatesLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <RefreshCw className={`w-3 h-3 ${candidatesLoading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-3 w-3 shrink-0 ${candidatesLoading ? "animate-spin" : ""}`} />
             {candidates === null ? "Fetch candidates" : "Refresh"}
           </button>
         </div>
@@ -5666,8 +5674,8 @@ export default function SimulationRunPage() {
         )}
 
         {candidates !== null && candidates.length > 0 && (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <p className="text-[10px] text-white/35 px-1 pb-2 max-w-3xl leading-relaxed">
+          <div className="overflow-x-auto">
+            <p className="max-w-3xl pb-2 text-[10px] leading-relaxed text-white/35">
               <span className="text-white/45">Feasible</span> and <span className="text-white/45">Eff. score</span> use
               each candidate row when present; otherwise the parent run’s batch summary (
               <code className="text-white/45">batch_recommendation_feasible</code>,{" "}
@@ -5917,7 +5925,7 @@ export default function SimulationRunPage() {
 
       {/* Metrics — live from stream when running, persisted when terminal */}
       {showMetricsSection && (
-        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <div className="space-y-4 border-t border-white/40 pt-6 pb-6">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">
               Metrics
@@ -5932,11 +5940,12 @@ export default function SimulationRunPage() {
             </h2>
             {isTerminal && (
             <button
+              type="button"
               onClick={fetchMetrics}
               disabled={metricsLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RefreshCw className={`w-3 h-3 ${metricsLoading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-3 w-3 shrink-0 ${metricsLoading ? "animate-spin" : ""}`} />
               {metricsData === null ? "Load metrics" : "Refresh"}
             </button>
             )}
@@ -6707,7 +6716,7 @@ export default function SimulationRunPage() {
                   <select
                     value={timeseriesApiMetric}
                     onChange={(e) => setTimeseriesApiMetric(e.target.value)}
-                    className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
+                    className="rounded-md border-0 bg-white px-3 py-1.5 text-xs font-bold text-black focus:outline-none focus:ring-2 focus:ring-white/40"
                   >
                     {TIMESERIES_METRIC_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -6718,7 +6727,7 @@ export default function SimulationRunPage() {
                   <select
                     value={timeseriesGroupBy}
                     onChange={(e) => setTimeseriesGroupBy(e.target.value)}
-                    className="rounded border border-border bg-black/30 text-white text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/30"
+                    className="rounded-md border-0 bg-white px-3 py-1.5 text-xs font-bold text-black focus:outline-none focus:ring-2 focus:ring-white/40"
                   >
                     {TIMESERIES_GROUP_BY_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -6730,9 +6739,9 @@ export default function SimulationRunPage() {
                     type="button"
                     onClick={fetchTimeseriesApi}
                     disabled={timeseriesApiLoading}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 disabled:opacity-50 text-xs"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <RefreshCw className={`w-3 h-3 ${timeseriesApiLoading ? "animate-spin" : ""}`} />
+                    <RefreshCw className={`h-3 w-3 shrink-0 ${timeseriesApiLoading ? "animate-spin" : ""}`} />
                     {timeseriesApiRows.length ? "Refresh" : "Load timeseries"}
                   </button>
                 </div>
@@ -6874,15 +6883,16 @@ export default function SimulationRunPage() {
 
       {/* Best candidate — shown once run is terminal; data from same /candidates API */}
       {isTerminal && (
-        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <div className="space-y-4 border-t border-white/40 pt-6 pb-6">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">Best candidate</h2>
             <button
+              type="button"
               onClick={fetchCandidates}
               disabled={candidatesLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/20 bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RefreshCw className={`w-3 h-3 ${candidatesLoading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-3 w-3 shrink-0 ${candidatesLoading ? "animate-spin" : ""}`} />
               {candidates === null ? "Load" : "Refresh"}
             </button>
           </div>

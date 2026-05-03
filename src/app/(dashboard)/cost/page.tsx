@@ -178,7 +178,7 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
           </div>
         ) : (
           <div className="w-full">
-            <ul className="shrink-0 space-y-3">
+            <ul className="shrink-0 divide-y divide-white/40">
               {runs
                 .filter((run) => run.run_id != null && run.run_id !== "")
                 .map((run, index) => {
@@ -191,7 +191,7 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                   return (
                     <li
                       key={run.id}
-                      className="bg-card flex items-start justify-between gap-4 rounded-lg border border-border p-4"
+                      className="flex items-start justify-between gap-4 py-5"
                     >
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -243,18 +243,17 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 flex-col items-end gap-2 pt-0.5 sm:flex-row sm:items-center">
-
+                      <div className="flex shrink-0 items-center gap-3 pt-0.5">
                         <Link
                           href={suggestHref}
-                          className="flex items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 text-xs font-medium text-white/80 transition-colors hover:border-white/25 hover:bg-white/5 hover:text-white"
+                          className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90"
                         >
                           <BarChart3 className="h-3 w-3" />
                           Metrics
                         </Link>
                         <Link
                           href={costHref}
-                          className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90"
+                          className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600/80 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500"
                         >
                           <Play className="h-3 w-3" />
                           View
@@ -264,15 +263,6 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
                   );
                 })}
             </ul>
-
-            <div className="mt-12 pt-6">
-              <div className="text-center">
-                <p className="text-sm text-white/60">
-                  Showing {runsWithRunId.length} run
-                  {runsWithRunId.length !== 1 ? "s" : ""}
-                </p>
-              </div>
-            </div>
           </div>
         )}
       </div>

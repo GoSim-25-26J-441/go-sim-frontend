@@ -292,7 +292,7 @@ export default function ProjectSimulationPage() {
         ) : null}
 
         {runs.length > 0 && (
-          <ul className="space-y-3 shrink-0">
+          <ul className="shrink-0 divide-y divide-white/40">
             {runs.map((run) => {
               const label = getRunLabel(run);
               const rawStatus =
@@ -310,7 +310,7 @@ export default function ProjectSimulationPage() {
               return (
                 <li
                   key={run.run_id}
-                  className="bg-card rounded-lg border border-border p-4 flex items-start justify-between gap-4"
+                  className="flex items-start justify-between gap-4 py-5"
                 >
                   <div className="min-w-0 flex-1 space-y-1">
                     {/* Name + mode badge */}

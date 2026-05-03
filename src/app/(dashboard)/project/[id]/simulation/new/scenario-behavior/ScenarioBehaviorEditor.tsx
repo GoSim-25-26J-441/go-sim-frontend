@@ -463,89 +463,97 @@ export function ScenarioBehaviorEditor({
             Add autoscaling policy
           </button>
         </div>
+
+        <details className="mt-6 rounded-lg border border-white/10 bg-black/30 p-3 group">
+          <summary className="cursor-pointer text-sm font-medium text-white/80 list-none flex items-center gap-2">
+            <span className="text-white/40 group-open:rotate-90 transition-transform">▸</span>
+            Debug: scenario YAML & validation
+          </summary>
+          <div className="mt-3 space-y-3 pt-2 border-t border-white/10">
+            <p className="text-xs text-white/55">
+              {isSampleScenario
+                ? "YAML generated from the editor for the sample flow (matches the predefined sample scenario file)."
+                : "YAML generated from the editor. For diagram versions, load/save via the simulation service."}
+            </p>
+            {scenarioYamlError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
+                {scenarioYamlError}
+              </div>
+            )}
+            <textarea
+              readOnly
+              value={scenarioYaml}
+              className="w-full h-48 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
+            />
+          </div>
+        </details>
       </section>
 
-      <details className="rounded-lg border border-white/10 bg-black/30 p-3 group">
-        <summary className="cursor-pointer text-sm font-medium text-white/80 list-none flex items-center gap-2">
-          <span className="text-white/40 group-open:rotate-90 transition-transform">▸</span>
-          Debug: scenario YAML & validation
-        </summary>
-        <div className="mt-3 space-y-3 pt-2 border-t border-white/10">
-          <p className="text-xs text-white/55">
-            {isSampleScenario
-              ? "YAML generated from the editor for the sample flow (matches the predefined sample scenario file)."
-              : "YAML generated from the editor. For diagram versions, load/save via the simulation service."}
-          </p>
-          {scenarioYamlError && (
-            <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
-              {scenarioYamlError}
-            </div>
-          )}
-          <textarea
-            readOnly
-            value={scenarioYaml}
-            className="w-full h-48 bg-black/60 border border-white/10 rounded-lg text-xs font-mono text-white p-3 resize-y"
-          />
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={scenarioValidationBusy || !!scenarioYamlError}
-              onClick={() => void onValidateScenario()}
-              className="px-3 py-1.5 text-xs rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {scenarioValidationBusy ? "Validating…" : "Validate Scenario"}
-            </button>
-            {scenarioValidationStale && (
-              <span className="text-xs text-amber-200/90">Scenario changed since last validation.</span>
-            )}
-          </div>
-          {scenarioValidationError && (
-            <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-              {scenarioValidationError}
-            </div>
-          )}
-          {scenarioValidationResult?.valid && (
-            <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 space-y-1">
-              <p className="font-medium">Scenario is valid</p>
-              {scenarioValidationResult.summary && (
-                <p className="text-emerald-100/80">
-                  {(scenarioValidationResult.summary.hosts ?? 0).toLocaleString()} hosts,{" "}
-                  {(scenarioValidationResult.summary.services ?? 0).toLocaleString()} services,{" "}
-                  {(scenarioValidationResult.summary.workloads ?? 0).toLocaleString()} workloads
-                </p>
-              )}
-            </div>
-          )}
-          {!!scenarioValidationResult?.warnings?.length && (
-            <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-              <p className="font-medium mb-1">Warnings</p>
-              <ul className="space-y-1">
-                {scenarioValidationResult.warnings.map((warning, idx) => (
-                  <li key={`${warning.code ?? "warning"}-${idx}`}>{summarizeValidationIssue(warning)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {!!scenarioValidationResult?.errors?.length && (
-            <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-              <p className="font-medium mb-1">Validation errors</p>
-              <ul className="space-y-2">
-                {scenarioValidationResult.errors.map((issue, idx) => (
-                  <li key={`${issue.code ?? "error"}-${idx}`} className="space-y-1">
-                    <p>{summarizeValidationIssue(issue)}</p>
-                    {issue.message.length > 120 && (
-                      <details className="text-red-100/80">
-                        <summary className="cursor-pointer">Details</summary>
-                        <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{issue.message}</pre>
-                      </details>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={scenarioValidationBusy || !!scenarioYamlError}
+            onClick={() => void onValidateScenario()}
+            className="rounded-md bg-white px-3 py-1.5 text-xs font-bold text-black transition-all duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {scenarioValidationBusy ? "Validating..." : "Validate Scenario"}
+          </button>
+          {scenarioValidationStale && (
+            <span className="text-xs text-amber-200/90">
+              Scenario changed since last validation.
+            </span>
           )}
         </div>
-      </details>
+
+        <div className="space-y-2">
+        {scenarioValidationError && (
+          <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+            {scenarioValidationError}
+          </div>
+        )}
+        {scenarioValidationResult?.valid && (
+          <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 space-y-1">
+            <p className="font-medium">Scenario is valid</p>
+            {scenarioValidationResult.summary && (
+              <p className="text-emerald-100/80">
+                {(scenarioValidationResult.summary.hosts ?? 0).toLocaleString()} hosts,{" "}
+                {(scenarioValidationResult.summary.services ?? 0).toLocaleString()} services,{" "}
+                {(scenarioValidationResult.summary.workloads ?? 0).toLocaleString()} workloads
+              </p>
+            )}
+          </div>
+        )}
+        {!!scenarioValidationResult?.warnings?.length && (
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            <p className="font-medium mb-1">Warnings</p>
+            <ul className="space-y-1">
+              {scenarioValidationResult.warnings.map((warning, idx) => (
+                <li key={`${warning.code ?? "warning"}-${idx}`}>{summarizeValidationIssue(warning)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {!!scenarioValidationResult?.errors?.length && (
+          <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+            <p className="font-medium mb-1">Validation errors</p>
+            <ul className="space-y-2">
+              {scenarioValidationResult.errors.map((issue, idx) => (
+                <li key={`${issue.code ?? "error"}-${idx}`} className="space-y-1">
+                  <p>{summarizeValidationIssue(issue)}</p>
+                  {issue.message.length > 120 && (
+                    <details className="text-red-100/80">
+                      <summary className="cursor-pointer">Details</summary>
+                      <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{issue.message}</pre>
+                    </details>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        </div>
+      </div>
     </div>
   );
 }

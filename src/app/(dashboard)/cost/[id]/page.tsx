@@ -129,31 +129,45 @@ function GlobalRecommendPanel({
     }, []);
 
     return (
-        <div className="bg-card border-b border-border  p-6 my-6">
-            <div className="flex items-start gap-3 mb-4">
+        <div className="space-y-4">
+            <div className="flex items-start gap-3">
                 <Target className="w-5 h-5 mt-0.5 shrink-0 opacity-90" />
                 <div className="min-w-0 flex-1">
-                    <h2 className="text-base font-semibold text-white">
+                    <h2 className="text-sm font-semibold text-white">
                         Best option across all providers &amp; regions
                     </h2>
                 </div>
             </div>
             {globalRecLoading && (
-                <p className="text-xs opacity-60 flex items-center gap-2">
+                <p className="flex items-center gap-2 text-xs text-white/60">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     Scanning catalog…
                 </p>
             )}
             {globalRecError && !globalRecLoading && (
-                <p className="text-xs text-red-400/90">{globalRecError}</p>
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+                    <p className="text-sm text-red-300">{globalRecError}</p>
+                </div>
             )}
             {!globalRecLoading && !globalRecError && globalRec?.recommendation && (
                 <div className="space-y-4">
                     {!globalRec.recommendation.recommended ? (
-                        <p className="text-xs opacity-75">
-                            {globalRec.recommendation.rationale?.[0] ??
-                                "No recommendation could be built from stored prices."}
-                        </p>
+                        <div className="overflow-hidden rounded-lg bg-white/4 p-4">
+                            {globalRec.recommendation.rationale.length > 0 ? (
+                                <ul className="m-0 list-none space-y-1.5 p-0 text-xs text-white/75">
+                                    {globalRec.recommendation.rationale.map((line, i) => (
+                                        <li key={i} className="flex gap-2">
+                                            <span className="mt-0.5 shrink-0 text-white/40">•</span>
+                                            <span>{line}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-xs text-white/70">
+                                    No recommendation could be built from stored prices.
+                                </p>
+                            )}
+                        </div>
                     ) : (
                         <>
                             <div className="flex flex-wrap items-center gap-2">
@@ -167,21 +181,21 @@ function GlobalRecommendPanel({
                                     </span>
                                 )}
                             </div>
-                            <div className="rounded-lg border border-border/80 bg-black/20 p-4">
-                                <div className="flex flex-wrap justify-between gap-3">
+                            <div className="overflow-hidden rounded-lg bg-white/4">
+                                <div className="flex flex-wrap justify-between gap-3 p-4">
                                     <div>
-                                        <p className="text-[10px] uppercase tracking-wide opacity-50">
+                                        <p className="text-[10px] uppercase tracking-wide text-white/50">
                                             Monthly total
                                         </p>
                                         <p className="text-xl font-bold text-white">
                                             {formatCurrency(globalRec.recommendation.recommended.total_month)}
                                         </p>
                                     </div>
-                                    <div className="text-right text-xs opacity-90">
+                                    <div className="text-right text-xs text-white/90">
                                         <p className="font-medium capitalize">
                                             {globalRec.recommendation.recommended.provider}
                                         </p>
-                                        <p className="opacity-70">
+                                        <p className="text-white/70">
                                             {getRegionDisplayName(
                                                 globalRec.recommendation.recommended.region,
                                                 globalRec.recommendation.recommended.provider as
@@ -191,42 +205,49 @@ function GlobalRecommendPanel({
                                         </p>
                                     </div>
                                 </div>
-                                <p className="text-xs mt-3 opacity-85">
-                                    <span className="font-mono">
-                                        {globalRec.recommendation.recommended.instance_type}
-                                    </span>
-                                    <span className="opacity-60"> · </span>
-                                    {globalRec.recommendation.recommended.purchase_type}
-                                    {globalRec.recommendation.recommended.lease_contract_length
-                                        ? ` (${globalRec.recommendation.recommended.lease_contract_length})`
-                                        : ""}
-                                </p>
+                                <div className="border-t border-white/40 px-4 py-3">
+                                    <p className="text-xs text-white/85">
+                                        <span className="font-mono">
+                                            {globalRec.recommendation.recommended.instance_type}
+                                        </span>
+                                        <span className="text-white/60"> · </span>
+                                        {globalRec.recommendation.recommended.purchase_type}
+                                        {globalRec.recommendation.recommended.lease_contract_length
+                                            ? ` (${globalRec.recommendation.recommended.lease_contract_length})`
+                                            : ""}
+                                    </p>
+                                </div>
                                 {onViewBreakdown &&
                                     supportsProviderBreakdownNav(globalRec.recommendation.recommended.provider) && (
-                                        <button
-                                            type="button"
-                                            disabled={breakdownNavBusy}
-                                            onClick={() => onViewBreakdown(globalRec.recommendation.recommended!)}
-                                            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
-                                        >
-                                            <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
-                                            View pricing breakdown in this region
-                                        </button>
+                                        <div className="border-t border-white/40 px-4 pb-4 pt-3">
+                                            <button
+                                                type="button"
+                                                disabled={breakdownNavBusy}
+                                                onClick={() => onViewBreakdown(globalRec.recommendation.recommended!)}
+                                                className="inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
+                                            >
+                                                <BarChart3 className="h-4 w-4 shrink-0" aria-hidden />
+                                                View pricing breakdown in this region
+                                            </button>
+                                        </div>
                                     )}
                             </div>
                             {globalRec.recommendation.rationale.length > 0 && (
-                                <ul className="text-xs space-y-2 opacity-85 list-disc pl-5">
+                                <ul className="m-0 list-none space-y-1.5 p-0 text-xs text-white/75">
                                     {globalRec.recommendation.rationale.map((line, i) => (
-                                        <li key={i}>{line}</li>
+                                        <li key={i} className="flex gap-2">
+                                            <span className="mt-0.5 shrink-0 text-white/40">•</span>
+                                            <span>{line}</span>
+                                        </li>
                                     ))}
                                 </ul>
                             )}
                             {runnersCount > 0 && globalRec.recommendation.recommended && (
-                                <div className="pt-2 border-t border-border/40">
+                                <div className="border-t border-white/40 pt-4">
                                     <button
                                         type="button"
                                         onClick={toggleRunners}
-                                        className="flex w-full items-start justify-between gap-3 rounded-xl border border-border/70 bg-gradient-to-b from-white/[0.04] to-transparent px-4 py-3 text-left transition-colors hover:border-border hover:from-white/[0.06]"
+                                        className="flex w-full items-start justify-between gap-3 rounded-lg border border-white/15 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/6"
                                         aria-expanded={runnersOpen}
                                     >
                                         <div className="min-w-0 flex items-start gap-3">
@@ -247,12 +268,12 @@ function GlobalRecommendPanel({
                                     </button>
                                     {runnersOpen && (
                                         <div className="mt-3 space-y-2">
-                                            <p className="text-[10px] uppercase tracking-wider text-white/40 px-1">
+                                            <p className="px-1 text-[10px] uppercase tracking-wider text-white/40">
                                                 Compared to your pick (
                                                 {formatCurrency(globalRec.recommendation.recommended.total_month)}
                                                 /mo)
                                             </p>
-                                            <ol className="space-y-2 list-none p-0 m-0">
+                                            <ol className="m-0 list-none space-y-2 p-0">
                                                 {runnersUp.map((r, idx) => {
                                                     const pick = globalRec.recommendation.recommended!;
                                                     const delta = r.total_month - pick.total_month;
@@ -264,7 +285,7 @@ function GlobalRecommendPanel({
                                                     return (
                                                         <li
                                                             key={`${r.provider}-${r.region}-${r.instance_type}-${idx}`}
-                                                            className="rounded-lg border border-border/50 bg-black/25 px-3 py-3 sm:px-4"
+                                                            className="rounded-lg bg-white/4 px-3 py-3 sm:px-4"
                                                         >
                                                             <div className="flex flex-wrap items-start justify-between gap-3">
                                                                 <div className="flex min-w-0 items-center gap-3">
@@ -326,7 +347,7 @@ function GlobalRecommendPanel({
                                                                 )}
                                                             </div>
                                                             {onViewBreakdown && supportsProviderBreakdownNav(r.provider) && (
-                                                                <div className="mt-3 border-t border-white/10 pt-3 sm:pl-11">
+                                                                <div className="mt-3 border-t border-white/40 pt-3 sm:pl-11">
                                                                     <button
                                                                         type="button"
                                                                         disabled={breakdownNavBusy}
@@ -684,37 +705,34 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
     if (loading) {
         return (
-            <div className="p-6 space-y-4">
-                <div
-                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-                >
-                    <button
-                        type="button"
-                        onClick={() => router.back()}
-                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
-                        aria-label="Go back"
-                    >
-                        <ArrowLeft className="w-4 h-4" />
-                    </button>
-                    <div>
-                        <h1 className="text-sm font-bold text-white flex items-center gap-2">
-                            Cluster Cost Analysis
-                        </h1>
+            <div className="flex min-h-0 w-full flex-1 flex-col p-6">
+                <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/40 py-2.5">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => router.back()}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+                            aria-label="Go back"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <h1 className="text-md font-bold text-white">Cluster Cost Analysis</h1>
                     </div>
                 </div>
-                <GlobalRecommendPanel
-                    globalRec={globalRec}
-                    globalRecLoading={globalRecLoading}
-                    globalRecError={globalRecError}
-                    formatCurrency={formatCurrency}
-                    onViewBreakdown={jumpToBreakdownForPick}
-                    breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
-                />
-                <div className="flex items-center justify-center min-h-[40vh]">
-                    <div className="text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-border mx-auto mb-4"></div>
-                        <p className="text-base opacity-70">Loading cluster costs...</p>
+                <div className="mt-2 flex min-h-0 flex-1 flex-col space-y-5">
+                    <GlobalRecommendPanel
+                        globalRec={globalRec}
+                        globalRecLoading={globalRecLoading}
+                        globalRecError={globalRecError}
+                        formatCurrency={formatCurrency}
+                        onViewBreakdown={jumpToBreakdownForPick}
+                        breakdownNavBusy={breakdownNavBusy || reloadingProviderCost}
+                    />
+                    <div className="flex min-h-[40vh] flex-1 items-center justify-center">
+                        <div className="text-center">
+                            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-t-2 border-border"></div>
+                            <p className="text-base opacity-70">Loading cluster costs...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -772,27 +790,22 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
     const { best: bestRegion, minimal: minimalRegion } = identifyBestOptions(combinedRegionCosts);
 
     return (
-        <div className="p-6 space-y-4">
-            <div className="">
-                <div
-                    className="px-4 py-2.5 flex items-center justify-start gap-3 flex-wrap"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-                >
+        <div className="flex min-h-0 w-full flex-1 flex-col p-6">
+            <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/40 py-2.5">
+                <div className="flex flex-wrap items-center gap-3">
                     <button
+                        type="button"
                         onClick={() => router.back()}
-                        className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
                         aria-label="Go back"
                     >
-                        <ArrowLeft className="w-4 h-4" />
+                        <ArrowLeft className="h-4 w-4" />
                     </button>
-
-                    <div>
-                        <h1 className="text-sm font-bold text-white flex items-center gap-2">
-                            Cluster Cost Analysis
-                        </h1>
-                    </div>
+                    <h1 className="text-md font-bold text-white">Cluster Cost Analysis</h1>
                 </div>
+            </div>
 
+            <div className="mt-2 flex min-h-0 flex-1 flex-col space-y-5">
                 <GlobalRecommendPanel
                     globalRec={globalRec}
                     globalRecLoading={globalRecLoading}
@@ -844,10 +857,10 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                     {viewMode === "by-region" ? (
                         <div>
-                            <p className="text-[10px] opacity-60 mb-3">Select region:</p>
-                            <div className="flex gap-3 items-center flex-wrap">
+                            <p className="mb-3 text-xs font-medium text-white/70">Select region:</p>
+                            <div className="flex flex-wrap items-center gap-3">
                                 <select
-                                    className="region-select bg-card text-[10px] text-white p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md [color-scheme:dark]"
+                                    className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                     value={selectedGenericRegionId}
                                     onChange={(e) => {
                                         const v = e.target.value;
@@ -880,15 +893,16 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                     ) : (
                         <>
                             <div className="mb-6">
-                                <p className="text-xs opacity-60 mb-3">Select Provider:</p>
-                                <div className="flex flex-wrap gap-3">
+                                <p className="mb-3 text-xs font-medium text-white/70">Select Provider:</p>
+                                <div className="flex flex-wrap gap-2">
                                     {(["aws", "azure"] as const).map((p) => (
                                         <button
                                             key={p}
+                                            type="button"
                                             onClick={() => setSelectedProvider(p)}
-                                            className={`flex items-center gap-2 px-5 py-2 rounded-md text-[12px] font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 ${selectedProvider === p
-                                                ? "bg-surface border border-border"
-                                                : "border border-border hover:bg-surface opacity-80"
+                                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${selectedProvider === p
+                                                ? "bg-white font-medium text-black shadow-sm"
+                                                : "bg-transparent text-white/60 hover:bg-white/10 hover:text-white"
                                                 }`}
                                         >
                                             {p.toUpperCase()}
@@ -911,7 +925,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                             </div>
 
                             <div>
-                                <p className="text-xs opacity-60 mb-3">
+                                <p className="mb-3 text-xs font-medium text-white/70">
                                     {compareRegionsEnabled ? "Regions to compare:" : "Select region:"}
                                 </p>
                                 {compareRegionsEnabled ? (
@@ -919,7 +933,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                         {selectedRegions.map((r) => (
                                             <span
                                                 key={r}
-                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border text-xs"
+                                                className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-black/40 px-2 py-1 text-xs text-white"
                                             >
                                                 <MapPin className="w-3.5 h-3.5 opacity-70" />
                                                 {getRegionDisplayName(r, selectedProvider)}
@@ -934,7 +948,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             </span>
                                         ))}
                                         <select
-                                            className="region-select bg-card text-white p-2.5 rounded-lg border border-border focus:border-white/30 focus:outline-none text-xs max-w-[220px] [color-scheme:dark]"
+                                            className="region-select max-w-[220px] rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                             value=""
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -963,9 +977,9 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="flex gap-3 items-center">
+                                    <div className="flex flex-wrap items-center gap-3">
                                         <select
-                                            className="region-select bg-card text-white p-3 rounded-lg border border-border focus:border-white/30 focus:outline-none w-full max-w-md [color-scheme:dark]"
+                                            className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                             value={selectedRegions[0] ?? ""}
                                             onChange={(e) => {
                                                 const v = e.target.value;

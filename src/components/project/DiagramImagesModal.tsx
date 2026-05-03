@@ -36,7 +36,7 @@ export function DiagramImagesModal({
 }: DiagramImagesModalProps) {
   const { data, isLoading, isError, refetch } = useGetProjectDiagramImagesQuery(
     projectId,
-    { skip: !isOpen || !projectId },
+    { skip: !isOpen || !projectId }
   );
   const [updateTitle, { isLoading: updatingTitle }] =
     useUpdateDiagramImageTitleMutation();
@@ -46,7 +46,9 @@ export function DiagramImagesModal({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
+  const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(
+    null
+  );
 
   const clampZoom = (value: number) => Math.min(5, Math.max(1, value));
 
@@ -122,9 +124,7 @@ export function DiagramImagesModal({
           </div>
 
           <div className="max-h-[70vh] overflow-auto p-4">
-            {isLoading && (
-              <GlobalLoader />
-            )}
+            {isLoading && <GlobalLoader />}
             {isError && !isLoading && (
               <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
                 Failed to load images. Please try again.
@@ -179,47 +179,136 @@ export function DiagramImagesModal({
           onKeyDown={handleFocusKeyDown}
           tabIndex={-1}
         >
-          <div className="relative w-full max-w-5xl mx-4 flex flex-col rounded-md shadow-2xl bg-[#1F1F1F] overflow-hidden max-h-[92vh]">
-            <div className="flex items-center justify-between px-4 py-3 shrink-0">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {editingTitleId === focusedImage.id ? (
-                    <>
-                      <input
-                        autoFocus
-                        className="w-full max-w-sm rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-50 outline-none focus:border-slate-500 font-semibold"
-                        value={
-                          editing[focusedImage.id] !== undefined
-                            ? editing[focusedImage.id]
-                            : (focusedImage.title ?? "")
-                        }
-                        onChange={(e) =>
-                          handleTitleChange(focusedImage.id, e.target.value)
-                        }
-                        onBlur={() => {
-                          handleTitleBlur(focusedImage);
-                          setEditingTitleId(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
+          <div className="relative w-full max-w-6xl mx-4 flex flex-col rounded-md shadow-2xl bg-[#1F1F1F] overflow-hidden max-h-[92vh]">
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 shrink-0">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-100">
+                  Diagram image preview
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Inspect the stored snapshot with zoom, pan, and quick metadata.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setFocusedIndex(null)}
+                className="ml-4 flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <div
+                className="relative flex min-h-[360px] flex-1 items-center justify-center bg-white overflow-hidden md:min-h-0"
+                onWheel={(e) => {
+                  e.preventDefault();
+                  const delta = e.deltaY < 0 ? 0.15 : -0.15;
+                  setZoom((z) => {
+                    const next = clampZoom(Number((z + delta).toFixed(2)));
+                    if (next === 1) {
+                      setPan({ x: 0, y: 0 });
+                    }
+                    return next;
+                  });
+                }}
+                onMouseDown={(e) => {
+                  if (zoom <= 1) return;
+                  e.preventDefault();
+                  setIsPanning(true);
+                  setPanStart({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseMove={(e) => {
+                  if (!isPanning || !panStart || zoom <= 1) return;
+                  const dx = e.clientX - panStart.x;
+                  const dy = e.clientY - panStart.y;
+                  setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+                  setPanStart({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseUp={() => {
+                  setIsPanning(false);
+                  setPanStart(null);
+                }}
+                onMouseLeave={() => {
+                  setIsPanning(false);
+                  setPanStart(null);
+                }}
+                style={{
+                  maxHeight: "calc(92vh - 64px)",
+                  cursor:
+                    zoom > 1 ? (isPanning ? "grabbing" : "grab") : "default",
+                }}
+              >
+                {images.length > 1 && (
+                  <button
+                    onClick={handlePrev}
+                    className="absolute left-3 z-10 flex items-center justify-center w-7 h-7 rounded-full bg-[#1F1F1F]/80 text-white hover:bg-[#1F1F1F] border border-slate-700 transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                )}
+
+                <img
+                  src={resolveImageSrc(focusedImage)}
+                  alt={focusedImage.title || "Diagram snapshot"}
+                  className="max-h-full max-w-full object-contain py-4 px-12 transition-transform duration-100 ease-out"
+                  style={{
+                    maxHeight: "calc(92vh - 96px)",
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    transformOrigin: "center center",
+                  }}
+                  draggable={false}
+                />
+
+                {images.length > 1 && (
+                  <button
+                    onClick={handleNext}
+                    className="absolute right-3 z-10 flex items-center justify-center w-7 h-7 rounded-full bg-[#1F1F1F]/80 text-white hover:bg-[#1F1F1F] border border-slate-700 transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              <aside className="flex w-full shrink-0 flex-col border-t border-slate-800 bg-[#1F1F1F] md:w-[320px] md:border-l md:border-t-0">
+                <div className="flex-1 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    {editingTitleId === focusedImage.id ? (
+                      <>
+                        <input
+                          autoFocus
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-50 outline-none focus:border-slate-500 font-semibold"
+                          value={
+                            editing[focusedImage.id] !== undefined
+                              ? editing[focusedImage.id]
+                              : (focusedImage.title ?? "")
+                          }
+                          onChange={(e) =>
+                            handleTitleChange(focusedImage.id, e.target.value)
+                          }
+                          onBlur={() => {
                             handleTitleBlur(focusedImage);
                             setEditingTitleId(null);
-                          }
-                          if (e.key === "Escape") {
-                            setEditingTitleId(null);
-                          }
-                        }}
-                        disabled={updatingTitle}
-                        placeholder="Enter title…"
-                      />
-                      <span className="text-[11px] text-slate-500 shrink-0">
-                        .png
-                      </span>
-                    </>
-                  ) : (
-                    <>
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleTitleBlur(focusedImage);
+                              setEditingTitleId(null);
+                            }
+                            if (e.key === "Escape") {
+                              setEditingTitleId(null);
+                            }
+                          }}
+                          disabled={updatingTitle}
+                          placeholder="Enter title..."
+                        />
+                        <span className="text-[11px] text-slate-500 shrink-0">
+                          .png
+                        </span>
+                      </>
+                    ) : (
                       <div className="flex items-center gap-2 min-w-0">
-                        <h3 className="truncate text-sm font-semibold text-slate-100 max-w-sm">
+                        <h3 className="truncate text-sm font-semibold text-slate-100">
                           {focusedImage.title?.trim() || "Untitled"}
                         </h3>
                         <button
@@ -233,160 +322,84 @@ export function DiagramImagesModal({
                           .png
                         </span>
                       </div>
-                    </>
+                    )}
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Click the edit icon to rename
+                  </p>
+                  <div className="mt-3 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setZoom((z) => clampZoom(z - 0.2))}
+                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-slate-500"
+                      disabled={zoom <= 1}
+                    >
+                      -
+                    </button>
+                    <span className="w-14 text-center text-[11px] text-slate-300">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setZoom((z) => clampZoom(z + 0.2))}
+                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-slate-500"
+                      disabled={zoom >= 5}
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setZoom(1);
+                        setPan({ x: 0, y: 0 });
+                      }}
+                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300 hover:border-slate-500"
+                      disabled={zoom === 1}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Use mouse wheel to zoom.
+                  </p>
+                </div>
+
+                <div className="border-t border-slate-800 px-4 py-3">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-500">
+                        Project ID
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-300">
+                        {projectId}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-500">
+                        Snapshot ID
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-400 truncate max-w-[220px]">
+                        {focusedImage.id}
+                      </span>
+                    </div>
+                    {focusedImage.created_at && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-500">Saved</span>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(focusedImage.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {images.length > 1 && (
+                    <div className="mt-3 text-right text-[10px] text-slate-500">
+                      {(focusedIndex ?? 0) + 1} / {images.length}
+                    </div>
                   )}
                 </div>
-
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Click the edit icon to rename
-                </p>
-                <div className="mt-2 flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setZoom((z) => clampZoom(z - 0.2))}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-slate-500"
-                    disabled={zoom <= 1}
-                  >
-                    -
-                  </button>
-                  <span className="w-14 text-center text-[11px] text-slate-300">
-                    {Math.round(zoom * 100)}%
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setZoom((z) => clampZoom(z + 0.2))}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 hover:border-slate-500"
-                    disabled={zoom >= 5}
-                  >
-                    +
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setZoom(1);
-                      setPan({ x: 0, y: 0 });
-                    }}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300 hover:border-slate-500"
-                    disabled={zoom === 1}
-                  >
-                    Reset
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Use mouse wheel to zoom.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setFocusedIndex(null)}
-                className="ml-4 flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div
-              className="relative flex items-center justify-center bg-white overflow-hidden"
-              onWheel={(e) => {
-                e.preventDefault();
-                const delta = e.deltaY < 0 ? 0.15 : -0.15;
-                setZoom((z) => {
-                  const next = clampZoom(Number((z + delta).toFixed(2)));
-                  if (next === 1) {
-                    setPan({ x: 0, y: 0 });
-                  }
-                  return next;
-                });
-              }}
-              onMouseDown={(e) => {
-                if (zoom <= 1) return;
-                e.preventDefault();
-                setIsPanning(true);
-                setPanStart({ x: e.clientX, y: e.clientY });
-              }}
-              onMouseMove={(e) => {
-                if (!isPanning || !panStart || zoom <= 1) return;
-                const dx = e.clientX - panStart.x;
-                const dy = e.clientY - panStart.y;
-                setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
-                setPanStart({ x: e.clientX, y: e.clientY });
-              }}
-              onMouseUp={() => {
-                setIsPanning(false);
-                setPanStart(null);
-              }}
-              onMouseLeave={() => {
-                setIsPanning(false);
-                setPanStart(null);
-              }}
-              style={{
-                minHeight: "320px",
-                maxHeight: "60vh",
-                cursor: zoom > 1 ? (isPanning ? "grabbing" : "grab") : "default",
-              }}
-            >
-              {images.length > 1 && (
-                <button
-                  onClick={handlePrev}
-                  className="absolute left-3 z-10 flex items-center justify-center w-7 h-7 rounded-full bg-[#1F1F1F]/80 text-white hover:bg-[#1F1F1F] border border-slate-700 transition-colors"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-              )}
-
-              <img
-                src={resolveImageSrc(focusedImage)}
-                alt={focusedImage.title || "Diagram snapshot"}
-                className="max-h-full max-w-full object-contain py-4 px-12 transition-transform duration-100 ease-out"
-                style={{
-                  maxHeight: "60vh",
-                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  transformOrigin: "center center",
-                }}
-                draggable={false}
-              />
-
-              {images.length > 1 && (
-                <button
-                  onClick={handleNext}
-                  className="absolute right-3 z-10 flex items-center justify-center w-7 h-7 rounded-full bg-[#1F1F1F]/80 text-white hover:bg-[#1F1F1F] border border-slate-700 transition-colors"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between border-t border-slate-800 px-4 py-2.5 shrink-0">
-              <div className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-slate-500">Project ID</span>
-                  <span className="font-mono text-[10px] text-slate-300">
-                    {projectId}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-slate-500">
-                    Snapshot ID
-                  </span>
-                  <span className="font-mono text-[10px] text-slate-400 truncate max-w-[200px]">
-                    {focusedImage.id}
-                  </span>
-                </div>
-                {focusedImage.created_at && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-slate-500">Saved</span>
-                    <span className="text-[10px] text-slate-400">
-                      {new Date(focusedImage.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {images.length > 1 && (
-                <span className="text-[10px] text-slate-500">
-                  {(focusedIndex ?? 0) + 1} / {images.length}
-                </span>
-              )}
+              </aside>
             </div>
           </div>
         </div>
