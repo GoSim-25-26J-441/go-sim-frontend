@@ -133,6 +133,8 @@ type Props = {
   ) => (e: ReactDragEvent<HTMLButtonElement>) => void;
   onToolDragEnd?: () => void;
   draggingAntiPatternKind?: DetectionKind | null;
+  /** Project patterns + guides: anti-pattern toolbox rows use white primary chrome */
+  projectPatternsGuideAntiChrome?: boolean;
 };
 
 export default function EditToolbar({
@@ -147,6 +149,7 @@ export default function EditToolbar({
   onAntiPatternDragStart,
   onToolDragEnd,
   draggingAntiPatternKind = null,
+  projectPatternsGuideAntiChrome = false,
 }: Props) {
   void _defaultCallProtocol;
   void _defaultCallSync;
@@ -267,6 +270,7 @@ export default function EditToolbar({
 
   const scrollArea = (
     <div
+      data-amg-designer-toolbox-scroll=""
       className={scrollOuterClass}
       onWheel={(e) => e.stopPropagation()}
     >
@@ -293,6 +297,16 @@ export default function EditToolbar({
             const isDragging =
               draggingAntiPatternKind === kind || pendingAntiPatternKind === kind;
             const ac = toneRowClasses.anti;
+            const projectAntiIdle = `${rowBase} cursor-pointer border border-white/20 bg-white text-black shadow-sm hover:bg-gray-100`;
+            const projectAntiPending = `${rowBase} cursor-pointer border border-rose-500 bg-white text-black shadow-sm ring-2 ring-rose-400/45`;
+            const rowClass =
+              projectPatternsGuideAntiChrome
+                ? isDragging
+                  ? projectAntiPending
+                  : projectAntiIdle
+                : isDragging
+                  ? ac.pending
+                  : ac.idle;
             return (
               <button
                 key={kind}
@@ -301,11 +315,17 @@ export default function EditToolbar({
                 title={`Drag and drop a sample graph that triggers ${antipatternKindLabel(kind)}.`}
                 onDragStart={onAntiPatternDragStart?.(kind)}
                 onDragEnd={onToolDragEnd}
-                className={isDragging ? ac.pending : ac.idle}
+                className={rowClass}
               >
                 <span
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
-                    isDragging ? ac.iconWrapPending : ac.iconWrapIdle
+                    projectPatternsGuideAntiChrome
+                      ? isDragging
+                        ? "bg-rose-100/90"
+                        : "bg-slate-100/90"
+                      : isDragging
+                        ? ac.iconWrapPending
+                        : ac.iconWrapIdle
                   }`}
                 >
                   {/* Native img: reliable src swap on error for SVG→PNG fallback */}
@@ -337,7 +357,13 @@ export default function EditToolbar({
                   </span>
                   <span
                     className={`truncate text-[9px] sm:text-[10px] ${
-                      isDragging ? ac.hintPending : "text-black/80"
+                      projectPatternsGuideAntiChrome
+                        ? isDragging
+                          ? "text-rose-900/75"
+                          : "text-black/75"
+                        : isDragging
+                          ? ac.hintPending
+                          : "text-black/80"
                     }`}
                   >
                     Drag to canvas

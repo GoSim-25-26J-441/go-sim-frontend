@@ -31,6 +31,7 @@ export default function SuggestionModal({
   applyLoading,
   disabledApply,
   designerTourExpandFirstPreviewNonce = 0,
+  projectPatternsGuideChrome = false,
 }: {
   open: boolean;
   loading: boolean;
@@ -42,6 +43,8 @@ export default function SuggestionModal({
   disabledApply: boolean;
   /** Bumps to auto-open the first card’s before/after block (designer tour). */
   designerTourExpandFirstPreviewNonce?: number;
+  /** Project patterns + guides: gray shell, circular white close, white primary actions */
+  projectPatternsGuideChrome?: boolean;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -84,15 +87,31 @@ export default function SuggestionModal({
   const modal = (
     <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
       <div
-        className="relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40"
+        className={
+          projectPatternsGuideChrome
+            ? "relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/98 shadow-2xl shadow-black/40 ring-1 ring-black/25"
+            : "relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40"
+        }
         data-amg-designer={AMG_DESIGNER.suggestionModal}
       >
-        <div className="relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95">
+        <div
+          className={
+            projectPatternsGuideChrome
+              ? "relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-zinc-800/90"
+              : "relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95"
+          }
+        >
           <div className="min-w-0 pr-2">
             <h2 className="text-lg font-semibold text-white">
               Fix anti-patterns
             </h2>
-            <p className="mt-0.5 text-xs text-white/50">
+            <p
+              className={
+                projectPatternsGuideChrome
+                  ? "mt-0.5 text-xs text-gray-400"
+                  : "mt-0.5 text-xs text-white/50"
+              }
+            >
               Choose fixes to apply, then click Apply.
             </p>
           </div>
@@ -103,7 +122,11 @@ export default function SuggestionModal({
               e.stopPropagation();
               onClose();
             }}
-            className="relative z-[2] -mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/45 transition-colors duration-150 hover:bg-white/10 hover:text-white"
+            className={
+              projectPatternsGuideChrome
+                ? "relative z-[2] -mr-1 -mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-gray-900 shadow-sm transition-colors duration-150 hover:bg-gray-100"
+                : "relative z-[2] -mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/45 transition-colors duration-150 hover:bg-white/10 hover:text-white"
+            }
             aria-label="Close"
           >
             <X className="h-3.5 w-3.5" strokeWidth={2} />
@@ -118,15 +141,25 @@ export default function SuggestionModal({
             <button
               type="button"
               onClick={selectAll}
-              className="text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+              className={
+                projectPatternsGuideChrome
+                  ? "rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                  : "text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+              }
             >
               Select all
             </button>
-            <span className="text-white/30">|</span>
+            <span className={projectPatternsGuideChrome ? "text-white/20" : "text-white/30"}>
+              |
+            </span>
             <button
               type="button"
               onClick={unselectAll}
-              className="text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+              className={
+                projectPatternsGuideChrome
+                  ? "rounded-md border border-white/10 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-gray-200 transition-colors hover:bg-zinc-700/90"
+                  : "text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
+              }
             >
               Unselect all
             </button>
@@ -249,31 +282,52 @@ export default function SuggestionModal({
 
         <div
           data-amg-designer={AMG_DESIGNER.suggestionModalFooter}
-          className="flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0"
+          className={
+            projectPatternsGuideChrome
+              ? "flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-zinc-950/80 shrink-0"
+              : "flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0"
+          }
         >
-          <span className="text-sm text-white/80">
+          <span
+            className={
+              projectPatternsGuideChrome ? "text-sm text-gray-300" : "text-sm text-white/80"
+            }
+          >
             {hasSelection ? (
               <>
                 <span className="font-medium text-white">
                   {selectedIds.size}
                 </span>
-                <span className="text-white/50"> of {suggestions.length} selected</span>
+                <span className={projectPatternsGuideChrome ? "text-gray-500" : "text-white/50"}>
+                  {" "}
+                  of {suggestions.length} selected
+                </span>
               </>
             ) : (
-              <span className="text-white/50">Select one or more suggestions</span>
+              <span className={projectPatternsGuideChrome ? "text-gray-500" : "text-white/50"}>
+                Select one or more suggestions
+              </span>
             )}
           </span>
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-white/10 text-white/90 hover:bg-white/20 border border-white/10"
+              className={
+                projectPatternsGuideChrome
+                  ? "flex items-center gap-2 rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition-all duration-150 hover:bg-zinc-700/90"
+                  : "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-white/10 text-white/90 hover:bg-white/20 border border-white/10"
+              }
             >
               Cancel
             </button>
             <button
               onClick={handleApply}
               disabled={disabledApply || applyLoading || !hasSelection || loading}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className={
+                projectPatternsGuideChrome
+                  ? "flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-sm transition-all duration-150 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  : "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              }
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}
             </button>

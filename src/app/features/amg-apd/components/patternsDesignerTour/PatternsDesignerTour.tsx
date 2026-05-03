@@ -24,8 +24,12 @@ import {
 export { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 export type { AmgDesignerAnchor } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
-/** Above suggestion modal (200000) and version portal (99999) so Compare + tour card stay visible */
-const ACTIVE_TOUR_Z = 210000;
+/** Above simulation picker (160000), suggestion modal (200000), version portal (99999) */
+const ACTIVE_TOUR_Z = 240000;
+
+const PROJECT_WELCOME_DIM_Z = 46;
+const PROJECT_WELCOME_GLEAM_Z_EXTRA = 58;
+const PROJECT_WELCOME_DIALOG_Z = 100;
 
 /** Idle hint pips — below sticky patterns toolbar (z-20) */
 const DESIGNER_PIP_Z = 12;
@@ -36,11 +40,17 @@ const DESIGNER_WELCOME_GLEAM_Z = 19;
 /** Sticky toolbar band from viewport top (px) — used with pip position to hide scrolled-under workspace */
 const STICKY_TOOLBAR_GUARD_PX = 108;
 
-/** Same visual as Legend “Anti-patterns: ?” help control (Legend.tsx). */
+/** Default (e.g. dashboard patterns): subtle glass pip */
 const GUIDE_MARKER_INTERACTIVE =
   "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15 hover:text-white";
 const GUIDE_MARKER_STATIC =
   "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90";
+
+/** Project /patterns only: blue-800 circle, white ? (slightly larger for visibility) */
+const PROJECT_GUIDE_MARKER_INTERACTIVE =
+  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-800 text-[11px] font-bold text-white shadow-sm ring-2 ring-black/30 transition-colors hover:bg-blue-700 active:scale-95";
+const PROJECT_GUIDE_MARKER_STATIC =
+  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-800 text-[11px] font-bold text-white ring-2 ring-black/30";
 
 type ChapterMeta = {
   id: string;
@@ -115,8 +125,44 @@ const CHAPTER_BASE: ChapterMeta[] = [
   },
 ];
 
+/** Centered 3-step welcome on project `/project/.../patterns` only */
+const PROJECT_WELCOME_STEPS: { title: string; body: string }[] = [
+  {
+    title: "Welcome to AMG-APD",
+    body: "This is the Architecture Model Generator & Anti-Pattern Detector patterns workspace. Here you can switch diagram versions, review the live graph and YAML, open suggestions to address detections, download exports, jump to simulation, and use edit mode when you need to change the model.",
+  },
+  {
+    title: "Blue question marks",
+    body: "Blue (?) markers appear beside key areas of the page. Each marker opens a short guided tour for that topic—versions, exports, legend, layout, the editor, toolbox, and more—so you can learn the UI at your own pace.",
+  },
+  {
+    title: "Turn guides on or off",
+    body: "Use the Guides control in the page header (and in the graph toolbar when you are in the workspace) to show or hide these highlights. Your preference is remembered for next time you open this page.",
+  },
+];
+
 function qs(anchor: AmgDesignerAnchor): string {
   return `[data-amg-designer="${anchor}"]`;
+}
+
+const EDIT_TOOLBOX_CHAPTER_ID = "editToolbox";
+
+function scrollDesignerToolboxAntiIntoView() {
+  const el = document.querySelector(qs(AMG_DESIGNER.editToolboxAntiPatterns));
+  if (el instanceof HTMLElement) {
+    el.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "nearest",
+    });
+  }
+}
+
+function scrollDesignerToolboxListToTop() {
+  const root = document.querySelector("[data-amg-designer-toolbox-scroll]");
+  if (root instanceof HTMLElement) {
+    root.scrollTo({ top: 0, behavior: "smooth" });
+  }
 }
 
 function stepSelector(step: DesignerTourStep): string {
@@ -153,7 +199,10 @@ function welcomeIntroPanelStyle(anchor: DOMRect | null): CSSProperties {
   const vw =
     typeof window !== "undefined" ? window.innerWidth : GUIDES_INTRO_MAX_W_PX;
   const vh = typeof window !== "undefined" ? window.innerHeight : 600;
-  const maxW = Math.min(GUIDES_INTRO_MAX_W_PX, vw - GUIDES_INTRO_POPOVER_MARGIN * 2);
+  const maxW = Math.min(
+    GUIDES_INTRO_MAX_W_PX,
+    vw - GUIDES_INTRO_POPOVER_MARGIN * 2,
+  );
 
   if (!anchor || anchor.width <= 0) {
     return {
@@ -267,11 +316,10 @@ function SpotlightCutout({ rect, pad = 8 }: { rect: DOMRect; pad?: number }) {
   );
 }
 
-function pipPosition(rect: DOMRect) {
-  const pip = 22;
+function pipPosition(rect: DOMRect, pipSize = 22) {
   return {
-    left: rect.right - pip * 0.35,
-    top: rect.top - pip * 0.45,
+    left: rect.right - pipSize * 0.35,
+    top: rect.top - pipSize * 0.45,
   };
 }
 
@@ -280,7 +328,7 @@ function pipPosition(rect: DOMRect) {
  * (scrolled workspace). Anchors that live entirely in the toolbar stay visible.
  */
 function hideDesignerMarkerForStickyOverlap(rect: DOMRect): boolean {
-  const { top: pipTop } = pipPosition(rect);
+  const { top: pipTop } = pipPosition(rect, 22);
   if (pipTop >= STICKY_TOOLBAR_GUARD_PX) return false;
   if (rect.bottom <= STICKY_TOOLBAR_GUARD_PX + 8) return false;
   return true;
@@ -291,19 +339,25 @@ function DesignerHintPip({
   rect,
   onClick,
   title,
+  projectPatternsStyling,
 }: {
   rect: DOMRect;
   onClick: () => void;
   title: string;
+  projectPatternsStyling?: boolean;
 }) {
-  const pip = 22;
-  const { left, top } = pipPosition(rect);
+  const pipSize = projectPatternsStyling ? 26 : 22;
+  const { left, top } = pipPosition(rect, pipSize);
   const off =
     rect.bottom < -2 ||
     rect.top > (typeof window !== "undefined" ? window.innerHeight + 8 : 900);
 
   if (off) return null;
   if (hideDesignerMarkerForStickyOverlap(rect)) return null;
+
+  const pipCls = projectPatternsStyling
+    ? PROJECT_GUIDE_MARKER_INTERACTIVE
+    : GUIDE_MARKER_INTERACTIVE;
 
   return (
     <button
@@ -315,7 +369,7 @@ function DesignerHintPip({
         e.stopPropagation();
         onClick();
       }}
-      className={`${GUIDE_MARKER_INTERACTIVE} fixed active:scale-95`}
+      className={`${pipCls} fixed`}
       style={{
         zIndex: DESIGNER_PIP_Z,
         left,
@@ -331,20 +385,32 @@ function DesignerHintPip({
 function DesignerWelcomeGleam({
   rect,
   title,
+  projectPatternsStyling,
+  zIndex = DESIGNER_WELCOME_GLEAM_Z,
+  allowStickyOverlap = false,
 }: {
   rect: DOMRect;
   title: string;
+  projectPatternsStyling?: boolean;
+  zIndex?: number;
+  /** When true, still show gleam in top toolbar overlap zone (welcome spotlights) */
+  allowStickyOverlap?: boolean;
 }) {
-  const { left, top } = pipPosition(rect);
+  const pipSize = projectPatternsStyling ? 26 : 22;
+  const { left, top } = pipPosition(rect, pipSize);
   const off =
     rect.bottom < -2 ||
     rect.top > (typeof window !== "undefined" ? window.innerHeight + 8 : 900);
   if (off) return null;
-  if (hideDesignerMarkerForStickyOverlap(rect)) return null;
+  if (!allowStickyOverlap && hideDesignerMarkerForStickyOverlap(rect))
+    return null;
+  const pipCls = projectPatternsStyling
+    ? PROJECT_GUIDE_MARKER_STATIC
+    : GUIDE_MARKER_STATIC;
   return (
     <div
-      className={`${GUIDE_MARKER_STATIC} pointer-events-none fixed`}
-      style={{ zIndex: DESIGNER_WELCOME_GLEAM_Z, left: left - 1, top: top - 1 }}
+      className={`${pipCls} pointer-events-none fixed`}
+      style={{ zIndex, left: left - 1, top: top - 1 }}
       title={title}
       aria-hidden
     >
@@ -356,9 +422,12 @@ function DesignerWelcomeGleam({
 function WelcomeDimWithHoles({
   rects,
   maskId,
+  zIndex = 18,
 }: {
   rects: DOMRect[];
   maskId: string;
+  /** Raise above local overlays (e.g. project welcome sits above dim, below dialog) */
+  zIndex?: number;
 }) {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -369,7 +438,7 @@ function WelcomeDimWithHoles({
       className="pointer-events-none fixed inset-0 h-full w-full"
       viewBox={`0 0 ${vw} ${vh}`}
       preserveAspectRatio="none"
-      style={{ zIndex: 18 }}
+      style={{ zIndex }}
       aria-hidden
     >
       <defs>
@@ -997,6 +1066,8 @@ type PatternsDesignerTourProps = {
   welcomeIntroOpen?: boolean;
   onDismissWelcomeIntro?: () => void;
   onTourChapterClose?: () => void;
+  /** Project `/project/.../patterns` only: blue ? pips, gray guide panels, white/gray actions */
+  projectPatternsStyling?: boolean;
 };
 
 export default function PatternsDesignerTour({
@@ -1013,8 +1084,10 @@ export default function PatternsDesignerTour({
   welcomeIntroOpen = false,
   onDismissWelcomeIntro,
   onTourChapterClose,
+  projectPatternsStyling = false,
 }: PatternsDesignerTourProps) {
   const maskId = useId().replace(/:/g, "");
+  const welcomeSpotlightMaskId = `${useId().replace(/:/g, "")}-wspot`;
   const [chapterId, setChapterId] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [spotRect, setSpotRect] = useState<DOMRect | null>(null);
@@ -1025,6 +1098,16 @@ export default function PatternsDesignerTour({
   const [guidesButtonRect, setGuidesButtonRect] = useState<DOMRect | null>(
     null,
   );
+  const [welcomeProjectStep, setWelcomeProjectStep] = useState(0);
+  const [welcomeHighlightFrames, setWelcomeHighlightFrames] = useState<
+    { rect: DOMRect; title: string }[]
+  >([]);
+
+  useEffect(() => {
+    if (welcomeIntroOpen && projectPatternsStyling) {
+      setWelcomeProjectStep(0);
+    }
+  }, [welcomeIntroOpen, projectPatternsStyling]);
 
   const chapterList = useMemo(() => {
     let list = CHAPTER_BASE.filter(
@@ -1035,6 +1118,58 @@ export default function PatternsDesignerTour({
     }
     return list;
   }, [hasSuggestionsTour, hasReturnToChatTour]);
+
+  useLayoutEffect(() => {
+    if (!enabled || !welcomeIntroOpen || !projectPatternsStyling || chapterId) {
+      setWelcomeHighlightFrames([]);
+      return;
+    }
+    const measure = () => {
+      if (welcomeProjectStep === 1) {
+        const list: { rect: DOMRect; title: string }[] = [];
+        for (const ch of chapterList) {
+          const r = getRectFromSelector(qs(ch.markerAnchor));
+          if (r && r.width > 0 && r.height > 0) {
+            list.push({ rect: r, title: ch.title });
+          }
+        }
+        setWelcomeHighlightFrames(list);
+      } else if (welcomeProjectStep === 2) {
+        const list: { rect: DOMRect; title: string }[] = [];
+        const sel = qs(AMG_DESIGNER.guides);
+        document.querySelectorAll(sel).forEach((node) => {
+          if (!(node instanceof HTMLElement)) return;
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden") {
+            return;
+          }
+          const r = node.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            list.push({ rect: r, title: "Guides" });
+          }
+        });
+        setWelcomeHighlightFrames(list);
+      } else {
+        setWelcomeHighlightFrames([]);
+      }
+    };
+    measure();
+    const id = window.setInterval(measure, 400);
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [
+    enabled,
+    welcomeIntroOpen,
+    projectPatternsStyling,
+    chapterId,
+    welcomeProjectStep,
+    chapterList,
+  ]);
 
   const stepsByChapter = useMemo(
     () =>
@@ -1075,6 +1210,47 @@ export default function PatternsDesignerTour({
     setStepIndex(0);
     setSpotRect(null);
   }, [onTourChapterClose]);
+
+  const prevToolboxChapterScrollRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!projectPatternsStyling) {
+      prevToolboxChapterScrollRef.current = chapterId;
+      return;
+    }
+    const prev = prevToolboxChapterScrollRef.current;
+    prevToolboxChapterScrollRef.current = chapterId;
+    if (prev === EDIT_TOOLBOX_CHAPTER_ID && chapterId === null) {
+      scrollDesignerToolboxListToTop();
+    }
+  }, [chapterId, projectPatternsStyling]);
+
+  const prevEditToolboxStepRef = useRef<number>(-1);
+  useLayoutEffect(() => {
+    if (!projectPatternsStyling || chapterId !== EDIT_TOOLBOX_CHAPTER_ID) {
+      if (chapterId !== EDIT_TOOLBOX_CHAPTER_ID) {
+        prevEditToolboxStepRef.current = -1;
+      }
+      return;
+    }
+    if (prevEditToolboxStepRef.current === -1) {
+      prevEditToolboxStepRef.current = stepIndex;
+      return;
+    }
+    const prev = prevEditToolboxStepRef.current;
+    if (prev === 0 && stepIndex > 0) {
+      scrollDesignerToolboxListToTop();
+    }
+    prevEditToolboxStepRef.current = stepIndex;
+  }, [chapterId, stepIndex, projectPatternsStyling]);
+
+  useLayoutEffect(() => {
+    if (!enabled || !projectPatternsStyling) return;
+    if (chapterId !== EDIT_TOOLBOX_CHAPTER_ID || stepIndex !== 0) return;
+    const t = window.setTimeout(() => {
+      scrollDesignerToolboxAntiIntoView();
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [enabled, projectPatternsStyling, chapterId, stepIndex]);
 
   /** When guides are off, parent may pass new function refs each render; only react to real enabled toggles. */
   const prevEnabledRef = useRef<boolean | null>(null);
@@ -1226,12 +1402,15 @@ export default function PatternsDesignerTour({
     const wasEnabled = prevEnabledRef.current;
     if (wasEnabled === true && !enabled) {
       onTourChapterCloseRef.current?.();
+      if (projectPatternsStyling) {
+        scrollDesignerToolboxListToTop();
+      }
       setChapterId(null);
       setStepIndex(0);
       setSpotRect(null);
     }
     prevEnabledRef.current = enabled;
-  }, [enabled]);
+  }, [enabled, projectPatternsStyling]);
 
   useEffect(() => {
     if (!chapterId || !activeStep) return;
@@ -1250,62 +1429,176 @@ export default function PatternsDesignerTour({
     <>
       {enabled && welcomeIntroOpen && !chapterId && (
         <>
-          <WelcomeDimWithHoles rects={welcomeRects} maskId={maskId} />
-          {chapterList.map((ch) => {
-            const r = getRectFromSelector(qs(ch.markerAnchor));
-            if (!r || r.width <= 0) return null;
-            return (
-              <DesignerWelcomeGleam
-                key={`w-${ch.id}`}
-                rect={r}
-                title={ch.title}
-              />
-            );
-          })}
-          <div
-            role="dialog"
-            aria-labelledby="designer-welcome-intro-title"
-            aria-describedby="designer-welcome-intro-desc"
-            className="pointer-events-auto flex min-h-0 flex-col gap-2 overflow-hidden rounded-md bg-white/95 px-3 py-2.5 text-black shadow-xl ring-1 ring-black/10 backdrop-blur-sm sm:min-w-[min(18rem,calc(100vw-1.5rem))]"
-            style={welcomeIntroPanelStyle(guidesButtonRect)}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-black/55">
-                  Guides
-                </p>
-                <h3
-                  id="designer-welcome-intro-title"
-                  className="mt-0.5 text-sm font-semibold leading-snug text-black"
-                >
-                  Guided highlights
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => onDismissWelcomeIntro?.()}
-                className="rounded p-0.5 text-black/60 transition-colors hover:bg-black/10 hover:text-black shrink-0"
-                aria-label="Dismiss"
+          {projectPatternsStyling ? (
+            <>
+              {welcomeProjectStep === 0 && (
+                <div
+                  className="fixed inset-0 bg-slate-950/78"
+                  style={{ zIndex: PROJECT_WELCOME_DIM_Z }}
+                  aria-hidden
+                />
+              )}
+              {welcomeProjectStep > 0 && welcomeHighlightFrames.length > 0 && (
+                <WelcomeDimWithHoles
+                  rects={welcomeHighlightFrames.map((f) => f.rect)}
+                  maskId={welcomeSpotlightMaskId}
+                  zIndex={PROJECT_WELCOME_DIM_Z}
+                />
+              )}
+              {welcomeProjectStep > 0 &&
+                welcomeHighlightFrames.length === 0 && (
+                  <div
+                    className="fixed inset-0 bg-slate-950/78"
+                    style={{ zIndex: PROJECT_WELCOME_DIM_Z }}
+                    aria-hidden
+                  />
+                )}
+              {(welcomeProjectStep === 1 || welcomeProjectStep === 2) &&
+                welcomeHighlightFrames.map((f, i) => (
+                  <DesignerWelcomeGleam
+                    key={`welcome-hl-${i}-${f.title}`}
+                    rect={f.rect}
+                    title={f.title}
+                    projectPatternsStyling
+                    zIndex={PROJECT_WELCOME_GLEAM_Z_EXTRA}
+                    allowStickyOverlap
+                  />
+                ))}
+              <div
+                className="fixed inset-0 flex items-center justify-center p-4 pointer-events-none"
+                style={{ zIndex: PROJECT_WELCOME_DIALOG_Z }}
               >
-                <X className="h-3.5 w-3.5" aria-hidden />
-              </button>
-            </div>
-            <p
-              id="designer-welcome-intro-desc"
-              className="min-h-0 flex-1 overflow-y-auto text-xs leading-relaxed text-black/80 pr-0.5"
-            >
-              Help (?) markers appear on the main areas of this page (versions,
-              exports, legend, layout, editor, and more). Click any marker
-              whenever you want a short guided tour for that topic.
-            </p>
-            <button
-              type="button"
-              onClick={() => onDismissWelcomeIntro?.()}
-              className="mt-1 w-full rounded-md bg-black py-2 text-xs font-semibold text-white transition-colors hover:bg-black/90"
-            >
-              Got it
-            </button>
-          </div>
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="designer-welcome-multi-title"
+                  aria-describedby="designer-welcome-multi-desc"
+                  className="pointer-events-auto flex w-full max-w-lg flex-col overflow-hidden rounded-lg border border-white/10 bg-zinc-900/98 p-5 text-gray-100 shadow-2xl ring-1 ring-black/30"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        Guided highlights · Step {welcomeProjectStep + 1} of 3
+                      </p>
+                      <h2
+                        id="designer-welcome-multi-title"
+                        className="mt-1 text-base font-semibold leading-snug text-white"
+                      >
+                        {PROJECT_WELCOME_STEPS[welcomeProjectStep]?.title ?? ""}
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onDismissWelcomeIntro?.()}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
+                      aria-label="Dismiss"
+                    >
+                      <X className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
+                  <p
+                    id="designer-welcome-multi-desc"
+                    className="mt-3 text-sm leading-relaxed text-gray-300"
+                  >
+                    {PROJECT_WELCOME_STEPS[welcomeProjectStep]?.body ?? ""}
+                  </p>
+                  <div className="mt-6 flex flex-wrap items-center justify-end gap-2 border-t border-white/10 pt-4">
+                    {welcomeProjectStep > 0 && (
+                      <button
+                        type="button"
+                        className="rounded-md border border-white/10 bg-zinc-800 px-3 py-2 text-xs font-medium text-gray-200 transition-colors hover:bg-zinc-700/90"
+                        onClick={() =>
+                          setWelcomeProjectStep((s) => Math.max(0, s - 1))
+                        }
+                      >
+                        Back
+                      </button>
+                    )}
+                    {welcomeProjectStep < 2 ? (
+                      <button
+                        type="button"
+                        className="rounded-md bg-white px-4 py-2 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                        onClick={() =>
+                          setWelcomeProjectStep((s) => Math.min(2, s + 1))
+                        }
+                      >
+                        Next
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="rounded-md bg-white px-4 py-2 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                        onClick={() => onDismissWelcomeIntro?.()}
+                      >
+                        Got it
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <WelcomeDimWithHoles rects={welcomeRects} maskId={maskId} />
+              {chapterList.map((ch) => {
+                const r = getRectFromSelector(qs(ch.markerAnchor));
+                if (!r || r.width <= 0) return null;
+                return (
+                  <DesignerWelcomeGleam
+                    key={`w-${ch.id}`}
+                    rect={r}
+                    title={ch.title}
+                    projectPatternsStyling={projectPatternsStyling}
+                  />
+                );
+              })}
+              <div
+                role="dialog"
+                aria-labelledby="designer-welcome-intro-title"
+                aria-describedby="designer-welcome-intro-desc"
+                className="pointer-events-auto flex min-h-0 flex-col gap-2 overflow-hidden rounded-md bg-white/95 px-3 py-2.5 text-black shadow-xl ring-1 ring-black/10 backdrop-blur-sm sm:min-w-[min(18rem,calc(100vw-1.5rem))]"
+                style={welcomeIntroPanelStyle(guidesButtonRect)}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-black/55">
+                      Guides
+                    </p>
+                    <h3
+                      id="designer-welcome-intro-title"
+                      className="mt-0.5 text-sm font-semibold leading-snug text-black"
+                    >
+                      Guided highlights
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDismissWelcomeIntro?.()}
+                    className="rounded p-0.5 text-black/60 transition-colors hover:bg-black/10 hover:text-black shrink-0"
+                    aria-label="Dismiss"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </div>
+                <p
+                  id="designer-welcome-intro-desc"
+                  className="min-h-0 flex-1 overflow-y-auto text-xs leading-relaxed text-black/80 pr-0.5"
+                >
+                  Help (?) markers appear on the main areas of this page
+                  (versions, exports, legend, layout, editor, and more). Click
+                  any marker whenever you want a short guided tour for that
+                  topic.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onDismissWelcomeIntro?.()}
+                  className="mt-1 w-full rounded-md bg-black py-2 text-xs font-semibold text-white transition-colors hover:bg-black/90"
+                >
+                  Got it
+                </button>
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -1319,6 +1612,7 @@ export default function PatternsDesignerTour({
                 key={ch.id}
                 rect={r}
                 title={ch.title}
+                projectPatternsStyling={projectPatternsStyling}
                 onClick={() => startChapter(ch.id)}
               />
             );
@@ -1333,7 +1627,11 @@ export default function PatternsDesignerTour({
         >
           {spotRect && <SpotlightCutout rect={spotRect} />}
           <div
-            className={`pointer-events-auto fixed bottom-5 left-4 w-auto overflow-hidden rounded-md border border-gray-700 bg-[#1F1F1F] shadow-xl sm:left-auto sm:right-6 ${
+            className={`pointer-events-auto fixed bottom-5 left-4 w-auto overflow-hidden shadow-xl sm:left-auto sm:right-6 ${
+              projectPatternsStyling
+                ? "rounded-lg border border-white/10 bg-zinc-900/98 ring-1 ring-black/25"
+                : "rounded-md border border-gray-700 bg-[#1F1F1F]"
+            } ${
               isLegendReadingIntro
                 ? "right-4 max-h-[min(88vh,680px)] sm:w-[min(100vw-2rem,34rem)]"
                 : "right-4 max-h-[min(72vh,520px)] max-w-md sm:w-[min(100vw-2rem,26rem)]"
@@ -1344,7 +1642,11 @@ export default function PatternsDesignerTour({
             }}
           >
             <div
-              className="cursor-grab select-none border-b border-gray-700 px-4 py-3 active:cursor-grabbing"
+              className={`cursor-grab select-none border-b px-4 py-3 active:cursor-grabbing ${
+                projectPatternsStyling
+                  ? "border-white/10 bg-zinc-800/90"
+                  : "border-gray-700"
+              }`}
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
                 if ((e.target as HTMLElement).closest("button")) return;
@@ -1395,10 +1697,14 @@ export default function PatternsDesignerTour({
                 <button
                   type="button"
                   onClick={closeChapter}
-                  className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
+                  className={
+                    projectPatternsStyling
+                      ? "flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
+                      : "rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
+                  }
                   aria-label="Close guide"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-4 w-4" aria-hidden />
                 </button>
               </div>
               {!spotRect && (
@@ -1407,18 +1713,32 @@ export default function PatternsDesignerTour({
                   expanding any collapsed panels, then open this guide again.
                 </p>
               )}
-              <div className="text-[12px] leading-relaxed text-gray-400">
+              <div
+                className={
+                  projectPatternsStyling
+                    ? "text-[12px] leading-relaxed text-gray-300 [&_strong]:text-white/95"
+                    : "text-[12px] leading-relaxed text-gray-400"
+                }
+              >
                 {typeof activeStep.body === "string" ? (
                   <p className="whitespace-pre-line">{activeStep.body}</p>
                 ) : (
                   activeStep.body
                 )}
               </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-gray-700 pt-3">
+              <div
+                className={`mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 ${
+                  projectPatternsStyling ? "border-white/10" : "border-gray-700"
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => onEnabledChange(false)}
-                  className="text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-300"
+                  className={
+                    projectPatternsStyling
+                      ? "rounded-md border border-white/10 bg-zinc-800 px-2.5 py-1.5 text-[11px] font-medium text-gray-300 transition-colors hover:bg-zinc-700/90"
+                      : "text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-300"
+                  }
                 >
                   Hide guides
                 </button>
@@ -1427,7 +1747,11 @@ export default function PatternsDesignerTour({
                     type="button"
                     disabled={stepIndex <= 0}
                     onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition-colors hover:bg-gray-700/50 disabled:cursor-not-allowed disabled:opacity-35"
+                    className={
+                      projectPatternsStyling
+                        ? "inline-flex items-center gap-1 rounded-md border border-white/10 bg-zinc-800/90 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition-colors hover:bg-zinc-700/90 disabled:cursor-not-allowed disabled:opacity-35"
+                        : "inline-flex items-center gap-1 rounded-md border border-gray-600 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition-colors hover:bg-gray-700/50 disabled:cursor-not-allowed disabled:opacity-35"
+                    }
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
                     Back
@@ -1441,7 +1765,11 @@ export default function PatternsDesignerTour({
                         setStepIndex((i) => i + 1);
                       }
                     }}
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-600 bg-gray-700/80 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-gray-600"
+                    className={
+                      projectPatternsStyling
+                        ? "inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-[11px] font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                        : "inline-flex items-center gap-1 rounded-md border border-gray-600 bg-gray-700/80 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-gray-600"
+                    }
                   >
                     {stepIndex >= activeSteps.length - 1 ? "Done" : "Next"}
                     {stepIndex < activeSteps.length - 1 && (
