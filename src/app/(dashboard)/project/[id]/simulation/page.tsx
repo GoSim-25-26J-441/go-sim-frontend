@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { authenticatedFetch } from "@/lib/api-client/http";
 import { env } from "@/lib/env";
+import { formatOnlineOptimizationTargetLabel } from "@/lib/simulation/objective-labels";
 import { DiagramImagesModal } from "@/components/project/DiagramImagesModal";
 
 type BackendRunSummary = {
@@ -324,8 +325,11 @@ export default function ProjectSimulationPage() {
                         </span>
                       )}
                       {run.metadata?.objective && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300">
-                          {String(run.metadata.objective)}
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300"
+                          title={String(run.metadata.objective)}
+                        >
+                          {formatOnlineOptimizationTargetLabel(String(run.metadata.objective))}
                         </span>
                       )}
                     </div>

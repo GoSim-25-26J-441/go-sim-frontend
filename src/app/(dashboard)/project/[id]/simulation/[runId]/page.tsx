@@ -36,6 +36,10 @@ import {
   isUnscopedSeriesKey,
 } from "@/lib/simulation/metrics-series-scope";
 import {
+  formatOnlineOptimizationTargetLabel,
+  isInteractiveOnlineRunMode,
+} from "@/lib/simulation/objective-labels";
+import {
   normalizePersistedMetricPoint,
   type NormalizedPersistedMetricPoint,
 } from "@/lib/simulation/normalize-persisted-metric-point";
@@ -3726,6 +3730,7 @@ export default function SimulationRunPage() {
                   isBatchOptimizationMeta(m);
                 if (!showSummary) return null;
                 const batchMode = isBatchOptimizationMeta(m);
+                const isOnlineRunMeta = isInteractiveOnlineRunMode(m.mode);
                 const fmtScore = (v: unknown, objective?: string) => {
                   if (typeof v !== "number") return String(v);
                   return objective === "cpu_utilization" || objective === "memory_utilization"
@@ -3909,7 +3914,14 @@ export default function SimulationRunPage() {
                         )}
                       </div>
                     ) : (
-                      <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+                      <>
+                        {isOnlineRunMeta && (
+                          <p className="text-[11px] text-white/45 mb-3">
+                            Online optimization: <span className="font-mono text-white/55">metadata.objective</span> is the
+                            same primary target as controller settings (not a separate batch metric).
+                          </p>
+                        )}
+                        <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
                         {m.iterations != null && (
                           <div>
                             <dt className="text-white/40 mb-0.5">Iterations</dt>
@@ -3918,14 +3930,16 @@ export default function SimulationRunPage() {
                         )}
                         {m.best_score != null && (
                           <div>
-                            <dt className="text-white/40 mb-0.5">Best score</dt>
+                            <dt className="text-white/40 mb-0.5">
+                              {isOnlineRunMeta ? "Best score (online target)" : "Best score"}
+                            </dt>
                             <dd className="text-white/80 font-mono">{fmtScore(m.best_score, m.objective)}</dd>
                           </div>
                         )}
                         {m.objective && (
                           <div>
-                            <dt className="text-white/40 mb-0.5">Objective</dt>
-                            <dd className="text-white/80">{String(m.objective)}</dd>
+                            <dt className="text-white/40 mb-0.5">Primary target</dt>
+                            <dd className="text-white/80">{formatOnlineOptimizationTargetLabel(String(m.objective))}</dd>
                           </div>
                         )}
                         {m.online_completion_reason && (
@@ -3967,6 +3981,7 @@ export default function SimulationRunPage() {
                           </div>
                         )}
                       </dl>
+                      </>
                     )}
                   </div>
                 );
@@ -5159,7 +5174,8 @@ export default function SimulationRunPage() {
                     </div>
                     {leaseTtlMs == null && (
                       <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
-                        Lease not configured for this run. Manual renewal is unavailable.
+                        No wall-clock lease TTL was set for this run — automatic renewal is off (typical for unbounded
+                        interactive sessions). Set <span className="font-mono text-white/55">lease_ttl_ms</span> when creating a run to enable renewal timers here.
                       </p>
                     )}
                     {leaseRenewError && (
