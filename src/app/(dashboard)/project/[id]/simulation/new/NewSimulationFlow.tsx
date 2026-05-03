@@ -37,7 +37,8 @@ import {
   buildBatchRecommendationOptimizationPayload,
   resolveBatchRecommendationObjective,
 } from "@/lib/simulation/batch-recommendation-optimization-payload";
-import { allowedActionsFromFlags } from "@/lib/simulation/batch-scaling-actions";
+import { allowedActionsFromDirectional } from "@/lib/simulation/batch-scaling-actions";
+import { buildRealtimeInteractiveOnlineOptimizationCore } from "@/lib/simulation/interactive-online-optimization-payload";
 import {
   getSampleScenarioYaml,
   isSampleScenarioId,
@@ -813,7 +814,7 @@ export function NewSimulationFlow({
             break;
           }
         }
-        if (!newErrors.config && allowedActionsFromFlags(br).length === 0) {
+        if (!newErrors.config && allowedActionsFromDirectional(br.actions).length === 0) {
           newErrors.config =
             "Select at least one scaling option (Batch recommendation → Advanced search settings → Allowed scaling dimensions).";
         }
@@ -976,36 +977,66 @@ export function NewSimulationFlow({
           online: false,
         };
       } else if (runMode === "online_optimization") {
-        const extra: Record<string, unknown> = {
-          objective: optimization.objective,
-          online: true,
-          optimization_target_primary: optimization.optimization_target_primary || "p95_latency",
-          target_p95_latency_ms: optimization.target_p95_latency_ms,
-          control_interval_ms: optimization.control_interval_ms,
-          min_hosts: optimization.min_hosts,
-          max_hosts: optimization.max_hosts,
-          target_util_high: optimization.target_util_high,
-          target_util_low: optimization.target_util_low,
-          scale_down_cpu_util_max: optimization.scale_down_cpu_util_max,
-          scale_down_mem_util_max: optimization.scale_down_mem_util_max,
-          scale_down_host_cpu_util_max: optimization.scale_down_host_cpu_util_max,
-        };
-        const lt = parseOptionalInt(onlineTuning.lease_ttl_ms);
-        if (lt != null && lt > 0) extra.lease_ttl_ms = lt;
-        const mcs = parseOptionalInt(onlineTuning.max_controller_steps);
-        if (mcs != null && mcs >= 0) extra.max_controller_steps = mcs;
-        const mod = parseOptionalInt(onlineTuning.max_online_duration_ms);
-        if (mod != null && mod > 0) extra.max_online_duration_ms = mod;
-        const mni = parseOptionalInt(onlineTuning.max_noop_intervals);
-        if (mni != null && mni >= 0) extra.max_noop_intervals = mni;
-        const sdc = parseOptionalInt(onlineTuning.scale_down_cooldown_ms);
-        if (sdc != null && sdc >= 0) extra.scale_down_cooldown_ms = sdc;
-        const dt = parseOptionalInt(onlineTuning.drain_timeout_ms);
-        if (dt != null && dt >= 0) extra.drain_timeout_ms = dt;
-        const mdh = parseOptionalInt(onlineTuning.memory_downsize_headroom_mb);
-        if (mdh != null && mdh >= 0) extra.memory_downsize_headroom_mb = mdh;
-        if (onlineTuning.allow_unbounded_online) extra.allow_unbounded_online = true;
-        optimizationPayload = extra;
+        const primary = optimization.optimization_target_primary || "p95_latency";
+
+        if (formData.real_time_mode) {
+          const modWallClock = parseOptionalInt(onlineTuning.max_online_duration_ms);
+          const extra: Record<string, unknown> = {
+            ...buildRealtimeInteractiveOnlineOptimizationCore(
+              primary,
+              modWallClock != null && modWallClock > 0 ? modWallClock : undefined
+            ),
+            target_p95_latency_ms: optimization.target_p95_latency_ms,
+            control_interval_ms: optimization.control_interval_ms,
+            min_hosts: optimization.min_hosts,
+            max_hosts: optimization.max_hosts,
+            target_util_high: optimization.target_util_high,
+            target_util_low: optimization.target_util_low,
+            scale_down_cpu_util_max: optimization.scale_down_cpu_util_max,
+            scale_down_mem_util_max: optimization.scale_down_mem_util_max,
+            scale_down_host_cpu_util_max: optimization.scale_down_host_cpu_util_max,
+          };
+
+          const sdc = parseOptionalInt(onlineTuning.scale_down_cooldown_ms);
+          if (sdc != null && sdc >= 0) extra.scale_down_cooldown_ms = sdc;
+          const dt = parseOptionalInt(onlineTuning.drain_timeout_ms);
+          if (dt != null && dt >= 0) extra.drain_timeout_ms = dt;
+          const mdh = parseOptionalInt(onlineTuning.memory_downsize_headroom_mb);
+          if (mdh != null && mdh >= 0) extra.memory_downsize_headroom_mb = mdh;
+
+          optimizationPayload = extra;
+        } else {
+          const extra: Record<string, unknown> = {
+            online: true,
+            objective: primary,
+            optimization_target_primary: primary,
+            target_p95_latency_ms: optimization.target_p95_latency_ms,
+            control_interval_ms: optimization.control_interval_ms,
+            min_hosts: optimization.min_hosts,
+            max_hosts: optimization.max_hosts,
+            target_util_high: optimization.target_util_high,
+            target_util_low: optimization.target_util_low,
+            scale_down_cpu_util_max: optimization.scale_down_cpu_util_max,
+            scale_down_mem_util_max: optimization.scale_down_mem_util_max,
+            scale_down_host_cpu_util_max: optimization.scale_down_host_cpu_util_max,
+          };
+          const lt = parseOptionalInt(onlineTuning.lease_ttl_ms);
+          if (lt != null && lt > 0) extra.lease_ttl_ms = lt;
+          const mcs = parseOptionalInt(onlineTuning.max_controller_steps);
+          if (mcs != null && mcs >= 0) extra.max_controller_steps = mcs;
+          const mod = parseOptionalInt(onlineTuning.max_online_duration_ms);
+          if (mod != null && mod > 0) extra.max_online_duration_ms = mod;
+          const mni = parseOptionalInt(onlineTuning.max_noop_intervals);
+          if (mni != null && mni >= 0) extra.max_noop_intervals = mni;
+          const sdc = parseOptionalInt(onlineTuning.scale_down_cooldown_ms);
+          if (sdc != null && sdc >= 0) extra.scale_down_cooldown_ms = sdc;
+          const dt = parseOptionalInt(onlineTuning.drain_timeout_ms);
+          if (dt != null && dt >= 0) extra.drain_timeout_ms = dt;
+          const mdh = parseOptionalInt(onlineTuning.memory_downsize_headroom_mb);
+          if (mdh != null && mdh >= 0) extra.memory_downsize_headroom_mb = mdh;
+          if (onlineTuning.allow_unbounded_online) extra.allow_unbounded_online = true;
+          optimizationPayload = extra;
+        }
       }
 
       const body: CreateProjectRunRequest = {
@@ -1021,7 +1052,10 @@ export function NewSimulationFlow({
             : runMode === "batch_legacy"
               ? { mode: "batch" as const, objective: optimization.objective }
               : runMode === "online_optimization"
-                ? { mode: "online_optimization" as const }
+                ? {
+                    mode: "online_optimization" as const,
+                    objective: optimization.optimization_target_primary || "p95_latency",
+                  }
                 : {}),
         },
         ...(configYaml.trim() ? { config_yaml: configYaml.trim() } : {}),
@@ -1923,14 +1957,17 @@ export function NewSimulationFlow({
                       Advanced: lease, controller limits, drain timing
                     </summary>
                     <p className="text-[11px] text-white/40 mt-2 mb-3">
-                      Optional fields forwarded to the engine. Leave empty for defaults. For long online runs, set{" "}
-                      <span className="text-white/50">lease_ttl_ms</span> — the run detail page renews the lease on a
-                      timer.
+                      Optional fields forwarded to the engine; leave empty to omit. Interactive real-time online runs never
+                      send <span className="font-mono text-white/55">lease_ttl_ms</span> from this form — the run page only
+                      enables scheduled lease renewal when the backend echoes a positive lease TTL from create-run (set below
+                      for non-real-time online runs).
                     </p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                       {(
                         [
-                          ["lease_ttl_ms", "Lease TTL (ms)"],
+                          ...(formData.real_time_mode
+                            ? []
+                            : ([["lease_ttl_ms", "Lease TTL (ms)"]] as const)),
                           ["max_controller_steps", "Max controller steps"],
                           ["max_online_duration_ms", "Max online duration (ms)"],
                           ["max_noop_intervals", "Max noop intervals"],
@@ -2271,6 +2308,12 @@ export function NewSimulationFlow({
               {runMode === "online_optimization" && (
                 <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
                   <h3 className="text-sm font-semibold text-sky-300 mb-3">Online optimization</h3>
+                  {formData.real_time_mode && (
+                    <p className="text-[11px] text-white/45 mb-3">
+                      Interactive session: unbounded controller (<span className="font-mono text-white/55">max_controller_steps: 0</span>,{" "}
+                      <span className="font-mono text-white/55">allow_unbounded_online: true</span>) unless you set max online duration in Advanced.
+                    </p>
+                  )}
                   <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
                     <div>
                       <dt className="text-xs text-white/50">Primary target</dt>
