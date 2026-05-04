@@ -90,24 +90,26 @@ function mapRunCandidatesToSuggest(
     nodeCount: number,
 ): Candidate[] {
     const normalizedNodes = nodeCount > 0 ? nodeCount : 1;
-    return candidates.map((c) => ({
-        id: c.id,
-        spec: {
-            vcpu: c.spec.vcpu / normalizedNodes,
-            memory_gb: c.spec.memory_gb / normalizedNodes,
-            label: c.spec.label ?? c.id,
-        },
-        metrics: {
-            cpu_util_pct: c.metrics.cpu_util_pct,
-            mem_util_pct: c.metrics.mem_util_pct,
-        },
-        sim_workload: {
-            concurrent_users: c.sim_workload?.concurrent_users ?? 0,
-        },
-        source: c.source ?? 'export',
-    }));
+    return candidates.map((c) => {
+        const rawVcpu = c.spec.vcpu / normalizedNodes;
+        return {
+            id: c.id,
+            spec: {
+                vcpu: Math.max(0, rawVcpu === 5 ? 5 : Math.floor(rawVcpu)),
+                memory_gb: c.spec.memory_gb / normalizedNodes,
+                label: c.spec.label ?? c.id,
+            },
+            metrics: {
+                cpu_util_pct: c.metrics.cpu_util_pct,
+                mem_util_pct: c.metrics.mem_util_pct,
+            },
+            sim_workload: {
+                concurrent_users: c.sim_workload?.concurrent_users ?? 0,
+            },
+            source: c.source ?? 'export',
+        };
+    });
 }
-
 export default function SuggestPage({ projectId: projectIdProp }: SuggestPageProps = {}) {
     const [loading, setLoading] = useState(false);
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
@@ -670,11 +672,10 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                         );
                                                         return (
                                                             <span
-                                                                className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                                                                    isSurplus
-                                                                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                                                                        : 'border-red-500/30 bg-red-500/10 text-red-300'
-                                                                }`}
+                                                                className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${isSurplus
+                                                                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                                                    : 'border-red-500/30 bg-red-500/10 text-red-300'
+                                                                    }`}
                                                             >
                                                                 {isSurplus ? 'Surplus' : 'Shortfall'}: {isSurplus ? '+' : ''}{diff} users
                                                             </span>
