@@ -67,8 +67,10 @@ import {
   renewOnlineLease,
   startSimulationRun,
   stopSimulationRun,
-  type PatchRunConfigurationWorkloadItem,
+  type PatchPlacementStrategy,
   type PatchRunConfigurationPolicies,
+  type PatchRunConfigurationResponse,
+  type PatchRunConfigurationWorkloadItem,
 } from "@/lib/api-client/simulation";
 import YAML from "yaml";
 import ClusterPlacementView, {
@@ -134,6 +136,53 @@ interface RuntimeOperationRecord {
   validationOk: boolean;
   status: RuntimeOperationStatus;
   errorText?: string;
+  /** Manual admission / capacity expansion lines (not controller optimizer). */
+  admissionLines?: string[];
+}
+
+function placementStrategyLabel(s: PatchPlacementStrategy): string {
+  return s === "strict" ? "Strict" : "Expand capacity if needed";
+}
+
+function summarizePatchAdmissionResponse(resp: PatchRunConfigurationResponse): string[] {
+  const lines: string[] = [];
+  const r: Record<string, unknown> = { ...(resp as unknown as Record<string, unknown>) };
+  const ps = r.placement_strategy;
+  if (r.capacity_expanded === true) {
+    lines.push("Host capacity expanded before applying patch");
+  } else if (ps === "expand_capacity_if_needed" && r.capacity_expanded === false) {
+    lines.push("Host capacity unchanged (already sufficient for requested resources)");
+  }
+  const hc = (r.host_capacity_changes ?? r.changed_hosts) as unknown;
+  if (Array.isArray(hc)) {
+    for (const raw of hc) {
+      const h = raw as Record<string, unknown>;
+      const hid = String(h.host_id ?? h.hostId ?? "host");
+      const cpuB = h.cpu_cores_before;
+      const cpuA = h.cpu_cores_after;
+      const memB = h.memory_gb_before;
+      const memA = h.memory_gb_after;
+      const parts: string[] = [];
+      if (typeof cpuB === "number" && typeof cpuA === "number" && cpuB !== cpuA) {
+        parts.push(`CPU ${cpuB} → ${cpuA}`);
+      }
+      if (typeof memB === "number" && typeof memA === "number" && memB !== memA) {
+        parts.push(`memory ${memB} GB → ${memA} GB`);
+      }
+      if (parts.length > 0) {
+        lines.push(`Host ${hid}: ${parts.join(", ")}`);
+      }
+    }
+  }
+  const added = r.added_hosts;
+  if (Array.isArray(added) && added.length > 0) {
+    lines.push(
+      `Hosts added (${added.length}): ${added
+        .map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
+        .join(", ")}`
+    );
+  }
+  return lines;
 }
 
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
@@ -1789,6 +1838,8 @@ export default function SimulationRunPage() {
   // Live config (online mode) — editable form state; synced from optimization_step
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
   const [serviceMixerDrafts, setServiceMixerDrafts] = useState<Record<string, RuntimeServiceDraft>>({});
+  /** Manual PATCH /configuration admission; default strict (never silently expand). */
+  const [servicePatchPlacementStrategy, setServicePatchPlacementStrategy] = useState<PatchPlacementStrategy>("strict");
   const [trafficConsoleDrafts, setTrafficConsoleDrafts] = useState<
     Record<string, { pattern_key?: string; rate_rps?: number }>
   >({});
@@ -2761,13 +2812,133 @@ export default function SimulationRunPage() {
     setRuntimeOps((prev) => prev.map((op) => (op.id === id ? { ...op, ...patch } : op)));
   }, []);
 
+  const applyConfigurationSnapshotToLiveUi = useCallback(
+    (configuration: Awaited<ReturnType<typeof getRunConfiguration>>, opts?: { preserveExistingDraftConfig?: boolean }) => {
+      const preserve = opts?.preserveExistingDraftConfig ?? false;
+      setRuntimeConfigSeed(configuration);
+      const runtimeHosts = Array.isArray(configuration.hosts) ? configuration.hosts : [];
+      const runtimeServices = Array.isArray(configuration.services)
+        ? configuration.services
+            .map((service) => ({
+              service_id: service.service_id || service.id || "",
+              replicas: service.replicas,
+              cpu_cores: service.cpu_cores,
+              memory_mb: service.memory_mb,
+            }))
+            .filter(
+              (service) =>
+                typeof service.service_id === "string" && service.service_id.trim() !== ""
+            )
+        : [];
+      const runtimePlacements = Array.isArray(configuration.placements)
+        ? configuration.placements.filter(
+            (placement) =>
+              typeof placement.service_id === "string" &&
+              placement.service_id.trim() !== ""
+          )
+        : [];
+      const runtimeResources = {
+        hosts: runtimeHosts,
+        services: runtimeServices,
+        placements: runtimePlacements,
+      };
+      if (
+        runtimeResources.hosts.length > 0 ||
+        runtimeResources.services.length > 0 ||
+        runtimeResources.placements.length > 0
+      ) {
+        setClusterResources(runtimeResources);
+        setLivePlacementStatus(placementStatusFromFinalConfig(runtimeResources));
+      }
+      setLiveConfig((prev) => {
+        const next: LiveConfig = {
+          services: (configuration.services ?? [])
+            .map((service) => ({
+              id: service.id || service.service_id,
+              replicas: service.replicas,
+              cpu_cores: service.cpu_cores,
+              memory_mb: service.memory_mb,
+            }))
+            .filter((service) => typeof service.id === "string" && service.id.trim() !== ""),
+          workload: (configuration.workload ?? [])
+            .map((item) => ({
+              pattern_key: item.pattern_key,
+              rate_rps:
+                typeof item.rate_rps === "number" && Number.isFinite(item.rate_rps)
+                  ? item.rate_rps
+                  : 0,
+            }))
+            .filter((item) => typeof item.pattern_key === "string" && item.pattern_key.trim() !== ""),
+          policies: prev?.policies ?? DEFAULT_LIVE_CONFIG.policies,
+        };
+        if (preserve && prev && (prev.services.length > 0 || prev.workload.length > 0)) return prev;
+        return next;
+      });
+    },
+    []
+  );
+
+  const refreshLiveStateAfterServiceConfigurationPatch = useCallback(async () => {
+    try {
+      const configuration = await getRunConfiguration(runId);
+      setRuntimeConfigSeedNotice(null);
+      applyConfigurationSnapshotToLiveUi(configuration, { preserveExistingDraftConfig: false });
+    } catch {
+      /* non-fatal */
+    }
+    if ((runInfo?.status ?? "pending") !== "running") return;
+    try {
+      const token = await getFirebaseIdToken();
+      const res = await fetch(
+        `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/metrics`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as Record<string, unknown>;
+      const metrics = data.metrics as Record<string, unknown> | undefined;
+      const list = metrics?.service_metrics;
+      if (!Array.isArray(list) || list.length === 0) return;
+      setLiveMetricsData((prev) =>
+        prev
+          ? {
+              ...prev,
+              metrics: {
+                ...(typeof prev.metrics === "object" && prev.metrics ? prev.metrics : {}),
+                ...(metrics ?? {}),
+                service_metrics: list as ServiceMetricSnapshot[],
+              },
+            }
+          : {
+              run_id: typeof data.run_id === "string" ? data.run_id : runId,
+              summary: (data.summary as MetricsSummary) ?? {},
+              metrics: { ...(metrics ?? {}), service_metrics: list as ServiceMetricSnapshot[] },
+            }
+      );
+    } catch {
+      /* optional metrics refresh */
+    }
+  }, [runId, runInfo, applyConfigurationSnapshotToLiveUi]);
+
   const formatRuntimeMutationError = useCallback((error: unknown): string => {
     if (isSimulationApiError(error)) {
-      const base = error.message;
-      if (error.status === 400) return `${base} (invalid patch payload)`;
-      if (error.status === 404) return `${base} (engine run or pattern not found)`;
-      if (error.status === 409) return `${base} (conflicting runtime update)`;
-      if (error.status === 412) return `${base} (run/config is no longer available)`;
+      let base = error.message;
+      const details = error.detailsSummary;
+      if (details && !base.includes(details)) {
+        base = `${base}\n${details}`;
+      }
+      if (error.status === 400) base = `${base}\n(invalid patch payload)`;
+      else if (error.status === 404) base = `${base}\n(engine run or pattern not found)`;
+      else if (error.status === 409) base = `${base}\n(conflicting runtime update)`;
+      else if (error.status === 412) base = `${base}\n(run/config is no longer available)`;
+      const lower = base.toLowerCase();
+      if (
+        lower.includes("host cpu capacity exceeded") ||
+        lower.includes("host memory capacity exceeded") ||
+        lower.includes("cannot place") ||
+        lower.includes("capacity exceeded")
+      ) {
+        base = `${base}\n\nTry "Expand capacity if needed" under Placement strategy if you want the engine to grow host capacity (or add hosts) before applying this patch.`;
+      }
       return base;
     }
     if (error instanceof Error) return error.message;
@@ -2811,16 +2982,27 @@ export default function SimulationRunPage() {
       kind: "services",
       method: "PATCH",
       endpoint: `/api/v1/simulation/runs/${runId}/configuration`,
-      payload: { services: payload.value },
-      summary: `Patch ${payload.value.length} service row(s)`,
+      payload: { placement_strategy: servicePatchPlacementStrategy, services: payload.value },
+      summary: `Patch ${payload.value.length} service row(s) · ${placementStrategyLabel(servicePatchPlacementStrategy)}`,
       validationOk: true,
       status: "submitted",
     });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      await patchRunConfiguration(runId, { services: payload.value });
-      updateRuntimeOperation(opId, { status: "accepted" });
+      const patchResp = await patchRunConfiguration(runId, {
+        placement_strategy: servicePatchPlacementStrategy,
+        services: payload.value,
+      });
+      const admissionLines = [
+        `Strategy: ${placementStrategyLabel(servicePatchPlacementStrategy)}`,
+        ...summarizePatchAdmissionResponse(patchResp),
+      ];
+      updateRuntimeOperation(opId, {
+        status: "accepted",
+        admissionLines,
+      });
+      void refreshLiveStateAfterServiceConfigurationPatch();
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingServiceObservationById((prev) => {
           const next = { ...prev };
@@ -2835,7 +3017,11 @@ export default function SimulationRunPage() {
     } catch (e) {
       updateRuntimeOperation(opId, {
         status: "rejected",
-        errorText: e instanceof Error ? e.message : String(e),
+        errorText: isSimulationApiError(e)
+          ? [e.message, e.detailsSummary].filter(Boolean).join("\n")
+          : e instanceof Error
+            ? e.message
+            : String(e),
       });
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingServiceObservationById((prev) => {
@@ -2849,7 +3035,18 @@ export default function SimulationRunPage() {
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig, optSteps, liveMetricsData, metricsData, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
+  }, [
+    runId,
+    liveConfig,
+    optSteps,
+    liveMetricsData,
+    metricsData,
+    servicePatchPlacementStrategy,
+    recordRuntimeOperation,
+    updateRuntimeOperation,
+    formatRuntimeMutationError,
+    refreshLiveStateAfterServiceConfigurationPatch,
+  ]);
 
   const applyWorkload = useCallback(async (
     workloadRows?: PatchRunConfigurationWorkloadItem[],
@@ -3103,65 +3300,8 @@ export default function SimulationRunPage() {
     void (async () => {
       try {
         const configuration = await getRunConfiguration(runId);
-        setRuntimeConfigSeed(configuration);
         setRuntimeConfigSeedNotice(null);
-        const runtimeHosts = Array.isArray(configuration.hosts) ? configuration.hosts : [];
-        const runtimeServices = Array.isArray(configuration.services)
-          ? configuration.services
-              .map((service) => ({
-                service_id: service.service_id || service.id || "",
-                replicas: service.replicas,
-                cpu_cores: service.cpu_cores,
-                memory_mb: service.memory_mb,
-              }))
-              .filter(
-                (service) =>
-                  typeof service.service_id === "string" && service.service_id.trim() !== ""
-              )
-          : [];
-        const runtimePlacements = Array.isArray(configuration.placements)
-          ? configuration.placements.filter(
-              (placement) =>
-                typeof placement.service_id === "string" &&
-                placement.service_id.trim() !== ""
-            )
-          : [];
-        const runtimeResources = {
-          hosts: runtimeHosts,
-          services: runtimeServices,
-          placements: runtimePlacements,
-        };
-        if (
-          runtimeResources.hosts.length > 0 ||
-          runtimeResources.services.length > 0 ||
-          runtimeResources.placements.length > 0
-        ) {
-          setClusterResources(runtimeResources);
-          setLivePlacementStatus(placementStatusFromFinalConfig(runtimeResources));
-        }
-        setLiveConfig((prev) => {
-          if (prev && (prev.services.length > 0 || prev.workload.length > 0)) return prev;
-          return {
-            services: (configuration.services ?? [])
-              .map((service) => ({
-                id: service.id || service.service_id,
-                replicas: service.replicas,
-                cpu_cores: service.cpu_cores,
-                memory_mb: service.memory_mb,
-              }))
-              .filter((service) => typeof service.id === "string" && service.id.trim() !== ""),
-            workload: (configuration.workload ?? [])
-              .map((item) => ({
-                pattern_key: item.pattern_key,
-                rate_rps:
-                  typeof item.rate_rps === "number" && Number.isFinite(item.rate_rps)
-                    ? item.rate_rps
-                    : 0,
-              }))
-              .filter((item) => typeof item.pattern_key === "string" && item.pattern_key.trim() !== ""),
-            policies: prev?.policies ?? DEFAULT_LIVE_CONFIG.policies,
-          };
-        });
+        applyConfigurationSnapshotToLiveUi(configuration, { preserveExistingDraftConfig: true });
       } catch (e) {
         if (isSimulationApiError(e) && e.status === 412) {
           setRuntimeConfigSeedNotice("Live runtime configuration is no longer available.");
@@ -3172,7 +3312,7 @@ export default function SimulationRunPage() {
         );
       }
     })();
-  }, [runId, isOnlineMode, status, hasEngineAssociation]);
+  }, [runId, isOnlineMode, status, hasEngineAssociation, applyConfigurationSnapshotToLiveUi]);
 
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
@@ -3226,6 +3366,7 @@ export default function SimulationRunPage() {
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
+    setServicePatchPlacementStrategy("strict");
   }, [runId]);
 
   // In online mode, seed default config so user can add services/workload and apply even before first optimization step
@@ -4360,6 +4501,7 @@ export default function SimulationRunPage() {
                 payload: op.payload,
                 kind: op.kind,
                 errorText: op.errorText,
+                admissionLines: op.admissionLines,
               },
               hasError: op.status === "rejected" || Boolean(op.errorText),
             }));
@@ -4430,6 +4572,28 @@ export default function SimulationRunPage() {
               <>
                 {controlRoomTab === "services" && (
                   <div className="space-y-2">
+                    <div className="rounded border border-white/10 bg-black/25 px-3 py-2 space-y-1.5">
+                      <label className="block text-[11px] text-white/60">
+                        <span className="text-[10px] text-white/40 uppercase tracking-wide">Placement strategy</span>
+                        <select
+                          value={servicePatchPlacementStrategy}
+                          onChange={(e) =>
+                            setServicePatchPlacementStrategy(e.target.value as PatchPlacementStrategy)
+                          }
+                          disabled={configUpdateLoading}
+                          className="mt-1 w-full max-w-md rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-xs text-white"
+                        >
+                          <option value="strict">Strict — reject if the patch does not fit current host capacity</option>
+                          <option value="expand_capacity_if_needed">
+                            Expand capacity if needed — grow affected host capacity (or add hosts) before applying
+                          </option>
+                        </select>
+                      </label>
+                      <p className="text-[10px] text-white/40 leading-snug">
+                        Defaults to Strict so expansion is never silent. CPU/memory decreases can still be rejected when
+                        active requests or queued work exist, even with expansion.
+                      </p>
+                    </div>
                     <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                       <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
                       <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
@@ -4531,7 +4695,12 @@ export default function SimulationRunPage() {
                           {servicePreviewValidation.ok ? `Valid · ${servicePreviewValidation.value.length} row(s)` : `Invalid · ${servicePreviewValidation.error}`}
                         </p>
                         <pre className="mt-1 text-[10px] text-white/70 overflow-x-auto font-mono">{JSON.stringify(
-                          servicePreviewValidation.ok ? { services: servicePreviewValidation.value } : { services: servicePreviewRows },
+                          servicePreviewValidation.ok
+                            ? {
+                                placement_strategy: servicePatchPlacementStrategy,
+                                services: servicePreviewValidation.value,
+                              }
+                            : { placement_strategy: servicePatchPlacementStrategy, services: servicePreviewRows },
                           null,
                           2
                         )}</pre>
@@ -5338,7 +5507,32 @@ export default function SimulationRunPage() {
                                   )}
                                 </div>
                               ) : (
-                                <pre className="mt-1 text-[10px] text-white/65 overflow-x-auto font-mono">{JSON.stringify(entry.details, null, 2)}</pre>
+                                <div className="mt-1 space-y-1">
+                                  {Array.isArray((entry.details as Record<string, unknown>).admissionLines) &&
+                                  ((entry.details as Record<string, unknown>).admissionLines as string[]).length > 0 ? (
+                                    <ul className="text-[10px] text-emerald-200/90 list-disc pl-4 space-y-0.5">
+                                      {((entry.details as Record<string, unknown>).admissionLines as string[]).map((line, i) => (
+                                        <li key={`${entry.id}-adm-${i}`}>{line}</li>
+                                      ))}
+                                    </ul>
+                                  ) : null}
+                                  {(entry.details as Record<string, unknown>).errorText ? (
+                                    <p className="text-[10px] text-red-300/90 whitespace-pre-wrap">
+                                      {String((entry.details as Record<string, unknown>).errorText)}
+                                    </p>
+                                  ) : null}
+                                  <pre className="mt-1 text-[10px] text-white/65 overflow-x-auto font-mono">
+                                    {JSON.stringify(
+                                      (() => {
+                                        const d = entry.details as Record<string, unknown>;
+                                        const { admissionLines: _al, errorText: _et, ...rest } = d;
+                                        return rest;
+                                      })(),
+                                      null,
+                                      2
+                                    )}
+                                  </pre>
+                                </div>
                               )}
                             </details>
                           </div>
