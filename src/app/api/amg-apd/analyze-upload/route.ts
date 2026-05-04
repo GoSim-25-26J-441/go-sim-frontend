@@ -34,6 +34,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const mergeRaw = form.get("merge_previous_diagram");
+    let merge_previous_diagram: boolean | undefined;
+    if (typeof mergeRaw === "string" && mergeRaw.trim()) {
+      const v = mergeRaw.trim().toLowerCase();
+      if (v === "false" || v === "0") merge_previous_diagram = false;
+      else if (v === "true" || v === "1") merge_previous_diagram = true;
+    }
+
     const res = await fetch(`${BASE}/api/v1/amg-apd/analyze-raw`, {
       method: "POST",
       headers: {
@@ -45,6 +53,9 @@ export async function POST(req: NextRequest) {
         title,
         ...(node_layout && Object.keys(node_layout).length > 0
           ? { node_layout }
+          : {}),
+        ...(merge_previous_diagram === false
+          ? { merge_previous_diagram: false }
           : {}),
       }),
     });

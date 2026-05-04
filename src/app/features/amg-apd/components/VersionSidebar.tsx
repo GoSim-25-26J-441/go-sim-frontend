@@ -24,6 +24,8 @@ export default function VersionSidebar({
   projectPatternsPage = false,
   /** When true on project page, count badge is replaced by a blue ? (guides active) */
   guidesActive = false,
+  /** After a version graph is loaded from the API (same or different id). Remount canvas to avoid Cytoscape patch drift (e.g. duplicate nodes). */
+  onVersionGraphApplied,
 }: {
   refreshTrigger?: number;
   /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
@@ -32,6 +34,7 @@ export default function VersionSidebar({
   designerTourForceOpenNonce?: number;
   projectPatternsPage?: boolean;
   guidesActive?: boolean;
+  onVersionGraphApplied?: () => void;
 } = {}) {
   const { userId } = useAuth();
   const headers = () =>
@@ -140,8 +143,7 @@ export default function VersionSidebar({
       const v = await versionRes.json();
       const yamlContent = v?.yaml_content;
       const graph = v?.graph;
-      if (!yamlContent || !graph)
-        throw new Error("Version has no YAML or graph content");
+      if (!graph) throw new Error("Version has no graph content");
 
       // Load this version into the canvas without creating a new version (no analyze-upload).
       const data: AnalysisResult = {
@@ -154,8 +156,9 @@ export default function VersionSidebar({
       };
 
       setLast(data);
-      setEditedYaml(yamlContent);
+      setEditedYaml(typeof yamlContent === "string" ? yamlContent : "");
       commitGraphBaseline();
+      onVersionGraphApplied?.();
       showToast("Switched to version successfully", "success");
     } catch (e: any) {
       showToast(

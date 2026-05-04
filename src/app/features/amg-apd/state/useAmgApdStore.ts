@@ -77,7 +77,9 @@ export const useAmgApdStore = create<State>()(
       baselineEditedYaml: undefined,
       commitGraphBaseline: () => {
         const { last, editedYaml } = get();
-        if (!last?.graph || editedYaml == null || editedYaml === "") return;
+        if (!last?.graph) return;
+        // Allow empty YAML (canvas-only diagram_versions rows) so baseline/reset still works.
+        if (editedYaml === undefined) return;
         set({
           baselineLast: JSON.parse(JSON.stringify(last)) as AnalysisResult,
           baselineEditedYaml: editedYaml,
@@ -85,7 +87,7 @@ export const useAmgApdStore = create<State>()(
       },
       resetGraphBaseline: () => {
         const { baselineLast, baselineEditedYaml } = get();
-        if (!baselineLast?.graph || baselineEditedYaml == null) return false;
+        if (!baselineLast?.graph || baselineEditedYaml === undefined) return false;
         set({
           last: JSON.parse(JSON.stringify(baselineLast)) as AnalysisResult,
           editedYaml: baselineEditedYaml,
