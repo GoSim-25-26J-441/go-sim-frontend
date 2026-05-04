@@ -1555,13 +1555,10 @@ export default function PatternsDesignerTour({
         <>
           {projectPatternsStyling ? (
             <>
-              {welcomeProjectStep === 0 && (
-                <div
-                  className="fixed inset-0 bg-slate-950/78"
-                  style={{ zIndex: PROJECT_WELCOME_DIM_Z }}
-                  aria-hidden
-                />
-              )}
+              {/*
+               * Step 0: no full-viewport dim — graph and details stay visible while the welcome
+               * dialog is open; steps 1–2 use spotlight holes for highlights.
+               */}
               {welcomeProjectStep > 0 && welcomeHighlightFrames.length > 0 && (
                 <WelcomeDimWithHoles
                   rects={welcomeHighlightFrames.map((f) => f.rect)}
