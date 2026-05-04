@@ -761,6 +761,9 @@ export default function PatternsView({
               designerTourForceOpenNonce={designerTourVersionsNonce}
               projectPatternsPage={useProjectPatterns}
               guidesActive={useProjectPatterns && newDesignerTourEnabled}
+              onVersionGraphApplied={() =>
+                setGraphVersion((v) => v + 1)
+              }
             />
 
             <button
