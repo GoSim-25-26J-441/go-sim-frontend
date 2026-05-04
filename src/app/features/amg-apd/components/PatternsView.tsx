@@ -41,6 +41,10 @@ type PatternsViewProps = {
   onCloseSimulationModal?: () => void;
   /** Project patterns: show full-page transition overlay (compare / chat / simulation). */
   onPageTransitionStart?: (label: string) => void;
+  /** Notify parent when currently loaded version changes. */
+  onActiveVersionChange?: (versionId?: string) => void;
+  /** Notify parent to refetch versions list (e.g. after new version save). */
+  onVersionsListShouldRefresh?: () => void;
 };
 
 export default function PatternsView({
@@ -50,6 +54,8 @@ export default function PatternsView({
   onRequestOpenSimulationModal,
   onCloseSimulationModal,
   onPageTransitionStart,
+  onActiveVersionChange,
+  onVersionsListShouldRefresh,
 }: PatternsViewProps) {
   const router = useRouter();
   const last = useAmgApdStore((s) => s.last);
@@ -371,6 +377,10 @@ export default function PatternsView({
     })();
   }, [last?.graph, projectId]);
 
+  useEffect(() => {
+    onActiveVersionChange?.(last?.version_id?.trim() || undefined);
+  }, [last?.version_id, onActiveVersionChange]);
+
   function handleReturnToChat() {
     if (onReturnToChat) {
       onReturnToChat();
@@ -601,6 +611,7 @@ export default function PatternsView({
         setGraphVersion((v) => v + 1);
         await refetchVersions();
         setVersionsRefreshTrigger((t) => t + 1);
+        onVersionsListShouldRefresh?.();
         showToast("Suggestions applied successfully", "success");
       } catch (e: any) {
         setErr(e?.message ?? "Failed to save as new version");
@@ -638,6 +649,7 @@ export default function PatternsView({
       setGraphVersion((v) => v + 1);
       await refetchVersions();
       setVersionsRefreshTrigger((t) => t + 1);
+      onVersionsListShouldRefresh?.();
       showToast("Graph generated successfully", "success");
       if (exitAfter) {
         setFullscreenGenPhase("success");
@@ -786,9 +798,10 @@ export default function PatternsView({
                       )
                   : undefined
               }
-              onVersionGraphApplied={() =>
-                setGraphVersion((v) => v + 1)
-              }
+              onVersionGraphApplied={(versionId) => {
+                setGraphVersion((v) => v + 1);
+                onActiveVersionChange?.(versionId);
+              }}
             />
 
             <button
