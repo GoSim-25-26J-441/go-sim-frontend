@@ -140,8 +140,7 @@ export default function VersionSidebar({
       const v = await versionRes.json();
       const yamlContent = v?.yaml_content;
       const graph = v?.graph;
-      if (!yamlContent || !graph)
-        throw new Error("Version has no YAML or graph content");
+      if (!graph) throw new Error("Version has no graph content");
 
       // Load this version into the canvas without creating a new version (no analyze-upload).
       const data: AnalysisResult = {
@@ -154,7 +153,7 @@ export default function VersionSidebar({
       };
 
       setLast(data);
-      setEditedYaml(yamlContent);
+      setEditedYaml(typeof yamlContent === "string" ? yamlContent : "");
       commitGraphBaseline();
       showToast("Switched to version successfully", "success");
     } catch (e: any) {
