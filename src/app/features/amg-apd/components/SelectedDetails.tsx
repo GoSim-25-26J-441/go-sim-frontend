@@ -13,6 +13,7 @@ import type {
 import { toDisplayName, antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
 import { colorForDetectionKind, NODE_KIND_COLOR } from "@/app/features/amg-apd/utils/colors";
 import { normalizeDetectionKind } from "@/app/features/amg-apd/mappers/cyto/normalizeDetectionKind";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
 export function detectionsForSelection(
   data: AnalysisResult,
@@ -43,6 +44,8 @@ type ToolsProps = {
   defaultCallProtocol?: CallProtocol;
   defaultCallSync?: boolean;
   onDefaultCallChange?: (kind: CallProtocol, sync: boolean) => void;
+  /** Project patterns details: protocol + sync only (no Calls tool toggle). */
+  defaultsOnly?: boolean;
 };
 
 /** Edit-mode Calls tool and defaults (Inspector “connections” tools). */
@@ -53,8 +56,61 @@ export function ConnectionsToolsPanel({
   defaultCallProtocol = "rest",
   defaultCallSync = true,
   onDefaultCallChange,
+  defaultsOnly = false,
 }: ToolsProps) {
-  if (!editMode || !onToolChange || !onDefaultCallChange) return null;
+  if (!editMode || !onDefaultCallChange) return null;
+  if (!defaultsOnly && !onToolChange) return null;
+
+  const defaultsBlock = (
+    <div className="space-y-2 pt-1">
+      <div className="text-[11px] text-slate-400">New call defaults</div>
+      <div className="space-y-1">
+        <label className="block text-[11px] text-slate-400">Protocol</label>
+        <select
+          className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-50 outline-none focus:border-sky-500"
+          value={defaultCallProtocol}
+          onChange={(e) =>
+            onDefaultCallChange(
+              e.target.value as CallProtocol,
+              defaultCallSync,
+            )
+          }
+        >
+          <option value="rest">REST</option>
+          <option value="grpc">gRPC</option>
+          <option value="event">Event</option>
+        </select>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={defaultsOnly ? "default-call-sync-patterns" : "default-call-sync-panel"}
+          type="checkbox"
+          className="h-3 w-3 rounded border-slate-600 bg-slate-900"
+          checked={defaultCallSync}
+          onChange={(e) =>
+            onDefaultCallChange(defaultCallProtocol, e.target.checked)
+          }
+        />
+        <label
+          htmlFor={defaultsOnly ? "default-call-sync-patterns" : "default-call-sync-panel"}
+          className="cursor-pointer text-[11px] text-slate-300"
+        >
+          Synchronous (uncheck for async)
+        </label>
+      </div>
+    </div>
+  );
+
+  if (defaultsOnly) {
+    return (
+      <div className="space-y-3 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] text-slate-400">Connections</span>
+        </div>
+        {defaultsBlock}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3 text-xs">
@@ -72,7 +128,9 @@ export function ConnectionsToolsPanel({
             : "border-slate-600 bg-slate-900 text-slate-200 hover:border-sky-400 hover:text-sky-100",
         ].join(" ")}
         onClick={() =>
-          onToolChange(currentTool === "connect-calls" ? "select" : "connect-calls")
+          onToolChange?.(
+            currentTool === "connect-calls" ? "select" : "connect-calls",
+          )
         }
       >
         <span className="font-medium">Calls tool</span>
@@ -81,48 +139,20 @@ export function ConnectionsToolsPanel({
         </span>
       </button>
 
-      {currentTool === "connect-calls" && (
-        <div className="space-y-2 pt-1">
-          <div className="text-[11px] text-slate-400">New call defaults</div>
-          <div className="space-y-1">
-            <label className="block text-[11px] text-slate-400">Protocol</label>
-            <select
-              className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-50 outline-none focus:border-sky-500"
-              value={defaultCallProtocol}
-              onChange={(e) =>
-                onDefaultCallChange(
-                  e.target.value as CallProtocol,
-                  defaultCallSync,
-                )
-              }
-            >
-              <option value="rest">REST</option>
-              <option value="grpc">gRPC</option>
-              <option value="event">Event</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              id="default-call-sync-panel"
-              type="checkbox"
-              className="h-3 w-3 rounded border-slate-600 bg-slate-900"
-              checked={defaultCallSync}
-              onChange={(e) =>
-                onDefaultCallChange(defaultCallProtocol, e.target.checked)
-              }
-            />
-            <label
-              htmlFor="default-call-sync-panel"
-              className="cursor-pointer text-[11px] text-slate-300"
-            >
-              Synchronous (uncheck for async)
-            </label>
-          </div>
-        </div>
-      )}
+      {currentTool === "connect-calls" && defaultsBlock}
     </div>
   );
 }
+
+type SelectionConnectionToolsPack = {
+  currentTool: EditTool;
+  onToolChange: (tool: EditTool) => void;
+  defaultCallProtocol: CallProtocol;
+  defaultCallSync: boolean;
+  onDefaultCallChange: (kind: CallProtocol, sync: boolean) => void;
+  /** Project patterns merged details: hide Calls tool row, keep defaults only. */
+  defaultsOnly?: boolean;
+};
 
 type SelectionProps = {
   data: AnalysisResult;
@@ -134,6 +164,8 @@ type SelectionProps = {
   onUpdateEdge?: (edgeId: string, attrs: { kind: CallProtocol; sync: boolean }) => void;
   /** Increment from parent (e.g. context menu “Rename”) to focus the node name field. */
   renameFocusNonce?: number;
+  /** Merged into this panel (e.g. project patterns edit — single details surface). */
+  connectionToolsPack?: SelectionConnectionToolsPack | null;
 };
 
 /** Node / edge / empty selection — without anti-pattern list or Calls toolbox. */
@@ -145,6 +177,7 @@ export function SelectionDetailsMain({
   onRenameNodeLive,
   onUpdateEdge,
   renameFocusNonce = 0,
+  connectionToolsPack = null,
 }: SelectionProps) {
   const detections = useMemo(
     () => detectionsForSelection(data, selected),
@@ -257,10 +290,31 @@ export function SelectionDetailsMain({
     USER_ACTOR: "user_actor",
   };
 
+  const connectionToolsHeader =
+    editMode && connectionToolsPack ? (
+      <div
+        className="mb-4 space-y-3 border-b border-slate-800 pb-4"
+        data-amg-designer={AMG_DESIGNER.connectionTools}
+      >
+        <ConnectionsToolsPanel
+          editMode={editMode}
+          currentTool={connectionToolsPack.currentTool}
+          onToolChange={connectionToolsPack.onToolChange}
+          defaultCallProtocol={connectionToolsPack.defaultCallProtocol}
+          defaultCallSync={connectionToolsPack.defaultCallSync}
+          onDefaultCallChange={connectionToolsPack.onDefaultCallChange}
+          defaultsOnly={connectionToolsPack.defaultsOnly === true}
+        />
+      </div>
+    ) : null;
+
   if (!selected) {
     return (
-      <div className="mb-1 text-xs text-slate-500">
-        Select a node or connection on the canvas to edit or inspect it.
+      <div className="space-y-3 text-xs">
+        {connectionToolsHeader}
+        <div className="mb-1 text-slate-500">
+          Select a node or connection on the canvas to edit or inspect it.
+        </div>
       </div>
     );
   }
@@ -271,6 +325,7 @@ export function SelectionDetailsMain({
 
     return (
       <div className="space-y-3 text-xs">
+        {connectionToolsHeader}
         <div
           className="space-y-2 border-l-4 pl-3"
           style={{ borderLeftColor: nodeColor }}
@@ -474,6 +529,7 @@ export function SelectionDetailsMain({
           : undefined
       }
     >
+      {connectionToolsHeader}
       <div>
         <div className="text-[11px] uppercase tracking-wide text-slate-400">
           Connection

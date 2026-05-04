@@ -11,6 +11,8 @@ type Props = {
   defaultOpen?: boolean;
   /** Increment (e.g. from parent) to force this section open — e.g. context menu “Rename”. */
   forceExpandKey?: number;
+  /** When true, section stays open (no collapse control). */
+  alwaysOpen?: boolean;
   children: React.ReactNode;
   className?: string;
 };
@@ -24,14 +26,32 @@ export default function CollapsibleDetailsSection({
   expandedTitle,
   defaultOpen = false,
   forceExpandKey = 0,
+  alwaysOpen = false,
   children,
   className = "",
 }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen || alwaysOpen);
 
   useEffect(() => {
     if (forceExpandKey > 0) setOpen(true);
   }, [forceExpandKey]);
+
+  useEffect(() => {
+    if (alwaysOpen) setOpen(true);
+  }, [alwaysOpen]);
+
+  if (alwaysOpen) {
+    return (
+      <div className={`w-full shrink-0 ${className}`}>
+        <div className="flex w-full min-h-9 items-center gap-2 rounded-lg px-1 py-2">
+          <span className="min-w-0 flex-1 text-xs font-semibold leading-snug text-slate-200 sm:text-[13px]">
+            {expandedTitle}
+          </span>
+        </div>
+        <div className="mt-1 border-t border-slate-800 pt-3">{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div className={`w-full shrink-0 ${className}`}>

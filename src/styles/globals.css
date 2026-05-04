@@ -227,6 +227,43 @@ html.dark select {
   background: rgba(15, 23, 42, 0.95);
 }
 
+/* Project patterns workspace: toolbox + details + export — neutral gray, thin thumb */
+.scrollbar-patterns-workspace {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(113, 113, 122, 0.75) rgba(39, 39, 42, 0.85);
+  scrollbar-gutter: stable;
+}
+
+.scrollbar-patterns-workspace::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-patterns-workspace::-webkit-scrollbar-track {
+  background: rgba(39, 39, 42, 0.75);
+  border-radius: 6px;
+  margin: 4px 1px;
+}
+
+.scrollbar-patterns-workspace::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.65);
+  border-radius: 6px;
+  border: 1px solid rgba(24, 24, 27, 0.6);
+  background-clip: padding-box;
+}
+
+.scrollbar-patterns-workspace::-webkit-scrollbar-thumb:hover {
+  background: rgba(161, 161, 170, 0.75);
+}
+
+.scrollbar-patterns-workspace::-webkit-scrollbar-thumb:active {
+  background: rgba(161, 161, 170, 0.9);
+}
+
+.scrollbar-patterns-workspace::-webkit-scrollbar-corner {
+  background: rgba(39, 39, 42, 0.75);
+}
+
 /* Apply the same subtle scrollbar to the whole page (viewport scroll) */
 html,
 body {

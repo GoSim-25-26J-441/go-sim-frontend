@@ -16,6 +16,7 @@ import VersionSidebar from "@/app/features/amg-apd/components/VersionSidebar";
 import PatternsDesignerTour from "@/app/features/amg-apd/components/patternsDesignerTour/PatternsDesignerTour";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { usePatternsGuidesWithProfile } from "@/app/features/amg-apd/hooks/usePatternsGuidesWithProfile";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
@@ -27,6 +28,7 @@ import {
   nodeLayoutPayloadFromGraph,
   type NodeLayoutPayload,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
+import { downloadArchitectureReportPdf } from "@/app/features/amg-apd/utils/architectureReportPdf";
 
 type PatternsViewProps = {
   projectId?: string;
@@ -87,10 +89,11 @@ export default function PatternsView({
   const newDesignerTourEnabled = useAmgApdStore(
     (s) => s.patternsGuidesEnabled,
   );
-  const setNewDesignerTourEnabled = useAmgApdStore(
-    (s) => s.setPatternsGuidesEnabled,
-  );
-  const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
+  /** Scoped UI: `/project/.../patterns` only (not dashboard patterns). */
+  const useProjectPatterns = Boolean(projectId?.trim());
+  const guideChromeLayout = useProjectPatterns && newDesignerTourEnabled;
+  const { toggleGuides, setGuidesEnabledAndPersist } =
+    usePatternsGuidesWithProfile();
   const patternsGuidesWelcomeOnEnable = useAmgApdStore(
     (s) => s.patternsGuidesWelcomeOnEnable,
   );
@@ -148,8 +151,12 @@ export default function PatternsView({
   }, [setPatternsGraphFullscreen]);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
+  const exportReportDiagramRef = useRef<
+    (() => string | null | Promise<string | null>) | null
+  >(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
-  const restoreStartedRef = useRef(false);
+  /** After we load latest version from API for this workspace; avoids skipping fetch due to stale persisted `last`. */
+  const serverHydratedKeyRef = useRef<string | null>(null);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
 
@@ -176,6 +183,7 @@ export default function PatternsView({
     yamlContent: string,
     title?: string,
     nodeLayout?: NodeLayoutPayload,
+    opts?: { mergePreviousDiagram?: boolean },
   ): Promise<AnalysisResult> {
     let versionTitle = title;
     if (versionTitle == null || versionTitle.trim() === "") {
@@ -210,6 +218,9 @@ export default function PatternsView({
     if (nodeLayout && Object.keys(nodeLayout).length > 0) {
       fd.append("node_layout", JSON.stringify(nodeLayout));
     }
+    if (opts?.mergePreviousDiagram === false) {
+      fd.append("merge_previous_diagram", "false");
+    }
 
     const res = await fetch("/api/amg-apd/analyze-upload", {
       method: "POST",
@@ -241,9 +252,15 @@ export default function PatternsView({
     }
   }
 
+  const patternsWorkspaceKey = projectId?.trim() || "__dashboard__";
+
   useEffect(() => {
-    if (last?.graph || restoreStartedRef.current) return;
-    restoreStartedRef.current = true;
+    serverHydratedKeyRef.current = null;
+  }, [patternsWorkspaceKey, userId]);
+
+  useEffect(() => {
+    if (serverHydratedKeyRef.current === patternsWorkspaceKey) return;
+
     setRegenerating(true);
     let cancelled = false;
 
@@ -256,9 +273,11 @@ export default function PatternsView({
 
         const listData = await listRes.json();
         const versionsList = listData?.versions ?? [];
-        if (versionsList.length === 0 || cancelled) return;
+        if (versionsList.length === 0) {
+          if (!cancelled) serverHydratedKeyRef.current = patternsWorkspaceKey;
+          return;
+        }
 
-        
         const sorted = [...versionsList].sort(
           (a: { version_number?: number }, b: { version_number?: number }) =>
             (b.version_number ?? 0) - (a.version_number ?? 0),
@@ -273,7 +292,7 @@ export default function PatternsView({
         const v = await versionRes.json();
         const graph = v?.graph;
         const yamlContent = v?.yaml_content;
-        if (!graph || !yamlContent || cancelled) return;
+        if (!graph || cancelled) return;
 
         const data: AnalysisResult = {
           graph,
@@ -286,10 +305,14 @@ export default function PatternsView({
 
         if (cancelled) return;
         setLast(data);
-        setEditedYaml(yamlContent);
+        setEditedYaml(
+          typeof yamlContent === "string" ? yamlContent : "",
+        );
         commitGraphBaseline();
+        serverHydratedKeyRef.current = patternsWorkspaceKey;
+        setGraphVersion((v) => v + 1);
       } catch {
-        // Leave graph empty
+        // Leave graph empty; allow retry on remount / workspace change
       } finally {
         if (!cancelled) setRegenerating(false);
       }
@@ -297,12 +320,11 @@ export default function PatternsView({
 
     return () => {
       cancelled = true;
-      restoreStartedRef.current = false;
       setRegenerating(false);
     };
   }, [
-    last?.graph,
-    projectId,
+    patternsWorkspaceKey,
+    userId,
     setLast,
     setEditedYaml,
     setRegenerating,
@@ -311,7 +333,7 @@ export default function PatternsView({
 
   /** Baseline is not persisted; seed it when session storage rehydrates `last` + YAML. */
   useEffect(() => {
-    if (!last?.graph || editedYaml == null || editedYaml === "") return;
+    if (!last?.graph || editedYaml === undefined) return;
     const st = useAmgApdStore.getState();
     if (!st.baselineLast?.graph) st.commitGraphBaseline();
   }, [last?.graph, last?.version_id, editedYaml]);
@@ -429,6 +451,43 @@ export default function PatternsView({
     showToast("Image downloaded", "success");
   }
 
+  async function handleDownloadArchitectureReport() {
+    if (!useProjectPatterns || !projectId?.trim()) return;
+    if (!last?.graph) {
+      showToast("No graph loaded yet.", "warning");
+      return;
+    }
+    const fn = exportReportDiagramRef.current;
+    if (!fn) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    const dataUrl = await Promise.resolve(fn());
+    if (!dataUrl) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    try {
+      await downloadArchitectureReportPdf({
+        projectId: projectId.trim(),
+        data: last,
+        diagramPngDataUrl: dataUrl,
+      });
+      showToast("Report downloaded", "success");
+    } catch (e: any) {
+      showToast(
+        e?.message ? String(e.message) : "Could not build the PDF report.",
+        "error",
+      );
+    }
+  }
+
   const openSuggestions = useCallback(async () => {
     if (!editedYaml) {
       showToast("No current YAML available. Upload a YAML first.", "warning");
@@ -519,6 +578,7 @@ export default function PatternsView({
           fixedYaml,
           undefined,
           nodeLayout,
+          { mergePreviousDiagram: false },
         );
         setLast(saved);
         commitGraphBaseline();
@@ -641,11 +701,18 @@ export default function PatternsView({
         applyLoading={applyLoading}
         disabledApply={!hasDetections || loadingSug}
         designerTourExpandFirstPreviewNonce={designerTourSuggestionPreviewExpandNonce}
+        projectPatternsGuideChrome={guideChromeLayout}
       />
 
       <PatternsDesignerTour
         enabled={newDesignerTourEnabled}
-        onEnabledChange={setNewDesignerTourEnabled}
+        onEnabledChange={(enabled) => {
+          if (!enabled) {
+            void setGuidesEnabledAndPersist(false).catch(() =>
+              showToast("Could not save guide preference", "error"),
+            );
+          }
+        }}
         onRequestVersionsMenuOpen={openVersionsForTour}
         onRequestEditWorkspace={prepareEditWorkspaceForTour}
         onRequestExpandDetailAccordions={expandDetailAccordionsForTour}
@@ -657,6 +724,7 @@ export default function PatternsView({
         welcomeIntroOpen={designerWelcomeOpen}
         onDismissWelcomeIntro={dismissDesignerWelcome}
         onTourChapterClose={handleTourChapterClose}
+        projectPatternsStyling={useProjectPatterns}
       />
 
       {typeof document !== "undefined" &&
@@ -691,6 +759,11 @@ export default function PatternsView({
               refreshTrigger={versionsRefreshTrigger}
               projectId={projectId}
               designerTourForceOpenNonce={designerTourVersionsNonce}
+              projectPatternsPage={useProjectPatterns}
+              guidesActive={useProjectPatterns && newDesignerTourEnabled}
+              onVersionGraphApplied={() =>
+                setGraphVersion((v) => v + 1)
+              }
             />
 
             <button
@@ -742,6 +815,17 @@ export default function PatternsView({
                 Download Image
               </button>
 
+              {useProjectPatterns && (
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadArchitectureReport()}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                  title="Generate a PDF: anti-patterns, node roles, model summary, and square canvas diagram"
+                >
+                  Generate Report
+                </button>
+              )}
+
               {!onReturnToChat && (
                 <button
                   type="button"
@@ -763,6 +847,7 @@ export default function PatternsView({
               <Legend
                 versionCount={versionCount ?? undefined}
                 showNodeTypes={false}
+                projectPatternsGuidePip={useProjectPatterns}
               />
             </div>
           </div>
@@ -795,6 +880,7 @@ export default function PatternsView({
                 <Legend
                   versionCount={versionCount ?? undefined}
                   showNodeTypes={false}
+                  projectPatternsGuidePip={useProjectPatterns}
                 />
               </div>
             </div>
@@ -815,6 +901,13 @@ export default function PatternsView({
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
+              onExportReportDiagramReady={
+                useProjectPatterns
+                  ? (fn) => {
+                      exportReportDiagramRef.current = fn;
+                    }
+                  : undefined
+              }
               onExportGraphJsonReady={(getGraph) => {
                 exportGraphJsonRef.current = getGraph;
               }}
@@ -831,9 +924,15 @@ export default function PatternsView({
               }}
               newDesignerTourEnabled={newDesignerTourEnabled}
               guidesActive={newDesignerTourEnabled}
-              onGuidesToggle={togglePatternsGuides}
+              onGuidesToggle={() =>
+                void toggleGuides().catch(() =>
+                  showToast("Could not save guide preference", "error"),
+                )
+              }
               designerTourWorkspaceNonce={designerTourWorkspaceNonce}
               designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
+              projectPatternsGuideChrome={guideChromeLayout}
+              projectPatternsPage={useProjectPatterns}
             />
           </div>
         </div>
@@ -991,7 +1090,11 @@ export default function PatternsView({
                 <button
                   type="button"
                   onClick={() => setDesignerResetAckOpen(false)}
-                  className="w-full rounded-full bg-white py-2.5 text-sm font-medium text-black transition-all duration-150 hover:bg-white/80"
+                  className={
+                    useProjectPatterns
+                      ? "ml-auto block rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black transition-all duration-150 hover:bg-white/85"
+                      : "w-full rounded-full bg-white py-2.5 text-sm font-medium text-black transition-all duration-150 hover:bg-white/80"
+                  }
                 >
                   Got it
                 </button>
