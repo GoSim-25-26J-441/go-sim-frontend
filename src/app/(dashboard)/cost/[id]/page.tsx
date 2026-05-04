@@ -860,10 +860,10 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                     {viewMode === "by-region" ? (
                         <div>
-                                <p className="mb-3 text-xs font-medium text-white/70">Select region:</p>
+                            <p className="mb-3 text-xs font-medium text-white/70">Select region:</p>
                             <div className="flex flex-wrap items-center gap-3">
                                 <select
-                                    className="region-select w-full max-w-md rounded-lg border-0 bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                     value={selectedGenericRegionId}
                                     onChange={(e) => {
                                         const v = e.target.value;
@@ -872,12 +872,12 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     disabled={reloadingProviderCost}
                                 >
                                     {filteredGenericRegions.length === 0 && (
-                                        <option value="" disabled className="bg-white text-black">
+                                        <option value="" disabled className="bg-[#1a1a1a] text-white">
                                             Loading regions…
                                         </option>
                                     )}
                                     {filteredGenericRegions.map((r) => (
-                                        <option key={r.id} value={r.id} className="bg-white text-black">
+                                        <option key={r.id} value={r.id} className="bg-[#1a1a1a] text-white">
                                             {r.displayName}
                                         </option>
                                     ))}
@@ -903,9 +903,9 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             key={p}
                                             type="button"
                                             onClick={() => setSelectedProvider(p)}
-                                            className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${selectedProvider === p
-                                                ? "bg-white text-black shadow-sm"
-                                                : "border border-white/20 bg-white/10 text-white hover:bg-white/15"
+                                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${selectedProvider === p
+                                                ? "bg-white font-medium text-black shadow-sm"
+                                                : "bg-transparent text-white/60 hover:bg-white/10 hover:text-white"
                                                 }`}
                                         >
                                             {p.toUpperCase()}
@@ -951,7 +951,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             </span>
                                         ))}
                                         <select
-                                            className="region-select max-w-[220px] rounded-lg border-0 bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="region-select max-w-[220px] rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                             value=""
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -967,7 +967,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             {regions
                                                 .filter((r) => !selectedRegions.includes(r))
                                                 .map((r) => (
-                                                    <option key={r} value={r} className="bg-white text-black">
+                                                    <option key={r} value={r} className="bg-[#1a1a1a] text-white">
                                                         {getRegionDisplayName(r, selectedProvider)}
                                                     </option>
                                                 ))}
@@ -982,7 +982,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                 ) : (
                                     <div className="flex flex-wrap items-center gap-3">
                                         <select
-                                            className="region-select w-full max-w-md rounded-lg border-0 bg-white px-3 py-2 text-xs font-semibold text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-white/40 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="region-select w-full max-w-md rounded border border-white/20 bg-black/40 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50 scheme-dark"
                                             value={selectedRegions[0] ?? ""}
                                             onChange={(e) => {
                                                 const v = e.target.value;
@@ -994,7 +994,7 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             disabled={regions.length === 0 || reloadingProviderCost}
                                         >
                                             {regions.map((r) => (
-                                                <option key={r} value={r} className="bg-white text-black">
+                                                <option key={r} value={r} className="bg-[#1a1a1a] text-white">
                                                     {getRegionDisplayName(r, selectedProvider)}
                                                 </option>
                                             ))}
@@ -1019,23 +1019,23 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
 
                 {/* Region comparison table (when enabled and 2+ regions) */}
                 {viewMode === "by-provider" && compareRegionsEnabled && selectedRegions.length >= 2 && currentCosts.length > 0 && (
-                    <div className="mb-8 overflow-hidden rounded-lg bg-white/4">
-                        <h2 className="flex items-center gap-2 border-b border-white/40 px-4 py-3 text-sm font-semibold text-white">
-                            <GitCompare className="h-4 w-4 shrink-0 opacity-90" />
+                    <div className="bg-card border border-border rounded-lg p-6 mb-8">
+                        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <GitCompare className="w-5 h-5" />
                             Region comparison
                         </h2>
-                        <div className="overflow-x-auto px-2 pb-3 pt-1 sm:px-4 sm:pb-4">
+                        <div className="overflow-x-auto">
                             <table className="min-w-full border-collapse">
                                 <thead>
-                                    <tr className="border-b border-white/40">
-                                        <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-white/50">Plan</th>
+                                    <tr className="border-b border-border">
+                                        <th className="text-left py-3 px-4 text-xs font-medium opacity-80">Plan</th>
 
                                         {selectedRegions.map((r) => (
-                                            <th key={r} className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-white/50">
+                                            <th key={r} className="text-left py-3 px-4 text-xs font-medium opacity-80 whitespace-nowrap">
                                                 {getRegionDisplayName(r, selectedProvider)}
                                             </th>
                                         ))}
-                                        <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-white/50">Best</th>
+                                        <th className="text-left py-3 px-4 text-xs font-medium opacity-80">Best</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1053,29 +1053,29 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                             const validValues = monthlyValues.filter((v): v is number => v != null);
                                             const minMonthly = validValues.length > 0 ? Math.min(...validValues) : 0;
                                             return (
-                                                <tr key={planKey} className="border-b border-white/25 transition-colors last:border-b-0 hover:bg-white/6">
-                                                    <td className="px-3 py-2.5 text-xs font-medium text-white/90">{planLabel}</td>
+                                                <tr key={planKey} className="border-b border-border hover:bg-surface/50 transition-colors">
+                                                    <td className="py-3 px-4 text-xs font-medium">{planLabel}</td>
                                                     {selectedRegions.map((r) => {
                                                         const cost = byRegion.get(r);
                                                         const isMin = cost != null && validValues.length > 0 && cost.total_month === minMonthly;
                                                         return (
-                                                            <td key={r} className="align-top px-3 py-2.5 text-xs text-white/85">
+                                                            <td key={r} className="py-3 px-4 text-xs align-top">
                                                                 {cost != null ? (
                                                                     <div className="space-y-1">
                                                                         <span className={isMin ? "font-bold text-green-400" : ""}>
                                                                             {formatCurrency(cost.total_month)}
                                                                         </span>
-                                                                        <div className="text-[10px] text-white/50">
+                                                                        <div className="text-[10px] opacity-60">
                                                                             {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
                                                                         </div>
                                                                     </div>
                                                                 ) : (
-                                                                    <span className="text-white/40">—</span>
+                                                                    <span className="opacity-50">—</span>
                                                                 )}
                                                             </td>
                                                         );
                                                     })}
-                                                    <td className="px-3 py-2.5 text-xs font-medium text-green-400">
+                                                    <td className="py-3 px-4 text-xs text-green-400 font-medium">
                                                         {validValues.length > 0 ? formatCurrency(minMonthly) : "—"}
                                                     </td>
                                                 </tr>
@@ -1084,6 +1084,94 @@ export function CostRunDetail({ requestId, projectId }: CostRunDetailProps) {
                                     })()}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                )}
+
+                {viewMode === "by-region" && genericRegion && (
+                    <div className="mb-8">
+                        <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
+                            <MapPin className="w-6 h-6" />
+                            Pricing by region — {genericRegion.displayName}
+                        </h2>
+                        <p className="text-xs opacity-60 mb-6">Costs for both AWS and Azure in this region</p>
+                        <div className="grid md:grid-cols-2 gap-8">
+                            <div className="bg-card border border-border rounded-lg p-6">
+                                <h3 className="text-lg font-semibold mb-4">AWS — {getRegionDisplayName(genericRegion.aws, "aws")}</h3>
+                                {costsByRegionAWS.length === 0 ? (
+                                    <div className="text-center py-8 opacity-60">
+                                        <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                                        <p>No instances found for AWS in this region</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {costsByRegionAWS.map((cost, index) => {
+                                            const isBest = bestAWS && cost.total_month === bestAWS.total_month;
+                                            const isMinimal = minimalAWS && cost.total_month === minimalAWS.total_month;
+                                            return (
+                                                <div key={`aws-${index}`} className="border border-border rounded-lg p-4">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
+                                                        <span className={`text-xs font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                            {cost.within_budget ? "Within Budget" : "Over Budget"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs opacity-70 mb-2">
+                                                        {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-base font-bold">
+                                                        <span>Monthly</span>
+                                                        <span>{formatCurrency(cost.total_month)}</span>
+                                                    </div>
+                                                    {(isBest || isMinimal) && (
+                                                        <span className="text-[10px] font-bold text-blue-400 mt-2 inline-block">
+                                                            {isMinimal ? "MINIMAL COST" : "BEST IN BUDGET"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-6">
+                                <h3 className="text-lg font-semibold mb-4">Azure — {getRegionDisplayName(genericRegion.azure, "azure")}</h3>
+                                {costsByRegionAzure.length === 0 ? (
+                                    <div className="text-center py-8 opacity-60">
+                                        <Server className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                                        <p>No instances found for Azure in this region</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {costsByRegionAzure.map((cost, index) => {
+                                            const isBest = bestAzure && cost.total_month === bestAzure.total_month;
+                                            const isMinimal = minimalAzure && cost.total_month === minimalAzure.total_month;
+                                            return (
+                                                <div key={`azure-${index}`} className="border border-border rounded-lg p-4">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <span className="font-medium">{cost.purchase_type} {cost.lease_contract_length && `(${cost.lease_contract_length})`}</span>
+                                                        <span className={`text-xs font-bold ${cost.within_budget ? "text-green-400" : "text-red-400"}`}>
+                                                            {cost.within_budget ? "Within Budget" : "Over Budget"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs opacity-70 mb-2">
+                                                        {cost.instance_type} • {cost.vcpus} vCPUs • {cost.memory_gb} GB RAM
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-base font-bold">
+                                                        <span>Monthly</span>
+                                                        <span>{formatCurrency(cost.total_month)}</span>
+                                                    </div>
+                                                    {(isBest || isMinimal) && (
+                                                        <span className="text-[10px] font-bold text-blue-400 mt-2 inline-block">
+                                                            {isMinimal ? "MINIMAL COST" : "BEST IN BUDGET"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}
