@@ -774,9 +774,22 @@ function GraphCanvasInner({
     containerRef,
   });
 
+  const analysisGraphIdentity = useMemo(() => {
+    const ids = Object.keys(analysis?.graph?.nodes ?? {}).sort().join("\0");
+    const v = analysis?.version_id ?? "";
+    const d = Array.isArray(analysis?.detections)
+      ? analysis.detections.length
+      : 0;
+    return `${v}\0${ids}\0${d}`;
+  }, [
+    analysis?.version_id,
+    analysis?.graph?.nodes,
+    analysis?.detections,
+  ]);
+
   useEffect(() => {
     setLocalAdditions([]);
-  }, [data]);
+  }, [analysisGraphIdentity]);
 
   useCyInteractions({
     cy,
@@ -1666,6 +1679,7 @@ function GraphCanvasInner({
           />
           <div className="absolute inset-0 z-[1] min-h-0 min-w-0">
           <CytoscapeComponent
+            key={`amg-cy-${analysis?.version_id ?? "none"}-${phaseKey}`}
             cy={(c) => {
               if (mountedCyRef.current === c) return;
               mountedCyRef.current = c;

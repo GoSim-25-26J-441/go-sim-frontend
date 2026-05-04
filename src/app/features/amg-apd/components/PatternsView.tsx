@@ -158,7 +158,8 @@ export default function PatternsView({
     (() => string | null | Promise<string | null>) | null
   >(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
-  const restoreStartedRef = useRef(false);
+  /** After we load latest version from API for this workspace; avoids skipping fetch due to stale persisted `last`. */
+  const serverHydratedKeyRef = useRef<string | null>(null);
 
   const hasDetections = (last?.detections?.length ?? 0) > 0;
 
@@ -185,6 +186,7 @@ export default function PatternsView({
     yamlContent: string,
     title?: string,
     nodeLayout?: NodeLayoutPayload,
+    opts?: { mergePreviousDiagram?: boolean },
   ): Promise<AnalysisResult> {
     let versionTitle = title;
     if (versionTitle == null || versionTitle.trim() === "") {
@@ -219,6 +221,9 @@ export default function PatternsView({
     if (nodeLayout && Object.keys(nodeLayout).length > 0) {
       fd.append("node_layout", JSON.stringify(nodeLayout));
     }
+    if (opts?.mergePreviousDiagram === false) {
+      fd.append("merge_previous_diagram", "false");
+    }
 
     const res = await fetch("/api/amg-apd/analyze-upload", {
       method: "POST",
@@ -250,9 +255,15 @@ export default function PatternsView({
     }
   }
 
+  const patternsWorkspaceKey = projectId?.trim() || "__dashboard__";
+
   useEffect(() => {
-    if (last?.graph || restoreStartedRef.current) return;
-    restoreStartedRef.current = true;
+    serverHydratedKeyRef.current = null;
+  }, [patternsWorkspaceKey, userId]);
+
+  useEffect(() => {
+    if (serverHydratedKeyRef.current === patternsWorkspaceKey) return;
+
     setRegenerating(true);
     let cancelled = false;
 
@@ -265,9 +276,11 @@ export default function PatternsView({
 
         const listData = await listRes.json();
         const versionsList = listData?.versions ?? [];
-        if (versionsList.length === 0 || cancelled) return;
+        if (versionsList.length === 0) {
+          if (!cancelled) serverHydratedKeyRef.current = patternsWorkspaceKey;
+          return;
+        }
 
-        
         const sorted = [...versionsList].sort(
           (a: { version_number?: number }, b: { version_number?: number }) =>
             (b.version_number ?? 0) - (a.version_number ?? 0),
@@ -282,7 +295,7 @@ export default function PatternsView({
         const v = await versionRes.json();
         const graph = v?.graph;
         const yamlContent = v?.yaml_content;
-        if (!graph || !yamlContent || cancelled) return;
+        if (!graph || cancelled) return;
 
         const data: AnalysisResult = {
           graph,
@@ -295,10 +308,14 @@ export default function PatternsView({
 
         if (cancelled) return;
         setLast(data);
-        setEditedYaml(yamlContent);
+        setEditedYaml(
+          typeof yamlContent === "string" ? yamlContent : "",
+        );
         commitGraphBaseline();
+        serverHydratedKeyRef.current = patternsWorkspaceKey;
+        setGraphVersion((v) => v + 1);
       } catch {
-        // Leave graph empty
+        // Leave graph empty; allow retry on remount / workspace change
       } finally {
         if (!cancelled) setRegenerating(false);
       }
@@ -306,12 +323,11 @@ export default function PatternsView({
 
     return () => {
       cancelled = true;
-      restoreStartedRef.current = false;
       setRegenerating(false);
     };
   }, [
-    last?.graph,
-    projectId,
+    patternsWorkspaceKey,
+    userId,
     setLast,
     setEditedYaml,
     setRegenerating,
@@ -320,7 +336,7 @@ export default function PatternsView({
 
   /** Baseline is not persisted; seed it when session storage rehydrates `last` + YAML. */
   useEffect(() => {
-    if (!last?.graph || editedYaml == null || editedYaml === "") return;
+    if (!last?.graph || editedYaml === undefined) return;
     const st = useAmgApdStore.getState();
     if (!st.baselineLast?.graph) st.commitGraphBaseline();
   }, [last?.graph, last?.version_id, editedYaml]);
@@ -565,6 +581,7 @@ export default function PatternsView({
           fixedYaml,
           undefined,
           nodeLayout,
+          { mergePreviousDiagram: false },
         );
         setLast(saved);
         commitGraphBaseline();
@@ -755,6 +772,9 @@ export default function PatternsView({
                         "Opening version compare…",
                       )
                   : undefined
+              }
+              onVersionGraphApplied={() =>
+                setGraphVersion((v) => v + 1)
               }
             />
 

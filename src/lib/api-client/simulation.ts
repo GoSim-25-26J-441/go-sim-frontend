@@ -205,17 +205,35 @@ export interface PatchRunConfigurationPolicies {
   };
 }
 
+/** Manual PATCH admission: default strict if omitted (simulation-core). */
+export type PatchPlacementStrategy = "strict" | "expand_capacity_if_needed";
+
 /** At least one of services, workload, or policies must be sent. */
 export interface PatchRunConfigurationBody {
+  placement_strategy?: PatchPlacementStrategy;
   /** Per-service vertical scale; cpu_cores / memory_mb: 0 = leave unchanged (engine contract). */
   services?: PatchRunConfigurationService[];
   workload?: PatchRunConfigurationWorkloadItem[];
   policies?: PatchRunConfigurationPolicies;
 }
 
+/** Successful PATCH body; optional fields depend on simulation-core version. */
 export interface PatchRunConfigurationResponse {
   message: string;
   run_id: string;
+  placement_strategy?: PatchPlacementStrategy;
+  capacity_expanded?: boolean;
+  /** simulation-core shape */
+  host_capacity_changes?: Array<{
+    host_id: string;
+    cpu_cores_before?: number;
+    cpu_cores_after?: number;
+    memory_gb_before?: number;
+    memory_gb_after?: number;
+  }>;
+  /** Alternate naming if backend adopts it */
+  changed_hosts?: unknown[];
+  added_hosts?: unknown[];
 }
 
 export interface PatchRunWorkloadBody {
