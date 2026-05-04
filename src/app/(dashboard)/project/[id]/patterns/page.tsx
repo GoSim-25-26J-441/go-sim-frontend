@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -28,6 +28,7 @@ export default function ProjectPatternsPage({
 }) {
   const { id: projectId } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { returnToChat, returning } = useReturnToChatFromPatterns(projectId);
   const patternsGraphFullscreen = useAmgApdStore(
     (s) => s.patternsGraphFullscreen,
@@ -41,36 +42,55 @@ export default function ProjectPatternsPage({
     useState("");
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
+  const [activeDiagramVersionId, setActiveDiagramVersionId] = useState("");
   /** Centered loading card during compare / chat / simulation navigation */
   const [pageTransitionLabel, setPageTransitionLabel] = useState<string | null>(
     null,
   );
+  const diagramVersionFromQuery = searchParams.get("diagramVersion")?.trim() || "";
+  const effectiveDiagramVersionId =
+    activeDiagramVersionId || diagramVersionFromQuery;
+  const selectedDiagramVersion = useMemo(() => {
+    if (effectiveDiagramVersionId) {
+      return versions.find((v) => v.id === effectiveDiagramVersionId) ?? null;
+    }
+    if (!versions.length) return null;
+    return versions.reduce((latest, current) =>
+      current.version_number > latest.version_number ? current : latest,
+    );
+  }, [effectiveDiagramVersionId, versions]);
+  const diagramVersionId =
+    selectedDiagramVersion?.id ?? effectiveDiagramVersionId;
+  const diagramTitle = selectedDiagramVersion?.title?.trim() || "Unknown";
+
+  const fetchVersions = useCallback(async () => {
+    if (!projectId?.trim()) return;
+    setLoadingVersions(true);
+    try {
+      const res = await fetch("/api/amg-apd/versions", {
+        headers: getAmgApdHeaders({
+          userId: userId ?? undefined,
+          chatId: projectId,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setVersions(data?.versions ?? []);
+    } catch {
+      setVersions([]);
+    } finally {
+      setLoadingVersions(false);
+    }
+  }, [projectId, userId]);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!projectId?.trim()) return;
-    (async () => {
-      setLoadingVersions(true);
-      try {
-        const res = await fetch("/api/amg-apd/versions", {
-          headers: getAmgApdHeaders({
-            userId: userId ?? undefined,
-            chatId: projectId,
-          }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (!cancelled) setVersions(data?.versions ?? []);
-      } catch {
-        if (!cancelled) setVersions([]);
-      } finally {
-        if (!cancelled) setLoadingVersions(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, userId]);
+    void fetchVersions();
+  }, [fetchVersions]);
+
+  useEffect(() => {
+    if (!diagramVersionFromQuery) return;
+    setActiveDiagramVersionId(diagramVersionFromQuery);
+  }, [diagramVersionFromQuery]);
 
   const openSimulationModal = useCallback(() => {
     setSimulationModalOpen(true);
@@ -133,6 +153,18 @@ export default function ProjectPatternsPage({
                 style={{ color: "rgba(255,255,255,0.35)" }}
               >
                 Project · <span className="font-mono">{projectId}</span>
+                {(diagramVersionId || loadingVersions) && (
+                  <>
+                    {" · "}Diagram ID ·{" "}
+                    <span className="font-mono">
+                      {diagramVersionId || "Loading..."}
+                    </span>
+                    {" · "}Diagram Name ·{" "}
+                    {loadingVersions && !diagramVersionId
+                      ? "Loading..."
+                      : diagramTitle}
+                  </>
+                )}
               </span>
             </div>
           </div>
@@ -359,6 +391,12 @@ export default function ProjectPatternsPage({
           onRequestOpenSimulationModal={openSimulationModal}
           onCloseSimulationModal={closeSimulationModal}
           onPageTransitionStart={(label) => setPageTransitionLabel(label)}
+          onActiveVersionChange={(versionId) =>
+            setActiveDiagramVersionId(versionId?.trim() || "")
+          }
+          onVersionsListShouldRefresh={() => {
+            void fetchVersions();
+          }}
         />
       </div>
     </div>
