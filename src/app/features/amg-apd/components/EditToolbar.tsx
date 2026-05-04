@@ -135,6 +135,8 @@ type Props = {
   draggingAntiPatternKind?: DetectionKind | null;
   /** Project patterns + guides: anti-pattern toolbox rows use white primary chrome */
   projectPatternsGuideAntiChrome?: boolean;
+  /** Scroll list scrollbar class (project patterns uses gray workspace scrollbar). */
+  scrollbarClassName?: string;
 };
 
 export default function EditToolbar({
@@ -150,6 +152,7 @@ export default function EditToolbar({
   onToolDragEnd,
   draggingAntiPatternKind = null,
   projectPatternsGuideAntiChrome = false,
+  scrollbarClassName = "scrollbar-toolbox",
 }: Props) {
   void _defaultCallProtocol;
   void _defaultCallSync;
@@ -265,8 +268,8 @@ export default function EditToolbar({
 
   const scrollOuterClass =
     variant === "sidebar"
-      ? "flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable]"
-      : `flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable] ${scrollListMaxTwoThirds}`;
+      ? `flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 ${scrollbarClassName} pr-2 [scrollbar-gutter:stable]`
+      : `flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 ${scrollbarClassName} pr-2 [scrollbar-gutter:stable] ${scrollListMaxTwoThirds}`;
 
   const scrollArea = (
     <div
