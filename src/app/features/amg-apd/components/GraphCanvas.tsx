@@ -4,6 +4,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -85,7 +86,9 @@ import {
 } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
-import { padDataUrlToSquareWhite } from "@/app/features/amg-apd/utils/architectureReportMedia";
+import {
+  padDataUrlToSquareWhite,
+} from "@/app/features/amg-apd/utils/architectureReportMedia";
 import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
 import { ANTI_PATTERN_TOUR_HELP } from "@/app/features/amg-apd/components/patternsDesignerTour/antiPatternTourCopy";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
@@ -380,6 +383,13 @@ type GraphCanvasProps = {
   projectPatternsGuideChrome?: boolean;
   /** Set when PatternsView is scoped to a project (not dashboard-only patterns) */
   projectPatternsPage?: boolean;
+  /** Project patterns: PNG download is viewport canvas only, square-padded (no legend/header strip). */
+  projectPatternsImageExportCanvasOnly?: boolean;
+  /**
+   * Main project Patterns designer (`/project/.../patterns` via PatternsView) only — not compare.
+   * Solid regeneration overlay + hide graph until Cytoscape styles/layout settle (avoids huge default arrows).
+   */
+  patternsDesignerLoadingPolish?: boolean;
 };
 
 function GraphCanvasInner({
@@ -402,6 +412,8 @@ function GraphCanvasInner({
   designerTourExpandDetailsNonce = 0,
   projectPatternsGuideChrome = false,
   projectPatternsPage = false,
+  projectPatternsImageExportCanvasOnly = false,
+  patternsDesignerLoadingPolish = false,
 }: GraphCanvasProps & { data: AnalysisResult }) {
   const analysis = data;
   /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
@@ -456,6 +468,11 @@ function GraphCanvasInner({
   const [zoomFieldEditing, setZoomFieldEditing] = useState(false);
   const zoomEditingRef = useRef(false);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
+
+  /** Patterns designer (main page only): hide Cytoscape until reciprocal lanes + edge styles are applied. */
+  const [patternsGraphLayerReady, setPatternsGraphLayerReady] = useState(
+    () => !patternsDesignerLoadingPolish,
+  );
 
   const [stats, setStats] = useState<GraphStats>(() =>
     computeStatsFromData(analysis),
@@ -630,10 +647,22 @@ function GraphCanvasInner({
         cy.style().update();
         cy.resize();
       } catch {}
+
+      if (patternsDesignerLoadingPolish) {
+        setPatternsGraphLayerReady(
+          !isGenerating && !showRegeneratingOverlay,
+        );
+      }
     });
 
     return () => cancelAnimationFrame(id);
-  }, [cy, elements]);
+  }, [
+    cy,
+    elements,
+    patternsDesignerLoadingPolish,
+    isGenerating,
+    showRegeneratingOverlay,
+  ]);
 
   const phaseKey = useMemo(() => {
     const n = Object.keys(analysis.graph?.nodes ?? {}).length;
@@ -781,6 +810,15 @@ function GraphCanvasInner({
     analysis?.graph?.nodes,
     analysis?.detections,
   ]);
+
+  useEffect(() => {
+    if (!patternsDesignerLoadingPolish) setPatternsGraphLayerReady(true);
+  }, [patternsDesignerLoadingPolish]);
+
+  useLayoutEffect(() => {
+    if (!patternsDesignerLoadingPolish) return;
+    setPatternsGraphLayerReady(false);
+  }, [patternsDesignerLoadingPolish, analysisGraphIdentity]);
 
   useEffect(() => {
     setLocalAdditions([]);
@@ -950,6 +988,21 @@ function GraphCanvasInner({
       const detections = analysis.detections;
 
       return (async (): Promise<string | null> => {
+        if (projectPatternsImageExportCanvasOnly) {
+          try {
+            c.resize();
+            const uri = c.png({
+              bg: "#ffffff",
+              full: false,
+              scale: 2,
+            } as any);
+            const squared = await padDataUrlToSquareWhite(uri);
+            return squared ?? uri;
+          } catch {
+            return null;
+          }
+        }
+
         let graphCanvas: HTMLCanvasElement | null = null;
 
         if (wrap) {
@@ -995,7 +1048,12 @@ function GraphCanvasInner({
         }
       })();
     });
-  }, [cy, onExportImageReady, analysis]);
+  }, [
+    cy,
+    onExportImageReady,
+    analysis,
+    projectPatternsImageExportCanvasOnly,
+  ]);
 
   useEffect(() => {
     if (!projectPatternsPage || !onExportReportDiagramReady || !cyAlive(cy))
@@ -1502,7 +1560,7 @@ function GraphCanvasInner({
       <div
         className={`flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden ${layoutMode === "fullscreen" ? "items-stretch" : "items-start"}`}
       >
-        {showRegeneratingOverlay && (
+        {showRegeneratingOverlay && !patternsDesignerLoadingPolish && (
           <div
             className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/35 backdrop-blur-[2px]"
             aria-busy
@@ -1652,7 +1710,42 @@ function GraphCanvasInner({
             aria-hidden
             style={DIAGRAM_CANVAS_GRID_STYLE}
           />
-          <div className="absolute inset-0 z-[1] min-h-0 min-w-0">
+          {patternsDesignerLoadingPolish && showRegeneratingOverlay && (
+            <div
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 border border-slate-800/80 bg-zinc-900/96 backdrop-blur-sm"
+              aria-busy
+              aria-live="polite"
+            >
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-200" />
+              <span className="text-sm font-medium text-zinc-200">
+                Regenerating graph…
+              </span>
+              <span className="text-xs text-zinc-500 px-4 text-center max-w-sm">
+                Loading YAML, building graph, and detecting anti-patterns
+              </span>
+            </div>
+          )}
+          {patternsDesignerLoadingPolish &&
+            !patternsGraphLayerReady &&
+            !showRegeneratingOverlay && (
+              <div
+                className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 border border-slate-800/80 bg-zinc-900/96 backdrop-blur-sm"
+                aria-busy
+                aria-live="polite"
+              >
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-200" />
+                <span className="text-xs font-medium text-zinc-400">
+                  Rendering graph…
+                </span>
+              </div>
+            )}
+          <div
+            className={`absolute inset-0 z-[1] min-h-0 min-w-0 ${
+              patternsDesignerLoadingPolish && !patternsGraphLayerReady
+                ? "opacity-0 pointer-events-none"
+                : ""
+            }`}
+          >
           <CytoscapeComponent
             key={`amg-cy-${analysis?.version_id ?? "none"}-${phaseKey}`}
             cy={(c) => {

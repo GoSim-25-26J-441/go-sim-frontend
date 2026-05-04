@@ -117,6 +117,7 @@ export default function ControlPanel({
           </button>
           {patternsPageZoom && (
             <div
+              data-amg-designer={AMG_DESIGNER.layoutZoom}
               className="inline-flex items-stretch overflow-hidden rounded-md border border-white/15 bg-[#1F1F1F] text-white shrink-0"
               title="Zoom (10% per step; scroll the canvas also steps by 10%)"
             >

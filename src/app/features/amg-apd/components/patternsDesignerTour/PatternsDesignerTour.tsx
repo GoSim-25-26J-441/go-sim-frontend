@@ -147,17 +147,6 @@ function qs(anchor: AmgDesignerAnchor): string {
 
 const EDIT_TOOLBOX_CHAPTER_ID = "editToolbox";
 
-function scrollDesignerToolboxAntiIntoView() {
-  const el = document.querySelector(qs(AMG_DESIGNER.editToolboxAntiPatterns));
-  if (el instanceof HTMLElement) {
-    el.scrollIntoView({
-      behavior: "smooth",
-      block: "nearest",
-      inline: "nearest",
-    });
-  }
-}
-
 function scrollDesignerToolboxListToTop() {
   const root = document.querySelector("[data-amg-designer-toolbox-scroll]");
   if (root instanceof HTMLElement) {
@@ -173,6 +162,33 @@ function getRectFromSelector(selector: string): DOMRect | null {
   const el = document.querySelector(selector);
   if (!el || !(el instanceof HTMLElement)) return null;
   return el.getBoundingClientRect();
+}
+
+function unionDomRects(rects: (DOMRect | null)[]): DOMRect | null {
+  const valid = rects.filter(
+    (r): r is DOMRect => !!r && r.width > 0 && r.height > 0,
+  );
+  if (!valid.length) return null;
+  let minL = valid[0].left;
+  let minT = valid[0].top;
+  let maxR = valid[0].right;
+  let maxB = valid[0].bottom;
+  for (let i = 1; i < valid.length; i++) {
+    const r = valid[i];
+    minL = Math.min(minL, r.left);
+    minT = Math.min(minT, r.top);
+    maxR = Math.max(maxR, r.right);
+    maxB = Math.max(maxB, r.bottom);
+  }
+  return new DOMRect(minL, minT, maxR - minL, maxB - minT);
+}
+
+function spotlightRectForStep(step: DesignerTourStep): DOMRect | null {
+  const primary = getRectFromSelector(stepSelector(step));
+  const extras = (step.spotlightExtraAnchors ?? []).map((a) =>
+    getRectFromSelector(qs(a)),
+  );
+  return unionDomRects([primary, ...extras]);
 }
 
 function getVisibleGuidesControlRect(): DOMRect | null {
@@ -574,6 +590,14 @@ function buildSuggestionTourSteps(
   ];
 }
 
+function dispatchToolboxTour(
+  detail:
+    | { action: "reset" }
+    | { action: "step"; step: "search" | "nodes" | "anti" },
+) {
+  window.dispatchEvent(new CustomEvent("amg-apd-edit-toolbox-tour", { detail }));
+}
+
 function buildSteps(args: {
   onOpenVersionsMenu: () => void;
   onPrepareEditWorkspace: () => void;
@@ -582,6 +606,9 @@ function buildSteps(args: {
   onRunSuggestionsForTour?: () => Promise<void>;
   onExpandSuggestionFirstPreview?: () => void;
   onRequestOpenSimulationModal?: () => void;
+  onCloseSimulationModal?: () => void;
+  /** Project patterns page: ControlPanel exposes stepped zoom (layoutZoom anchor). */
+  includePatternsLayoutZoom?: boolean;
 }): Record<string, DesignerTourStep[]> {
   const {
     onOpenVersionsMenu,
@@ -591,14 +618,20 @@ function buildSteps(args: {
     onRunSuggestionsForTour,
     onExpandSuggestionFirstPreview,
     onRequestOpenSimulationModal,
+    onCloseSimulationModal,
+    includePatternsLayoutZoom = false,
   } = args;
 
   const simModalSel = qs(AMG_DESIGNER.simulationModal);
 
   const ensureVersionsPortalOpen = async () => {
-    onOpenVersionsMenu();
-    await waitForSelector("#versions-dropdown-portal", 4000);
-    await new Promise((r) => window.setTimeout(r, 120));
+    if (!document.getElementById("versions-dropdown-portal")) {
+      onOpenVersionsMenu();
+      await waitForSelector("#versions-dropdown-portal", 4000);
+      await new Promise((r) => window.setTimeout(r, 120));
+    } else {
+      await new Promise((r) => window.setTimeout(r, 40));
+    }
   };
 
   const scrollToDesignerAnchor = async (anchor: AmgDesignerAnchor) => {
@@ -666,7 +699,28 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.toolbarDownloads,
         title: "Exports & downloads",
-        body: "Download YAML saves the live architecture text from the editor. Download JSON bundles the graph plus detections and version metadata. Download Image exports the diagram as PNG.",
+        body: (
+          <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
+            <ul className="list-disc space-y-1.5 pl-4 marker:text-white/40">
+              <li>
+                <strong className="text-white/90">Download YAML</strong> — live
+                architecture text from the editor.
+              </li>
+              <li>
+                <strong className="text-white/90">Download JSON</strong> — graph,
+                detections, and version metadata.
+              </li>
+              <li>
+                <strong className="text-white/90">Download Image</strong> — PNG of
+                the graph canvas (square frame).
+              </li>
+              <li>
+                <strong className="text-white/90">Generate Report</strong> — PDF
+                overview (anti-patterns, node roles, summary, diagram).
+              </li>
+            </ul>
+          </div>
+        ),
       },
     ],
     returnToChat: [
@@ -733,13 +787,69 @@ function buildSteps(args: {
           </div>
         ),
       },
+      {
+        anchor: AMG_DESIGNER.returnToChat,
+        title: "Return to project chat",
+        beforeEnter: async () => {
+          onCloseSimulationModal?.();
+          await new Promise((r) => window.setTimeout(r, 200));
+        },
+        body: (
+          <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
+            <p>
+              <strong className="text-white/90">Chat</strong> opens the project
+              conversation with the current diagram version attached so you can
+              keep iterating with full context.
+            </p>
+          </div>
+        ),
+      },
     ],
     layout: [
       {
         anchor: AMG_DESIGNER.layout,
         title: "Layout algorithms",
-        body: "Choose how nodes are arranged: layered (Dagre / ELK), or force-directed (Cose-Bilkent / Cola). Fit to Screen recenters the diagram. Changing layout does not edit the model; it only changes the view.",
+        body: (
+          <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
+            <ul className="list-disc space-y-1.5 pl-4 marker:text-white/40">
+              <li>
+                <strong className="text-white/90">Layout menu</strong> — Dagre /
+                ELK (layered) or Cose-Bilkent / Cola (force-directed); view only,
+                does not change the model.
+              </li>
+              <li>
+                <strong className="text-white/90">Fit to Screen</strong> —
+                recenters the diagram in the viewport.
+              </li>
+            </ul>
+          </div>
+        ),
       },
+      ...(includePatternsLayoutZoom
+        ? ([
+            {
+              anchor: AMG_DESIGNER.layoutZoom,
+              title: "Zoom",
+              beforeEnter: async () => {
+                await scrollToDesignerAnchor(AMG_DESIGNER.layout);
+              },
+              body: (
+                <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
+                  <ul className="list-disc space-y-1.5 pl-4 marker:text-white/40">
+                    <li>
+                      <strong className="text-white/90">− / +</strong> — step
+                      zoom by 10%; the label shows the current level.
+                    </li>
+                    <li>
+                      <strong className="text-white/90">Scroll wheel</strong> on
+                      the canvas uses the same step size.
+                    </li>
+                  </ul>
+                </div>
+              ),
+            },
+          ] satisfies DesignerTourStep[])
+        : []),
       {
         anchor: AMG_DESIGNER.stats,
         title: "Live counts",
@@ -777,8 +887,11 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.editToolboxSearch,
         title: "Search tools",
-        beforeEnter: () => {
+        beforeEnter: async () => {
           onPrepareEditWorkspace();
+          await new Promise((r) => window.setTimeout(r, 80));
+          dispatchToolboxTour({ action: "step", step: "search" });
+          await new Promise((r) => window.setTimeout(r, 220));
         },
         body: (
           <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
@@ -797,6 +910,12 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.editToolboxNodes,
         title: "Nodes",
+        beforeEnter: async () => {
+          onPrepareEditWorkspace();
+          await new Promise((r) => window.setTimeout(r, 60));
+          dispatchToolboxTour({ action: "step", step: "nodes" });
+          await new Promise((r) => window.setTimeout(r, 220));
+        },
         body: (
           <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
             <p>
@@ -815,6 +934,12 @@ function buildSteps(args: {
       {
         anchor: AMG_DESIGNER.editToolboxAntiPatterns,
         title: "Anti-patterns",
+        beforeEnter: async () => {
+          onPrepareEditWorkspace();
+          await new Promise((r) => window.setTimeout(r, 60));
+          dispatchToolboxTour({ action: "step", step: "anti" });
+          await new Promise((r) => window.setTimeout(r, 260));
+        },
         body: (
           <div className="space-y-2 text-[12px] leading-relaxed text-white/70">
             <p>
@@ -848,6 +973,12 @@ function buildSteps(args: {
               layout picker in the control strip to re-run Dagre, ELK,
               Cose-Bilkent, or Cola without changing the underlying model.
             </p>
+            <ul className="list-disc space-y-1 pl-4 text-[11px] text-white/55 marker:text-white/35">
+              <li>
+                <strong className="text-white/75">Reset</strong> discards unsaved
+                canvas edits and restores the last saved graph snapshot.
+              </li>
+            </ul>
             <p className="text-[11px] text-white/50">
               The next step explains borders, detection orbs, and how call edges
               encode protocols. After that, the tour covers hover tips,
@@ -1020,6 +1151,7 @@ function buildSteps(args: {
       },
       {
         anchor: AMG_DESIGNER.generate,
+        spotlightExtraAnchors: [AMG_DESIGNER.reset],
         title: "Save your edits",
         beforeEnter: () => {
           onPrepareEditWorkspace();
@@ -1061,6 +1193,8 @@ type PatternsDesignerTourProps = {
   onRequestExpandSuggestionFirstPreview?: () => void;
   /** Open the performance simulation confirmation modal (tour). */
   onRequestOpenSimulationModal?: () => void;
+  /** Close simulation modal (e.g. before highlighting Chat in the simulator tour). */
+  onCloseSimulationModal?: () => void;
   /** When false, the Return to chat sparkle chapter is omitted (button not shown). */
   hasReturnToChatTour?: boolean;
   welcomeIntroOpen?: boolean;
@@ -1080,6 +1214,7 @@ export default function PatternsDesignerTour({
   onRunSuggestionsForTour,
   onRequestExpandSuggestionFirstPreview,
   onRequestOpenSimulationModal,
+  onCloseSimulationModal,
   hasReturnToChatTour = false,
   welcomeIntroOpen = false,
   onDismissWelcomeIntro,
@@ -1116,8 +1251,11 @@ export default function PatternsDesignerTour({
     if (!hasReturnToChatTour) {
       list = list.filter((c) => c.id !== "returnToChat");
     }
+    if (projectPatternsStyling) {
+      list = list.filter((c) => c.id !== "returnToChat");
+    }
     return list;
-  }, [hasSuggestionsTour, hasReturnToChatTour]);
+  }, [hasSuggestionsTour, hasReturnToChatTour, projectPatternsStyling]);
 
   useLayoutEffect(() => {
     if (!enabled || !welcomeIntroOpen || !projectPatternsStyling || chapterId) {
@@ -1181,6 +1319,8 @@ export default function PatternsDesignerTour({
         onRunSuggestionsForTour,
         onExpandSuggestionFirstPreview: onRequestExpandSuggestionFirstPreview,
         onRequestOpenSimulationModal,
+        onCloseSimulationModal,
+        includePatternsLayoutZoom: projectPatternsStyling,
       }),
     [
       onRequestVersionsMenuOpen,
@@ -1190,6 +1330,8 @@ export default function PatternsDesignerTour({
       onRunSuggestionsForTour,
       onRequestExpandSuggestionFirstPreview,
       onRequestOpenSimulationModal,
+      onCloseSimulationModal,
+      projectPatternsStyling,
     ],
   );
 
@@ -1205,11 +1347,17 @@ export default function PatternsDesignerTour({
   const isLegendReadingIntro = chapterId === "legend" && stepIndex === 0;
 
   const closeChapter = useCallback(() => {
+    setChapterId((prevChapter) => {
+      if (prevChapter === EDIT_TOOLBOX_CHAPTER_ID && projectPatternsStyling) {
+        scrollDesignerToolboxListToTop();
+        dispatchToolboxTour({ action: "reset" });
+      }
+      return null;
+    });
     onTourChapterClose?.();
-    setChapterId(null);
     setStepIndex(0);
     setSpotRect(null);
-  }, [onTourChapterClose]);
+  }, [onTourChapterClose, projectPatternsStyling]);
 
   const prevToolboxChapterScrollRef = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -1221,36 +1369,9 @@ export default function PatternsDesignerTour({
     prevToolboxChapterScrollRef.current = chapterId;
     if (prev === EDIT_TOOLBOX_CHAPTER_ID && chapterId === null) {
       scrollDesignerToolboxListToTop();
+      dispatchToolboxTour({ action: "reset" });
     }
   }, [chapterId, projectPatternsStyling]);
-
-  const prevEditToolboxStepRef = useRef<number>(-1);
-  useLayoutEffect(() => {
-    if (!projectPatternsStyling || chapterId !== EDIT_TOOLBOX_CHAPTER_ID) {
-      if (chapterId !== EDIT_TOOLBOX_CHAPTER_ID) {
-        prevEditToolboxStepRef.current = -1;
-      }
-      return;
-    }
-    if (prevEditToolboxStepRef.current === -1) {
-      prevEditToolboxStepRef.current = stepIndex;
-      return;
-    }
-    const prev = prevEditToolboxStepRef.current;
-    if (prev === 0 && stepIndex > 0) {
-      scrollDesignerToolboxListToTop();
-    }
-    prevEditToolboxStepRef.current = stepIndex;
-  }, [chapterId, stepIndex, projectPatternsStyling]);
-
-  useLayoutEffect(() => {
-    if (!enabled || !projectPatternsStyling) return;
-    if (chapterId !== EDIT_TOOLBOX_CHAPTER_ID || stepIndex !== 0) return;
-    const t = window.setTimeout(() => {
-      scrollDesignerToolboxAntiIntoView();
-    }, 220);
-    return () => window.clearTimeout(t);
-  }, [enabled, projectPatternsStyling, chapterId, stepIndex]);
 
   /** When guides are off, parent may pass new function refs each render; only react to real enabled toggles. */
   const prevEnabledRef = useRef<boolean | null>(null);
@@ -1264,10 +1385,14 @@ export default function PatternsDesignerTour({
       const key = meta?.stepGroupKey ?? id;
       const steps = stepsByChapter[key];
       if (!steps?.length) return;
+      if (id === EDIT_TOOLBOX_CHAPTER_ID && projectPatternsStyling) {
+        scrollDesignerToolboxListToTop();
+        dispatchToolboxTour({ action: "reset" });
+      }
       setChapterId(id);
       setStepIndex(0);
     },
-    [enabled, stepsByChapter, chapterList],
+    [enabled, stepsByChapter, chapterList, projectPatternsStyling],
   );
 
   const [cardDrag, setCardDrag] = useState({ x: 0, y: 0 });
@@ -1302,7 +1427,7 @@ export default function PatternsDesignerTour({
       const sel = stepSelector(activeStep);
       await waitForSelector(sel, 4500);
       if (cancelled) return;
-      const r = getRectFromSelector(sel);
+      const r = spotlightRectForStep(activeStep);
       setSpotRect(r);
     };
 
@@ -1310,8 +1435,7 @@ export default function PatternsDesignerTour({
 
     const onScroll = () => {
       if (!activeStep) return;
-      const r = getRectFromSelector(stepSelector(activeStep));
-      setSpotRect(r);
+      setSpotRect(spotlightRectForStep(activeStep));
     };
 
     window.addEventListener("scroll", onScroll, true);
@@ -1431,13 +1555,10 @@ export default function PatternsDesignerTour({
         <>
           {projectPatternsStyling ? (
             <>
-              {welcomeProjectStep === 0 && (
-                <div
-                  className="fixed inset-0 bg-slate-950/78"
-                  style={{ zIndex: PROJECT_WELCOME_DIM_Z }}
-                  aria-hidden
-                />
-              )}
+              {/*
+               * Step 0: no full-viewport dim — graph and details stay visible while the welcome
+               * dialog is open; steps 1–2 use spotlight holes for highlights.
+               */}
               {welcomeProjectStep > 0 && welcomeHighlightFrames.length > 0 && (
                 <WelcomeDimWithHoles
                   rects={welcomeHighlightFrames.map((f) => f.rect)}
@@ -1490,7 +1611,7 @@ export default function PatternsDesignerTour({
                     <button
                       type="button"
                       onClick={() => onDismissWelcomeIntro?.()}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
                       aria-label="Dismiss"
                     >
                       <X className="h-4 w-4" aria-hidden />
@@ -1627,6 +1748,7 @@ export default function PatternsDesignerTour({
         >
           {spotRect && <SpotlightCutout rect={spotRect} />}
           <div
+            data-amg-apd-designer-tour-popover
             className={`pointer-events-auto fixed bottom-5 left-4 w-auto overflow-hidden shadow-xl sm:left-auto sm:right-6 ${
               projectPatternsStyling
                 ? "rounded-lg border border-white/10 bg-zinc-900/98 ring-1 ring-black/25"
@@ -1699,7 +1821,7 @@ export default function PatternsDesignerTour({
                   onClick={closeChapter}
                   className={
                     projectPatternsStyling
-                      ? "flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
+                      ? "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
                       : "rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-700/50 hover:text-gray-200"
                   }
                   aria-label="Close guide"

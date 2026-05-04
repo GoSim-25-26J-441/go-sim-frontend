@@ -16,6 +16,8 @@ export type DesignerTourStep = {
   anchor: AmgDesignerAnchor;
   /** CSS selector when the spotlight should target a sub-element (e.g. one legend chip). */
   anchorSelector?: string;
+  /** Optional extra anchors whose rects are merged into one spotlight (e.g. Generate + Reset). */
+  spotlightExtraAnchors?: AmgDesignerAnchor[];
   title: string;
   body: ReactNode;
   beforeEnter?: () => void | Promise<void>;
