@@ -28,6 +28,7 @@ import {
   nodeLayoutPayloadFromGraph,
   type NodeLayoutPayload,
 } from "@/app/features/amg-apd/utils/graphEditUtils";
+import { downloadArchitectureReportPdf } from "@/app/features/amg-apd/utils/architectureReportPdf";
 
 type PatternsViewProps = {
   projectId?: string;
@@ -150,6 +151,9 @@ export default function PatternsView({
   }, [setPatternsGraphFullscreen]);
 
   const exportImageRef = useRef<(() => string | null | Promise<string | null>) | null>(null);
+  const exportReportDiagramRef = useRef<
+    (() => string | null | Promise<string | null>) | null
+  >(null);
   const exportGraphJsonRef = useRef<(() => Graph | null) | null>(null);
   /** After we load latest version from API for this workspace; avoids skipping fetch due to stale persisted `last`. */
   const serverHydratedKeyRef = useRef<string | null>(null);
@@ -445,6 +449,43 @@ export default function PatternsView({
     a.click();
     a.remove();
     showToast("Image downloaded", "success");
+  }
+
+  async function handleDownloadArchitectureReport() {
+    if (!useProjectPatterns || !projectId?.trim()) return;
+    if (!last?.graph) {
+      showToast("No graph loaded yet.", "warning");
+      return;
+    }
+    const fn = exportReportDiagramRef.current;
+    if (!fn) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    const dataUrl = await Promise.resolve(fn());
+    if (!dataUrl) {
+      showToast(
+        "Graph is not ready to export. Wait for the diagram to load.",
+        "warning",
+      );
+      return;
+    }
+    try {
+      await downloadArchitectureReportPdf({
+        projectId: projectId.trim(),
+        data: last,
+        diagramPngDataUrl: dataUrl,
+      });
+      showToast("Report downloaded", "success");
+    } catch (e: any) {
+      showToast(
+        e?.message ? String(e.message) : "Could not build the PDF report.",
+        "error",
+      );
+    }
   }
 
   const openSuggestions = useCallback(async () => {
@@ -771,6 +812,17 @@ export default function PatternsView({
                 Download Image
               </button>
 
+              {useProjectPatterns && (
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadArchitectureReport()}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200"
+                  title="Generate a PDF: anti-patterns, node roles, model summary, and square canvas diagram"
+                >
+                  Generate Report
+                </button>
+              )}
+
               {!onReturnToChat && (
                 <button
                   type="button"
@@ -846,6 +898,13 @@ export default function PatternsView({
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
               }}
+              onExportReportDiagramReady={
+                useProjectPatterns
+                  ? (fn) => {
+                      exportReportDiagramRef.current = fn;
+                    }
+                  : undefined
+              }
               onExportGraphJsonReady={(getGraph) => {
                 exportGraphJsonRef.current = getGraph;
               }}

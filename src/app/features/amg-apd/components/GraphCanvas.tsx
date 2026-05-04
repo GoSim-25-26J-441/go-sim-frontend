@@ -85,6 +85,7 @@ import {
 } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
+import { padDataUrlToSquareWhite } from "@/app/features/amg-apd/utils/architectureReportMedia";
 import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
 import { ANTI_PATTERN_TOUR_HELP } from "@/app/features/amg-apd/components/patternsDesignerTour/antiPatternTourCopy";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
@@ -367,6 +368,10 @@ type GraphCanvasProps = {
   onResetCanvas?: () => void;
   /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
   onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
+  /** Project patterns: square viewport-only PNG for the architecture PDF (no header strip). */
+  onExportReportDiagramReady?: (
+    exportPng: () => string | null | Promise<string | null>,
+  ) => void;
   /** Called when cy is ready; parent can call getter to export graph JSON including node x/y from the canvas */
   onExportGraphJsonReady?: (getGraph: () => Graph | null) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
@@ -385,6 +390,7 @@ function GraphCanvasInner({
   layoutMode = "default",
   onGenerateGraph,
   onExportImageReady,
+  onExportReportDiagramReady,
   onExportGraphJsonReady,
   onDuplicateName,
   onResetCanvas,
@@ -979,6 +985,29 @@ function GraphCanvasInner({
   }, [cy, onExportImageReady, analysis]);
 
   useEffect(() => {
+    if (!projectPatternsPage || !onExportReportDiagramReady || !cyAlive(cy))
+      return;
+    onExportReportDiagramReady(() => {
+      const c = cyRef.current;
+      if (!c || !cyAlive(c)) return null;
+      return (async (): Promise<string | null> => {
+        try {
+          c.resize();
+          const uri = c.png({
+            bg: "#ffffff",
+            full: true,
+            scale: 2,
+          } as any);
+          const squared = await padDataUrlToSquareWhite(uri);
+          return squared ?? uri;
+        } catch {
+          return null;
+        }
+      })();
+    });
+  }, [cy, projectPatternsPage, onExportReportDiagramReady]);
+
+  useEffect(() => {
     if (!onExportGraphJsonReady) return;
     onExportGraphJsonReady(() => {
       const c = cyRef.current;
@@ -1429,6 +1458,10 @@ function GraphCanvasInner({
   const projectPatternsEditDetails =
     projectPatternsPage && effectiveEditMode;
 
+  const workspaceScrollbarClass = projectPatternsPage
+    ? "scrollbar-patterns-workspace"
+    : "scrollbar-toolbox";
+
   return (
     <>
     <div
@@ -1535,6 +1568,7 @@ function GraphCanvasInner({
                   projectPatternsGuideAntiChrome={
                     projectPatternsPage && projectPatternsGuideChrome
                   }
+                  scrollbarClassName={workspaceScrollbarClass}
                 />
               </div>
             </aside>
@@ -1775,7 +1809,9 @@ function GraphCanvasInner({
                 </button>
               </div>
               {/* Single scroll surface — matches main diagram Inspector */}
-              <div className="isolate flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1 [scrollbar-gutter:stable] scrollbar-toolbox">
+              <div
+                className={`isolate flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1 [scrollbar-gutter:stable] ${workspaceScrollbarClass}`}
+              >
                 {!readOnly && effectiveEditMode && !projectPatternsEditDetails && (
                   <div
                     className="space-y-2 text-xs"
@@ -1867,6 +1903,7 @@ function GraphCanvasInner({
                       cy={cy}
                       graphFallback={analysis.graph}
                       graphRev={phaseKey}
+                      scrollbarClassName={workspaceScrollbarClass}
                     />
                   </CollapsibleDetailsSection>
                 </div>
