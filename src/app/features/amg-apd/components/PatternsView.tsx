@@ -873,6 +873,7 @@ export default function PatternsView({
                 versionCount={versionCount ?? undefined}
                 showNodeTypes={false}
                 projectPatternsGuidePip={guideChromeLayout}
+                projectPatternsZincHelpModal={useProjectPatterns}
               />
             </div>
           </div>
@@ -906,6 +907,7 @@ export default function PatternsView({
                   versionCount={versionCount ?? undefined}
                   showNodeTypes={false}
                   projectPatternsGuidePip={guideChromeLayout}
+                  projectPatternsZincHelpModal={useProjectPatterns}
                 />
               </div>
             </div>

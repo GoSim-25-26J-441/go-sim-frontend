@@ -64,16 +64,24 @@ export default function Legend({
   projectPatternsGuidePip = false,
   /** Project `/project/.../patterns/compare` only: gray ? but zinc/slate help modal like patterns guides */
   patternsCompareZincAntiPatternModal = false,
+  /**
+   * Project `/project/.../patterns` only: use the same zinc/ash anti-pattern help modal as compare,
+   * even when guide pips are off (`projectPatternsGuidePip` false).
+   */
+  projectPatternsZincHelpModal = false,
 }: {
   versionCount?: number;
   showNodeTypes?: boolean;
   projectPatternsGuidePip?: boolean;
   patternsCompareZincAntiPatternModal?: boolean;
+  projectPatternsZincHelpModal?: boolean;
 }) {
   const [showHelp, setShowHelp] = useState(false);
   const last = useAmgApdStore((s) => s.last);
   const helpModalZincTheme =
-    projectPatternsGuidePip || patternsCompareZincAntiPatternModal;
+    projectPatternsGuidePip ||
+    patternsCompareZincAntiPatternModal ||
+    projectPatternsZincHelpModal;
 
   const closeHelp = useCallback(() => setShowHelp(false), []);
 
