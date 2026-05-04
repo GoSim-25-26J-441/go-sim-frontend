@@ -1,19 +1,24 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { use, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, GitCompare } from "lucide-react";
+import { createPortal } from "react-dom";
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Gauge,
+  GitCompare,
+  X,
+} from "lucide-react";
 import { useAuth } from "@/providers/auth-context";
 import GraphCanvas from "@/app/features/amg-apd/components/GraphCanvas";
 import Legend from "@/app/features/amg-apd/components/Legend";
+import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import { useToast } from "@/hooks/useToast";
-import type {
-  AmgApdVersionSummary,
-  AnalysisResult,
-  Graph,
-} from "@/app/features/amg-apd/types";
+import { useReturnToChatFromPatterns } from "@/modules/di/useReturnToChatFromPatterns";
+import type { AmgApdVersionSummary, AnalysisResult } from "@/app/features/amg-apd/types";
 
 type CompareResult = {
   left: AnalysisResult & {
@@ -41,6 +46,7 @@ export default function ProjectPatternsComparePage({
   const router = useRouter();
   const { userId } = useAuth();
   const showToast = useToast((s) => s.showToast);
+  const { returnToChat, returning } = useReturnToChatFromPatterns(projectId);
   const headers = () =>
     getAmgApdHeaders({
       userId: userId ?? undefined,
@@ -56,14 +62,32 @@ export default function ProjectPatternsComparePage({
   );
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const exportLeftGraphRef = useRef<(() => Graph | null) | null>(null);
-  const exportRightGraphRef = useRef<(() => Graph | null) | null>(null);
-  const exportLeftImageRef = useRef<
-    (() => string | null | Promise<string | null>) | null
-  >(null);
-  const exportRightImageRef = useRef<
-    (() => string | null | Promise<string | null>) | null
-  >(null);
+  const [simulationModalOpen, setSimulationModalOpen] = useState(false);
+  const [simulationSelectedVersion, setSimulationSelectedVersion] =
+    useState("");
+  const [patternsReturnLabel, setPatternsReturnLabel] = useState<string | null>(
+    null,
+  );
+
+  const openSimulationModal = useCallback(() => {
+    setSimulationModalOpen(true);
+  }, []);
+
+  const closeSimulationModal = useCallback(() => {
+    setSimulationModalOpen(false);
+    setSimulationSelectedVersion("");
+  }, []);
+
+  function handleSimulationConfirm() {
+    if (projectId && simulationSelectedVersion) {
+      router.push(
+        `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
+      );
+    } else {
+      showToast("Please select a version first", "warning");
+    }
+    closeSimulationModal();
+  }
 
   useEffect(() => {
     (async () => {
@@ -135,133 +159,123 @@ export default function ProjectPatternsComparePage({
     ? `/project/${projectId}/patterns`
     : "/dashboard/patterns";
 
-  function downloadCompareJson(side: "left" | "right") {
-    if (!compareResult) return;
-    const base = side === "left" ? compareResult.left : compareResult.right;
-    const getGraph =
-      side === "left"
-        ? exportLeftGraphRef.current
-        : exportRightGraphRef.current;
-    const graph = getGraph?.() ?? base.graph;
-    const payload = {
-      graph,
-      detections: base.detections ?? [],
-      dot_content: base.dot_content ?? undefined,
-      version_id: base.id,
-      version_number: base.version_number,
-      title: base.title,
-      created_at: base.created_at,
-    };
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `architecture-compare-${side}-v${base.version_number}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    showToast(`JSON downloaded (${side} version)`, "success");
-  }
-
-  function downloadCompareYaml(side: "left" | "right") {
-    if (!compareResult) return;
-    const base = side === "left" ? compareResult.left : compareResult.right;
-    const yaml = base.yaml_content?.trim();
-    if (!yaml) {
-      showToast(
-        `No YAML is available for the ${side} version in this comparison.`,
-        "warning",
-      );
-      return;
-    }
-    const blob = new Blob([yaml], { type: "text/yaml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `architecture-compare-${side}-v${base.version_number}.yaml`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    showToast(`YAML downloaded (${side} version)`, "success");
-  }
-
-  async function downloadCompareImage(side: "left" | "right") {
-    const fn =
-      side === "left"
-        ? exportLeftImageRef.current
-        : exportRightImageRef.current;
-    if (!fn) {
-      showToast("Graph is not ready to export yet.", "warning");
-      return;
-    }
-    const dataUrl = await Promise.resolve(fn());
-    if (!dataUrl) {
-      showToast("Could not capture graph image.", "warning");
-      return;
-    }
-    if (!compareResult) return;
-    const vn =
-      side === "left"
-        ? compareResult.left.version_number
-        : compareResult.right.version_number;
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = `architecture-compare-${side}-v${vn}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    showToast(`Image downloaded (${side} version)`, "success");
-  }
+  const goBackToPatterns = useCallback(() => {
+    setPatternsReturnLabel("Returning to patterns workspace…");
+    window.setTimeout(() => {
+      router.push(patternsHref);
+    }, 50);
+  }, [router, patternsHref]);
 
   return (
-    <div className="p-6 space-y-4 min-w-0">
+    <div className="min-w-0 space-y-4 p-6">
+      {patternsReturnLabel &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[500000] flex items-center justify-center p-6"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md animate-in fade-in duration-300"
+              aria-hidden
+            />
+            <div className="relative flex w-full min-w-[min(22rem,92vw)] max-w-[min(34rem,calc(100vw-2rem))] flex-col items-stretch gap-6 rounded-xl border border-white/10 bg-zinc-900/96 px-10 py-9 text-center shadow-2xl ring-1 ring-black/35 animate-in fade-in zoom-in-95 duration-300">
+              <div
+                className="flex h-10 items-end justify-center gap-1.5"
+                aria-hidden
+              >
+                {[32, 52, 40, 64, 36, 48].map((hPct, i) => (
+                  <span
+                    key={i}
+                    className="w-1.5 rounded-sm bg-zinc-500/80 motion-safe:animate-pulse"
+                    style={{
+                      height: `${hPct}%`,
+                      animationDelay: `${i * 100}ms`,
+                      animationDuration: "1.05s",
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="space-y-2 border-t border-white/[0.07] pt-5">
+                <p className="text-sm font-semibold tracking-tight text-zinc-100">
+                  {patternsReturnLabel}
+                </p>
+                <p className="text-xs leading-relaxed text-zinc-500">
+                  Please wait while we return to the patterns canvas.
+                </p>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
       <div
-        className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap"
+        className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href={patternsHref}
-            className="flex items-center justify-center w-6 h-6 rounded-full transition-all duration-150 bg-white text-black hover:bg-white/80 hover:text-black/80 border border-transparent"
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={goBackToPatterns}
+            disabled={!!patternsReturnLabel}
+            aria-label="Back to patterns canvas"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80 disabled:cursor-wait disabled:opacity-70"
           >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <h1 className="text-md font-bold text-white flex items-center gap-2">
-            <GitCompare className="w-5 h-5 text-white/90" />
-            Compare Architecture Model Versions
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h1 className="flex min-w-0 items-center gap-2 text-sm font-bold text-white sm:text-base">
+            <GitCompare className="h-5 w-5 shrink-0 text-white/90" />
+            <span className="min-w-0 leading-snug">
+              Compare Architecture Model Versions
+            </span>
           </h1>
         </div>
-        <button
-          type="button"
-          onClick={() => router.push(patternsHref)}
-          className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white"
-        >
-          Back to Graph
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => void returnToChat()}
+            disabled={returning}
+            aria-label="Back to project chat"
+            className="flex items-center gap-1 rounded-md bg-emerald-600/80 px-2.5 py-1 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {returning ? "Opening…" : "Chat"}
+          </button>
+          <button
+            type="button"
+            data-amg-designer={AMG_DESIGNER.simulator}
+            onClick={openSimulationModal}
+            aria-label="Proceed to performance simulation"
+            title="Choose a diagram version, then open performance simulation"
+            className="flex items-center gap-1 rounded-md bg-emerald-600/80 px-2.5 py-1 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500"
+          >
+            Simulation
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          </button>
+        </div>
       </div>
 
       <div className="min-w-0 flex flex-col gap-6 flex-1 min-h-[calc(100dvh-280px)] max-w-400 mx-auto">
-        <div className="shrink-0 rounded-2xl border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur-sm sm:p-6">
-          <div className="mb-4 border-b border-white/10 pb-4">
-            <h2 className="text-sm font-semibold text-white/95">
+        <div className="shrink-0 rounded-xl border border-white/10 bg-zinc-900/40 p-5 shadow-lg shadow-black/25 backdrop-blur-sm sm:p-6">
+          <div className="mb-4 border-b border-white/[0.07] pb-4">
+            <h2 className="text-sm font-semibold text-white/90 sm:text-base">
               Choose versions
             </h2>
-            <p className="mt-1 text-xs leading-relaxed text-white/45">
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-500 sm:text-[13px]">
               Select two different saved diagram versions. They open side by side
               below once you run the comparison.
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 sm:gap-5">
-            <div className="flex min-w-0 flex-col rounded-xl border border-white/10 bg-gray-900/35 p-4">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+          <div className="mx-auto grid max-w-4xl gap-4 sm:grid-cols-2 sm:gap-5">
+            <div className="flex min-w-0 flex-col rounded-xl border border-white/[0.1] bg-zinc-900/75 p-4 sm:p-5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 sm:text-[11px]">
                 Left version
               </span>
               <select
-                className="mt-2 w-full min-w-0 cursor-pointer rounded-lg border border-white/10 bg-gray-800/90 px-3 py-2 text-sm text-white shadow-inner shadow-black/20 transition-colors scheme-dark hover:border-white/15 focus:border-[#9AA4B2]/40 focus:outline-none focus:ring-1 focus:ring-[#9AA4B2]/35 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-2.5 w-full min-w-0 cursor-pointer rounded-lg border border-white/10 bg-zinc-950/95 px-3 py-2.5 text-sm text-zinc-100 shadow-inner shadow-black/30 transition-colors scheme-dark hover:border-white/18 focus:border-white/25 focus:outline-none focus:ring-1 focus:ring-white/15 disabled:cursor-not-allowed disabled:opacity-50 sm:py-3"
                 value={leftId}
                 onChange={(e) => setLeftId(e.target.value)}
                 disabled={loadingVersions}
@@ -274,12 +288,12 @@ export default function ProjectPatternsComparePage({
                 ))}
               </select>
             </div>
-            <div className="flex min-w-0 flex-col rounded-xl border border-white/10 bg-gray-900/35 p-4">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9AA4B2]">
+            <div className="flex min-w-0 flex-col rounded-xl border border-white/[0.1] bg-zinc-900/75 p-4 sm:p-5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 sm:text-[11px]">
                 Right version
               </span>
               <select
-                className="mt-2 w-full min-w-0 cursor-pointer rounded-lg border border-white/10 bg-gray-800/90 px-3 py-2 text-sm text-white shadow-inner shadow-black/20 transition-colors scheme-dark hover:border-white/15 focus:border-[#9AA4B2]/40 focus:outline-none focus:ring-1 focus:ring-[#9AA4B2]/35 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-2.5 w-full min-w-0 cursor-pointer rounded-lg border border-white/10 bg-zinc-950/95 px-3 py-2.5 text-sm text-zinc-100 shadow-inner shadow-black/30 transition-colors scheme-dark hover:border-white/18 focus:border-white/25 focus:outline-none focus:ring-1 focus:ring-white/15 disabled:cursor-not-allowed disabled:opacity-50 sm:py-3"
                 value={rightId}
                 onChange={(e) => setRightId(e.target.value)}
                 disabled={loadingVersions}
@@ -294,8 +308,8 @@ export default function ProjectPatternsComparePage({
             </div>
           </div>
 
-          <div className="mt-5 flex flex-col items-stretch gap-2 border-t border-white/10 pt-5 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[11px] text-white/35">
+          <div className="mt-4 flex flex-col items-stretch gap-2 border-t border-white/[0.07] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[10px] text-zinc-500">
               {loadingVersions
                 ? "Loading versions…"
                 : versions.length === 0
@@ -319,35 +333,12 @@ export default function ProjectPatternsComparePage({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 pb-1 border-b border-white/10">
-          <Legend versionCount={versions.length} showNodeTypes={false} />
-          <div className="flex flex-wrap items-center gap-2 justify-end max-w-full">
-            {(
-              [
-                ["json", "left", () => downloadCompareJson("left")],
-                ["yaml", "left", () => downloadCompareYaml("left")],
-                ["image", "left", () => void downloadCompareImage("left")],
-                ["json", "right", () => downloadCompareJson("right")],
-                ["yaml", "right", () => downloadCompareYaml("right")],
-                ["image", "right", () => void downloadCompareImage("right")],
-              ] as const
-            ).map(([kind, side, onClick]) => {
-              const sideLabel = side === "left" ? "Left" : "Right";
-              return (
-                <button
-                  key={`${kind}-${side}`}
-                  type="button"
-                  disabled={!compareResult}
-                  onClick={onClick}
-                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-white text-black hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
-                >
-                  {kind === "json" && `Download JSON ${sideLabel}`}
-                  {kind === "yaml" && `Download YAML ${sideLabel}`}
-                  {kind === "image" && `Download Image ${sideLabel}`}
-                </button>
-              );
-            })}
-          </div>
+        <div className="flex flex-wrap items-center gap-3 border-b border-white/[0.07] pb-2 pt-2">
+          <Legend
+            versionCount={versions.length}
+            showNodeTypes={false}
+            patternsCompareZincAntiPatternModal
+          />
         </div>
 
         {error && (
@@ -357,50 +348,40 @@ export default function ProjectPatternsComparePage({
         )}
 
         {compareResult && leftData && rightData && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
-            <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
-              <div className="border-b border-white/10 bg-white/5 px-5 py-3 shrink-0">
-                <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/45 shadow-lg shadow-black/25 backdrop-blur-sm">
+              <div className="shrink-0 border-b border-white/[0.07] bg-zinc-900/80 px-3 py-2">
+                <span className="mr-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                   Left
                 </span>
-                <span className="text-sm font-semibold text-white">
+                <span className="text-xs font-semibold text-zinc-100">
                   #{compareResult.left.version_number}{" "}
                   {compareResult.left.title || "Version"}
                 </span>
               </div>
-              <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
+              <div className="flex min-h-[48vh] flex-1 flex-col bg-zinc-950/40">
                 <GraphCanvas
                   data={leftData}
                   readOnly
-                  onExportImageReady={(exportPng) => {
-                    exportLeftImageRef.current = exportPng;
-                  }}
-                  onExportGraphJsonReady={(getGraph) => {
-                    exportLeftGraphRef.current = getGraph;
-                  }}
+                  projectPatternsPage
                 />
               </div>
             </div>
-            <div className="rounded-3xl border border-white/10 bg-card/80 backdrop-blur-sm overflow-hidden shadow-xl shadow-black/20 flex flex-col min-h-0">
-              <div className="border-b border-white/10 bg-white/5 px-5 py-3 shrink-0">
-                <span className="text-xs font-semibold uppercase tracking-wider text-[#9AA4B2] mr-2">
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/45 shadow-lg shadow-black/25 backdrop-blur-sm">
+              <div className="shrink-0 border-b border-white/[0.07] bg-zinc-900/80 px-3 py-2">
+                <span className="mr-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                   Right
                 </span>
-                <span className="text-sm font-semibold text-white">
+                <span className="text-xs font-semibold text-zinc-100">
                   #{compareResult.right.version_number}{" "}
                   {compareResult.right.title || "Version"}
                 </span>
               </div>
-              <div className="flex-1 min-h-[50vh] flex flex-col bg-gray-900/50">
+              <div className="flex min-h-[48vh] flex-1 flex-col bg-zinc-950/40">
                 <GraphCanvas
                   data={rightData}
                   readOnly
-                  onExportImageReady={(exportPng) => {
-                    exportRightImageRef.current = exportPng;
-                  }}
-                  onExportGraphJsonReady={(getGraph) => {
-                    exportRightGraphRef.current = getGraph;
-                  }}
+                  projectPatternsPage
                 />
               </div>
             </div>
@@ -408,12 +389,128 @@ export default function ProjectPatternsComparePage({
         )}
 
         {!compareResult && !loadingCompare && !error && (
-          <p className="text-sm text-white/60 max-w-xl shrink-0 mt-2">
+          <p className="mt-2 max-w-xl shrink-0 text-sm text-zinc-500">
             Select two versions and click Compare to view them side by side
             (e.g. initial graph vs after suggestions).
           </p>
         )}
       </div>
+
+      {simulationModalOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[160000] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]"
+            onClick={(e) =>
+              e.target === e.currentTarget && closeSimulationModal()
+            }
+          >
+            <div
+              data-amg-designer={AMG_DESIGNER.simulationModal}
+              className="relative mx-4 flex max-h-[min(52vh,20rem)] w-full max-w-md flex-col overflow-hidden rounded-lg border border-white/10 bg-zinc-900/98 shadow-2xl ring-1 ring-black/25"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-labelledby="compare-simulation-modal-title"
+              aria-describedby="compare-simulation-modal-desc"
+            >
+              <div
+                className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"
+                aria-hidden
+              />
+
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Gauge
+                    className="h-5 w-5 shrink-0 text-gray-300"
+                    aria-hidden
+                  />
+                  <div className="min-w-0">
+                    <h2
+                      id="compare-simulation-modal-title"
+                      className="text-sm font-semibold leading-tight text-white sm:text-base"
+                    >
+                      Proceed to Performance Simulation
+                    </h2>
+                    <span
+                      id="compare-simulation-modal-desc"
+                      className="mt-0.5 block text-[11px] text-gray-500"
+                    >
+                      Select a saved diagram version to load in the simulator
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeSimulationModal}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
+                  aria-label="Close"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </div>
+
+              <div className="min-h-0 px-4 py-2.5">
+                <div
+                  className="flex flex-col gap-1.5"
+                  data-amg-designer={AMG_DESIGNER.simulationVersionSelect}
+                >
+                  <label
+                    htmlFor="compare-simulation-version-select"
+                    className="text-[11px] font-medium text-gray-400"
+                  >
+                    Version
+                  </label>
+                  <select
+                    id="compare-simulation-version-select"
+                    className="w-full rounded-md border border-white/10 bg-zinc-800 py-1.5 pl-2.5 pr-8 text-sm text-white scheme-dark focus:outline-none focus:ring-1 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={simulationSelectedVersion}
+                    onChange={(e) =>
+                      setSimulationSelectedVersion(e.target.value)
+                    }
+                    disabled={loadingVersions}
+                  >
+                    <option value="" className="bg-zinc-900 text-gray-400">
+                      {loadingVersions
+                        ? "Loading versions…"
+                        : "Select version…"}
+                    </option>
+                    {versions.map((v) => (
+                      <option
+                        key={v.id}
+                        value={v.id}
+                        className="bg-zinc-900 text-white"
+                      >
+                        #{v.version_number} {v.title || "Untitled"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div
+                className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-4 py-2.5"
+                data-amg-designer={AMG_DESIGNER.simulationModalFooter}
+              >
+                <button
+                  type="button"
+                  onClick={closeSimulationModal}
+                  className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-zinc-700/90"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSimulationConfirm}
+                  disabled={!simulationSelectedVersion}
+                  className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  Proceed
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

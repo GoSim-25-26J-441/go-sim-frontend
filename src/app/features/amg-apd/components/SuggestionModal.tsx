@@ -85,11 +85,17 @@ export default function SuggestionModal({
   if (!open) return null;
 
   const modal = (
-    <div className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+    <div
+      className={
+        projectPatternsGuideChrome
+          ? "fixed inset-0 z-[200000] flex items-center justify-center bg-slate-950/55 backdrop-blur-sm p-4"
+          : "fixed inset-0 z-[200000] flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+      }
+    >
       <div
         className={
           projectPatternsGuideChrome
-            ? "relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/98 shadow-2xl shadow-black/40 ring-1 ring-black/25"
+            ? "relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-zinc-600/50 bg-zinc-900 shadow-2xl shadow-black/40"
             : "relative flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/15 bg-gray-900/95 shadow-2xl shadow-black/40"
         }
         data-amg-designer={AMG_DESIGNER.suggestionModal}
@@ -97,18 +103,18 @@ export default function SuggestionModal({
         <div
           className={
             projectPatternsGuideChrome
-              ? "relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-zinc-800/90"
+              ? "relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-zinc-700/80 shrink-0 bg-zinc-800/95"
               : "relative z-[1] flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 bg-gray-900/95"
           }
         >
           <div className="min-w-0 pr-2">
-            <h2 className="text-lg font-semibold text-white">
+            <h2 className="text-lg font-semibold text-zinc-100">
               Fix anti-patterns
             </h2>
             <p
               className={
                 projectPatternsGuideChrome
-                  ? "mt-0.5 text-xs text-gray-400"
+                  ? "mt-0.5 text-xs text-zinc-400"
                   : "mt-0.5 text-xs text-white/50"
               }
             >
@@ -136,20 +142,28 @@ export default function SuggestionModal({
         {suggestions.length > 0 && (
           <div
             data-amg-designer={AMG_DESIGNER.suggestionModalToolbar}
-            className="flex items-center gap-2 px-5 py-2 border-b border-white/10 shrink-0"
+            className={
+              projectPatternsGuideChrome
+                ? "flex items-center gap-2 px-5 py-2 border-b border-zinc-700/80 shrink-0 bg-zinc-900/90"
+                : "flex items-center gap-2 px-5 py-2 border-b border-white/10 shrink-0"
+            }
           >
             <button
               type="button"
               onClick={selectAll}
               className={
                 projectPatternsGuideChrome
-                  ? "rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                  ? "rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-900 shadow-sm transition-colors hover:bg-white"
                   : "text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
               }
             >
               Select all
             </button>
-            <span className={projectPatternsGuideChrome ? "text-white/20" : "text-white/30"}>
+            <span
+              className={
+                projectPatternsGuideChrome ? "text-zinc-600" : "text-white/30"
+              }
+            >
               |
             </span>
             <button
@@ -157,7 +171,7 @@ export default function SuggestionModal({
               onClick={unselectAll}
               className={
                 projectPatternsGuideChrome
-                  ? "rounded-md border border-white/10 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-gray-200 transition-colors hover:bg-zinc-700/90"
+                  ? "rounded-md border border-zinc-600/80 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700/90 hover:border-zinc-500/80"
                   : "text-xs font-medium text-[#9AA4B2] hover:text-white transition-colors"
               }
             >
@@ -170,14 +184,28 @@ export default function SuggestionModal({
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#9AA4B2]" />
-              <span className="mt-4 text-sm text-white/60">Loading suggestions…</span>
+              <span
+                className={
+                  projectPatternsGuideChrome
+                    ? "mt-4 text-sm text-zinc-400"
+                    : "mt-4 text-sm text-white/60"
+                }
+              >
+                Loading suggestions…
+              </span>
             </div>
           ) : error ? (
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
               {error}
             </div>
           ) : suggestions.length === 0 ? (
-            <div className="py-16 text-center text-sm text-white/50">
+            <div
+              className={
+                projectPatternsGuideChrome
+                  ? "py-16 text-center text-sm text-zinc-500"
+                  : "py-16 text-center text-sm text-white/50"
+              }
+            >
               No suggestions available.
             </div>
           ) : (
@@ -198,19 +226,35 @@ export default function SuggestionModal({
                         toggleSuggestion(id);
                       }
                     }}
-                    className={`group flex gap-4 rounded-xl border-2 p-4 transition-all duration-200 cursor-pointer ${
-                      isSelected
-                        ? "border-emerald-500/60 bg-emerald-500/10 shadow-sm"
-                        : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]"
-                    }`}
+                    className={
+                      projectPatternsGuideChrome
+                        ? `group flex gap-4 rounded-xl border p-4 transition-all duration-200 cursor-pointer ${
+                            isSelected
+                              ? "border-zinc-400 bg-zinc-800/90 shadow-md ring-1 ring-zinc-500/40"
+                              : "border-zinc-700/60 bg-zinc-800/40 hover:border-zinc-500/70 hover:bg-zinc-800/70"
+                          }`
+                        : `group flex gap-4 rounded-xl border-2 p-4 transition-all duration-200 cursor-pointer ${
+                            isSelected
+                              ? "border-zinc-400/90 bg-zinc-700/25 shadow-sm ring-1 ring-zinc-400/30"
+                              : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]"
+                          }`
+                    }
                   >
                     {/* Selection indicator */}
                     <div
-                      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${
-                        isSelected
-                          ? "border-emerald-400 bg-emerald-500"
-                          : "border-white/20 bg-white/5 group-hover:border-white/30"
-                      }`}
+                      className={
+                        projectPatternsGuideChrome
+                          ? `mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${
+                              isSelected
+                                ? "border-zinc-200 bg-zinc-600 shadow-inner"
+                                : "border-zinc-600 bg-zinc-900/80 group-hover:border-zinc-500"
+                            }`
+                          : `mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${
+                              isSelected
+                                ? "border-zinc-200 bg-zinc-600"
+                                : "border-white/20 bg-white/5 group-hover:border-white/30"
+                            }`
+                      }
                     >
                       {isSelected ? (
                         <svg
@@ -231,15 +275,33 @@ export default function SuggestionModal({
 
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-white">
+                        <h3
+                          className={
+                            projectPatternsGuideChrome
+                              ? "text-sm font-semibold text-zinc-100"
+                              : "text-sm font-semibold text-white"
+                          }
+                        >
                           {s.title}
                         </h3>
-                        <span className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/70">
+                        <span
+                          className={
+                            projectPatternsGuideChrome
+                              ? "rounded-md border border-zinc-600/60 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-medium text-zinc-300"
+                              : "rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/70"
+                          }
+                        >
                           {antipatternKindLabel(s.kind)}
                         </span>
                       </div>
 
-                      <ul className="mt-2 space-y-1 pl-4 text-sm text-white/70 list-disc">
+                      <ul
+                        className={
+                          projectPatternsGuideChrome
+                            ? "mt-2 space-y-1 pl-4 text-sm text-zinc-400 list-disc"
+                            : "mt-2 space-y-1 pl-4 text-sm text-white/70 list-disc"
+                        }
+                      >
                         {s.bullets.map((b, i) => (
                           <li key={i}>{b}</li>
                         ))}
@@ -263,7 +325,13 @@ export default function SuggestionModal({
                       </div>
 
                       {s.auto_fix_notes?.length ? (
-                        <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
+                        <div
+                          className={
+                            projectPatternsGuideChrome
+                              ? "mt-3 rounded-lg border border-zinc-600/70 bg-zinc-950/50 p-2.5 text-xs text-zinc-300"
+                              : "mt-3 rounded-lg border border-zinc-500/40 bg-zinc-800/40 p-2.5 text-xs text-zinc-200"
+                          }
+                        >
                           <div className="font-semibold">Auto-fix notes</div>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
                             {s.auto_fix_notes.map((n, i) => (
@@ -284,7 +352,7 @@ export default function SuggestionModal({
           data-amg-designer={AMG_DESIGNER.suggestionModalFooter}
           className={
             projectPatternsGuideChrome
-              ? "flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-zinc-950/80 shrink-0"
+              ? "flex items-center justify-between gap-4 px-5 py-4 border-t border-zinc-700/80 bg-zinc-950/90 shrink-0"
               : "flex items-center justify-between gap-4 px-5 py-4 border-t border-white/10 bg-black/30 shrink-0"
           }
         >
@@ -326,7 +394,7 @@ export default function SuggestionModal({
               className={
                 projectPatternsGuideChrome
                   ? "flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-sm transition-all duration-150 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  : "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 bg-emerald-600/80 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  : "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
               }
             >
               {applyLoading ? "Applying…" : "Apply suggestions"}

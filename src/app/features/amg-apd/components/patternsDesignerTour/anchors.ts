@@ -19,6 +19,8 @@ export const AMG_DESIGNER = {
   simulationVersionSelect: "amg-designer-simulation-version-select",
   simulationModalFooter: "amg-designer-simulation-modal-footer",
   layout: "amg-designer-layout",
+  /** Project patterns: stepped zoom control cluster next to Fit */
+  layoutZoom: "amg-designer-layout-zoom",
   stats: "amg-designer-stats",
   editGraph: "amg-designer-edit-graph",
   generate: "amg-designer-generate",

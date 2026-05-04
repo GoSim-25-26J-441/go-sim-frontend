@@ -41,6 +41,10 @@ export default function ProjectPatternsPage({
     useState("");
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
+  /** Centered loading card during compare / chat / simulation navigation */
+  const [pageTransitionLabel, setPageTransitionLabel] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +83,7 @@ export default function ProjectPatternsPage({
 
   function handleSimulationConfirm() {
     if (projectId && simulationSelectedVersion) {
+      setPageTransitionLabel("Starting performance simulation…");
       router.push(
         `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
       );
@@ -86,6 +91,15 @@ export default function ProjectPatternsPage({
       showToast("Please select a version first", "warning");
     }
     closeSimulationModal();
+  }
+
+  async function handleReturnToChatWithOverlay() {
+    setPageTransitionLabel("Opening project chat…");
+    try {
+      await returnToChat();
+    } finally {
+      setPageTransitionLabel(null);
+    }
   }
 
   return (
@@ -148,7 +162,7 @@ export default function ProjectPatternsPage({
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => void returnToChat()}
+                onClick={() => void handleReturnToChatWithOverlay()}
                 disabled={returning}
                 aria-label="Back to project chat"
                 className="flex items-center gap-1 rounded-md bg-emerald-600/80 px-2.5 py-1 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
@@ -171,6 +185,49 @@ export default function ProjectPatternsPage({
           </div>
         </div>
       )}
+
+      {pageTransitionLabel &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[500000] flex items-center justify-center p-6"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md animate-in fade-in duration-300"
+              aria-hidden
+            />
+            <div className="relative flex w-full min-w-[min(22rem,92vw)] max-w-[min(34rem,calc(100vw-2rem))] flex-col items-stretch gap-6 rounded-xl border border-white/10 bg-zinc-900/96 px-10 py-9 text-center shadow-2xl ring-1 ring-black/35 animate-in fade-in zoom-in-95 duration-300">
+              <div
+                className="flex h-10 items-end justify-center gap-1.5"
+                aria-hidden
+              >
+                {[32, 52, 40, 64, 36, 48].map((hPct, i) => (
+                  <span
+                    key={i}
+                    className="w-1.5 rounded-sm bg-zinc-500/80 motion-safe:animate-pulse"
+                    style={{
+                      height: `${hPct}%`,
+                      animationDelay: `${i * 100}ms`,
+                      animationDuration: "1.05s",
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="space-y-2 border-t border-white/[0.07] pt-5">
+                <p className="text-sm font-semibold tracking-tight text-zinc-100">
+                  {pageTransitionLabel}
+                </p>
+                <p className="text-xs leading-relaxed text-zinc-500">
+                  Please wait while we open the next workspace.
+                </p>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {simulationModalOpen &&
         typeof document !== "undefined" &&
@@ -218,7 +275,7 @@ export default function ProjectPatternsPage({
                 <button
                   type="button"
                   onClick={closeSimulationModal}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/10 text-gray-200 transition-colors hover:bg-white/15"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
                   aria-label="Close"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden />
@@ -297,10 +354,11 @@ export default function ProjectPatternsPage({
       >
         <PatternsView
           projectId={projectId}
-          onReturnToChat={() => returnToChat()}
+          onReturnToChat={() => void handleReturnToChatWithOverlay()}
           stickyToolbar={false}
           onRequestOpenSimulationModal={openSimulationModal}
           onCloseSimulationModal={closeSimulationModal}
+          onPageTransitionStart={(label) => setPageTransitionLabel(label)}
         />
       </div>
     </div>

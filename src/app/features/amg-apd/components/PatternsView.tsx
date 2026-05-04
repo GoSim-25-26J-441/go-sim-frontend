@@ -39,6 +39,8 @@ type PatternsViewProps = {
   onRequestOpenSimulationModal?: () => void;
   /** Close parent simulation modal when a tour chapter ends. */
   onCloseSimulationModal?: () => void;
+  /** Project patterns: show full-page transition overlay (compare / chat / simulation). */
+  onPageTransitionStart?: (label: string) => void;
 };
 
 export default function PatternsView({
@@ -47,6 +49,7 @@ export default function PatternsView({
   stickyToolbar = true,
   onRequestOpenSimulationModal,
   onCloseSimulationModal,
+  onPageTransitionStart,
 }: PatternsViewProps) {
   const router = useRouter();
   const last = useAmgApdStore((s) => s.last);
@@ -179,6 +182,13 @@ export default function PatternsView({
     return () => document.removeEventListener("keydown", onKey);
   }, [designerResetAckOpen]);
 
+  /**
+   * Persists a new diagram version via analyze-upload.
+   * Project `/project/.../patterns`: default `merge_previous_diagram` is **false** so the backend
+   * does not splice the latest stored canvas into fresh analysis (avoids phantom duplicate
+   * nodes / edges). Dashboard patterns: defaults to **true** (omit field → backend merges).
+   * Callers can still force a value by passing `opts.mergePreviousDiagram`.
+   */
   async function analyzeAndSaveAsNewVersion(
     yamlContent: string,
     title?: string,
@@ -218,7 +228,13 @@ export default function PatternsView({
     if (nodeLayout && Object.keys(nodeLayout).length > 0) {
       fd.append("node_layout", JSON.stringify(nodeLayout));
     }
-    if (opts?.mergePreviousDiagram === false) {
+    const mergePreviousDiagram =
+      opts?.mergePreviousDiagram === true
+        ? true
+        : opts?.mergePreviousDiagram === false
+          ? false
+          : !useProjectPatterns;
+    if (!mergePreviousDiagram) {
       fd.append("merge_previous_diagram", "false");
     }
 
@@ -701,7 +717,7 @@ export default function PatternsView({
         applyLoading={applyLoading}
         disabledApply={!hasDetections || loadingSug}
         designerTourExpandFirstPreviewNonce={designerTourSuggestionPreviewExpandNonce}
-        projectPatternsGuideChrome={guideChromeLayout}
+        projectPatternsGuideChrome={useProjectPatterns}
       />
 
       <PatternsDesignerTour
@@ -720,6 +736,7 @@ export default function PatternsView({
         onRunSuggestionsForTour={openSuggestions}
         onRequestExpandSuggestionFirstPreview={expandSuggestionFirstPreviewForTour}
         onRequestOpenSimulationModal={onRequestOpenSimulationModal}
+        onCloseSimulationModal={onCloseSimulationModal}
         hasReturnToChatTour={!onReturnToChat}
         welcomeIntroOpen={designerWelcomeOpen}
         onDismissWelcomeIntro={dismissDesignerWelcome}
@@ -761,6 +778,14 @@ export default function PatternsView({
               designerTourForceOpenNonce={designerTourVersionsNonce}
               projectPatternsPage={useProjectPatterns}
               guidesActive={useProjectPatterns && newDesignerTourEnabled}
+              onCompareNavigate={
+                useProjectPatterns
+                  ? () =>
+                      onPageTransitionStart?.(
+                        "Opening version compare…",
+                      )
+                  : undefined
+              }
               onVersionGraphApplied={() =>
                 setGraphVersion((v) => v + 1)
               }
@@ -847,7 +872,8 @@ export default function PatternsView({
               <Legend
                 versionCount={versionCount ?? undefined}
                 showNodeTypes={false}
-                projectPatternsGuidePip={useProjectPatterns}
+                projectPatternsGuidePip={guideChromeLayout}
+                projectPatternsZincHelpModal={useProjectPatterns}
               />
             </div>
           </div>
@@ -880,7 +906,8 @@ export default function PatternsView({
                 <Legend
                   versionCount={versionCount ?? undefined}
                   showNodeTypes={false}
-                  projectPatternsGuidePip={useProjectPatterns}
+                  projectPatternsGuidePip={guideChromeLayout}
+                  projectPatternsZincHelpModal={useProjectPatterns}
                 />
               </div>
             </div>
@@ -897,6 +924,7 @@ export default function PatternsView({
               data={last}
               isGenerating={regenerating}
               showRegeneratingOverlay={regenerating}
+              patternsDesignerLoadingPolish={useProjectPatterns}
               layoutMode={fullscreenOpen ? "fullscreen" : "default"}
               onExportImageReady={(fn) => {
                 exportImageRef.current = fn;
@@ -933,6 +961,7 @@ export default function PatternsView({
               designerTourExpandDetailsNonce={designerTourExpandDetailsNonce}
               projectPatternsGuideChrome={guideChromeLayout}
               projectPatternsPage={useProjectPatterns}
+              projectPatternsImageExportCanvasOnly={useProjectPatterns}
             />
           </div>
         </div>

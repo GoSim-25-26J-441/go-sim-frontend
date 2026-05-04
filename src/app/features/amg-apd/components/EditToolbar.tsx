@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
 import type {
   EditTool,
@@ -159,6 +159,63 @@ export default function EditToolbar({
   void _onDefaultCallChange;
 
   const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const e = ev as CustomEvent<{
+        action?: string;
+        step?: "search" | "nodes" | "anti";
+      }>;
+      const root = document.querySelector(
+        "[data-amg-designer-toolbox-scroll]",
+      ) as HTMLElement | null;
+      const run = (fn: () => void) => {
+        requestAnimationFrame(() => requestAnimationFrame(fn));
+      };
+      if (e.detail?.action === "reset") {
+        setSearchQuery("");
+        if (root) root.scrollTop = 0;
+        searchInputRef.current?.blur();
+        return;
+      }
+      if (e.detail?.action !== "step" || !e.detail.step) return;
+      setSearchQuery("");
+      const step = e.detail.step;
+      if (step === "search") {
+        if (root) root.scrollTo({ top: 0, behavior: "smooth" });
+        run(() => {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        });
+        return;
+      }
+      if (step === "nodes") {
+        if (root) root.scrollTo({ top: 0, behavior: "smooth" });
+        run(() => {
+          document
+            .querySelector(`[data-amg-designer="${AMG_DESIGNER.editToolboxNodes}"]`)
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth", inline: "nearest" });
+        });
+        return;
+      }
+      if (step === "anti") {
+        run(() => {
+          document
+            .querySelector(
+              `[data-amg-designer="${AMG_DESIGNER.editToolboxAntiPatterns}"]`,
+            )
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth", inline: "nearest" });
+        });
+      }
+    };
+    window.addEventListener("amg-apd-edit-toolbox-tour", handler as EventListener);
+    return () =>
+      window.removeEventListener(
+        "amg-apd-edit-toolbox-tour",
+        handler as EventListener,
+      );
+  }, []);
 
   const query = useMemo(
     () => searchQuery.trim().toLowerCase(),
@@ -391,6 +448,7 @@ export default function EditToolbar({
   const searchBlock = (
     <div className="mb-2 shrink-0" data-amg-designer={AMG_DESIGNER.editToolboxSearch}>
       <input
+        ref={searchInputRef}
         type="search"
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}

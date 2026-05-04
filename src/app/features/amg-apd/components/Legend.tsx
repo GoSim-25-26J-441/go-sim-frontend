@@ -60,15 +60,28 @@ const SEVERITY_EXPLANATION = `How Low, Medium, and High are set:
 export default function Legend({
   versionCount,
   showNodeTypes = true,
-  /** Project `/project/.../patterns`: anti-pattern help ? matches guide pips (red circle, white ?) */
+  /** Project `/project/.../patterns`: blue ? when guides chrome is on */
   projectPatternsGuidePip = false,
+  /** Project `/project/.../patterns/compare` only: gray ? but zinc/slate help modal like patterns guides */
+  patternsCompareZincAntiPatternModal = false,
+  /**
+   * Project `/project/.../patterns` only: use the same zinc/ash anti-pattern help modal as compare,
+   * even when guide pips are off (`projectPatternsGuidePip` false).
+   */
+  projectPatternsZincHelpModal = false,
 }: {
   versionCount?: number;
   showNodeTypes?: boolean;
   projectPatternsGuidePip?: boolean;
+  patternsCompareZincAntiPatternModal?: boolean;
+  projectPatternsZincHelpModal?: boolean;
 }) {
   const [showHelp, setShowHelp] = useState(false);
   const last = useAmgApdStore((s) => s.last);
+  const helpModalZincTheme =
+    projectPatternsGuidePip ||
+    patternsCompareZincAntiPatternModal ||
+    projectPatternsZincHelpModal;
 
   const closeHelp = useCallback(() => setShowHelp(false), []);
 
@@ -164,7 +177,7 @@ export default function Legend({
           >
             <div
               className={
-                projectPatternsGuidePip
+                helpModalZincTheme
                   ? "flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/98 shadow-2xl shadow-black/50 ring-1 ring-black/25 backdrop-blur-sm"
                   : "flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur-sm"
               }
@@ -172,7 +185,7 @@ export default function Legend({
             >
               <div
                 className={
-                  projectPatternsGuidePip
+                  helpModalZincTheme
                     ? "flex shrink-0 items-start justify-between gap-3 border-b border-white/10 bg-zinc-800/90 px-5 py-4"
                     : "flex shrink-0 items-start justify-between gap-3 border-b border-white/10 bg-slate-900/90 px-5 py-4"
                 }
@@ -183,7 +196,7 @@ export default function Legend({
                   </h2>
                   <p
                     className={
-                      projectPatternsGuidePip
+                      helpModalZincTheme
                         ? "mt-1 text-[11px] text-gray-400"
                         : "mt-1 text-[11px] text-white/50"
                     }
@@ -194,11 +207,7 @@ export default function Legend({
                 <button
                   type="button"
                   onClick={closeHelp}
-                  className={
-                    projectPatternsGuidePip
-                      ? "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-sm font-medium text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
-                      : "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white text-sm font-medium text-black shadow-sm transition-colors hover:bg-gray-200"
-                  }
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-sm font-medium text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
                   aria-label="Close"
                 >
                   ✕
@@ -208,14 +217,14 @@ export default function Legend({
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-5 scrollbar-dark">
                 <section
                   className={
-                    projectPatternsGuidePip
+                    helpModalZincTheme
                       ? "rounded-xl border border-white/10 bg-zinc-800/60 p-4"
                       : "rounded-xl border border-white/10 bg-white/[0.04] p-4"
                   }
                 >
                   <h3
                     className={
-                      projectPatternsGuidePip
+                      helpModalZincTheme
                         ? "mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400"
                         : "mb-2 text-[10px] font-semibold uppercase tracking-wider text-white/50"
                     }
@@ -224,7 +233,7 @@ export default function Legend({
                   </h3>
                   <pre
                     className={
-                      projectPatternsGuidePip
+                      helpModalZincTheme
                         ? "font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-gray-300"
                         : "font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-white/65"
                     }
@@ -238,7 +247,7 @@ export default function Legend({
                     <li
                       key={k}
                       className={
-                        projectPatternsGuidePip
+                        helpModalZincTheme
                           ? "flex items-start gap-3 rounded-xl border border-white/10 bg-zinc-800/70 p-3"
                           : "flex items-start gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-3"
                       }
