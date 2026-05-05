@@ -35,7 +35,9 @@ import {
   flatTimeseriesSeriesKeyFromNormalized,
   isUnscopedSeriesKey,
 } from "@/lib/simulation/metrics-series-scope";
+import { describeOptimizerActionForReplay } from "@/lib/simulation/batch-optimizer-action-display";
 import {
+  formatOnlineOptimizationBestScore,
   formatOnlineOptimizationTargetLabel,
   isInteractiveOnlineRunMode,
 } from "@/lib/simulation/objective-labels";
@@ -65,8 +67,10 @@ import {
   renewOnlineLease,
   startSimulationRun,
   stopSimulationRun,
-  type PatchRunConfigurationWorkloadItem,
+  type PatchPlacementStrategy,
   type PatchRunConfigurationPolicies,
+  type PatchRunConfigurationResponse,
+  type PatchRunConfigurationWorkloadItem,
 } from "@/lib/api-client/simulation";
 import YAML from "yaml";
 import ClusterPlacementView, {
@@ -132,6 +136,53 @@ interface RuntimeOperationRecord {
   validationOk: boolean;
   status: RuntimeOperationStatus;
   errorText?: string;
+  /** Manual admission / capacity expansion lines (not controller optimizer). */
+  admissionLines?: string[];
+}
+
+function placementStrategyLabel(s: PatchPlacementStrategy): string {
+  return s === "strict" ? "Strict" : "Expand capacity if needed";
+}
+
+function summarizePatchAdmissionResponse(resp: PatchRunConfigurationResponse): string[] {
+  const lines: string[] = [];
+  const r: Record<string, unknown> = { ...(resp as unknown as Record<string, unknown>) };
+  const ps = r.placement_strategy;
+  if (r.capacity_expanded === true) {
+    lines.push("Host capacity expanded before applying patch");
+  } else if (ps === "expand_capacity_if_needed" && r.capacity_expanded === false) {
+    lines.push("Host capacity unchanged (already sufficient for requested resources)");
+  }
+  const hc = (r.host_capacity_changes ?? r.changed_hosts) as unknown;
+  if (Array.isArray(hc)) {
+    for (const raw of hc) {
+      const h = raw as Record<string, unknown>;
+      const hid = String(h.host_id ?? h.hostId ?? "host");
+      const cpuB = h.cpu_cores_before;
+      const cpuA = h.cpu_cores_after;
+      const memB = h.memory_gb_before;
+      const memA = h.memory_gb_after;
+      const parts: string[] = [];
+      if (typeof cpuB === "number" && typeof cpuA === "number" && cpuB !== cpuA) {
+        parts.push(`CPU ${cpuB} → ${cpuA}`);
+      }
+      if (typeof memB === "number" && typeof memA === "number" && memB !== memA) {
+        parts.push(`memory ${memB} GB → ${memA} GB`);
+      }
+      if (parts.length > 0) {
+        lines.push(`Host ${hid}: ${parts.join(", ")}`);
+      }
+    }
+  }
+  const added = r.added_hosts;
+  if (Array.isArray(added) && added.length > 0) {
+    lines.push(
+      `Hosts added (${added.length}): ${added
+        .map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
+        .join(", ")}`
+    );
+  }
+  return lines;
 }
 
 const DEFAULT_LIVE_CONFIG: LiveConfig = {
@@ -982,11 +1033,6 @@ function toStr(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
 
-function getOptimizationActionLabel(reasonDetails: Record<string, unknown> | undefined): string | undefined {
-  if (!reasonDetails) return undefined;
-  return toStr(reasonDetails.type) ?? toStr(reasonDetails.action);
-}
-
 function summarizeConfigDiff(previousConfig: unknown, currentConfig: unknown): string[] {
   const prevRec = asUnknownRecord(previousConfig) ?? {};
   const currRec = asUnknownRecord(currentConfig) ?? {};
@@ -1792,6 +1838,8 @@ export default function SimulationRunPage() {
   // Live config (online mode) — editable form state; synced from optimization_step
   const [liveConfig, setLiveConfig] = useState<LiveConfig | null>(null);
   const [serviceMixerDrafts, setServiceMixerDrafts] = useState<Record<string, RuntimeServiceDraft>>({});
+  /** Manual PATCH /configuration admission; default strict (never silently expand). */
+  const [servicePatchPlacementStrategy, setServicePatchPlacementStrategy] = useState<PatchPlacementStrategy>("strict");
   const [trafficConsoleDrafts, setTrafficConsoleDrafts] = useState<
     Record<string, { pattern_key?: string; rate_rps?: number }>
   >({});
@@ -2764,13 +2812,133 @@ export default function SimulationRunPage() {
     setRuntimeOps((prev) => prev.map((op) => (op.id === id ? { ...op, ...patch } : op)));
   }, []);
 
+  const applyConfigurationSnapshotToLiveUi = useCallback(
+    (configuration: Awaited<ReturnType<typeof getRunConfiguration>>, opts?: { preserveExistingDraftConfig?: boolean }) => {
+      const preserve = opts?.preserveExistingDraftConfig ?? false;
+      setRuntimeConfigSeed(configuration);
+      const runtimeHosts = Array.isArray(configuration.hosts) ? configuration.hosts : [];
+      const runtimeServices = Array.isArray(configuration.services)
+        ? configuration.services
+            .map((service) => ({
+              service_id: service.service_id || service.id || "",
+              replicas: service.replicas,
+              cpu_cores: service.cpu_cores,
+              memory_mb: service.memory_mb,
+            }))
+            .filter(
+              (service) =>
+                typeof service.service_id === "string" && service.service_id.trim() !== ""
+            )
+        : [];
+      const runtimePlacements = Array.isArray(configuration.placements)
+        ? configuration.placements.filter(
+            (placement) =>
+              typeof placement.service_id === "string" &&
+              placement.service_id.trim() !== ""
+          )
+        : [];
+      const runtimeResources = {
+        hosts: runtimeHosts,
+        services: runtimeServices,
+        placements: runtimePlacements,
+      };
+      if (
+        runtimeResources.hosts.length > 0 ||
+        runtimeResources.services.length > 0 ||
+        runtimeResources.placements.length > 0
+      ) {
+        setClusterResources(runtimeResources);
+        setLivePlacementStatus(placementStatusFromFinalConfig(runtimeResources));
+      }
+      setLiveConfig((prev) => {
+        const next: LiveConfig = {
+          services: (configuration.services ?? [])
+            .map((service) => ({
+              id: service.id || service.service_id,
+              replicas: service.replicas,
+              cpu_cores: service.cpu_cores,
+              memory_mb: service.memory_mb,
+            }))
+            .filter((service) => typeof service.id === "string" && service.id.trim() !== ""),
+          workload: (configuration.workload ?? [])
+            .map((item) => ({
+              pattern_key: item.pattern_key,
+              rate_rps:
+                typeof item.rate_rps === "number" && Number.isFinite(item.rate_rps)
+                  ? item.rate_rps
+                  : 0,
+            }))
+            .filter((item) => typeof item.pattern_key === "string" && item.pattern_key.trim() !== ""),
+          policies: prev?.policies ?? DEFAULT_LIVE_CONFIG.policies,
+        };
+        if (preserve && prev && (prev.services.length > 0 || prev.workload.length > 0)) return prev;
+        return next;
+      });
+    },
+    []
+  );
+
+  const refreshLiveStateAfterServiceConfigurationPatch = useCallback(async () => {
+    try {
+      const configuration = await getRunConfiguration(runId);
+      setRuntimeConfigSeedNotice(null);
+      applyConfigurationSnapshotToLiveUi(configuration, { preserveExistingDraftConfig: false });
+    } catch {
+      /* non-fatal */
+    }
+    if ((runInfo?.status ?? "pending") !== "running") return;
+    try {
+      const token = await getFirebaseIdToken();
+      const res = await fetch(
+        `${env.BACKEND_BASE}/api/v1/simulation/runs/${encodeURIComponent(runId)}/metrics`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as Record<string, unknown>;
+      const metrics = data.metrics as Record<string, unknown> | undefined;
+      const list = metrics?.service_metrics;
+      if (!Array.isArray(list) || list.length === 0) return;
+      setLiveMetricsData((prev) =>
+        prev
+          ? {
+              ...prev,
+              metrics: {
+                ...(typeof prev.metrics === "object" && prev.metrics ? prev.metrics : {}),
+                ...(metrics ?? {}),
+                service_metrics: list as ServiceMetricSnapshot[],
+              },
+            }
+          : {
+              run_id: typeof data.run_id === "string" ? data.run_id : runId,
+              summary: (data.summary as MetricsSummary) ?? {},
+              metrics: { ...(metrics ?? {}), service_metrics: list as ServiceMetricSnapshot[] },
+            }
+      );
+    } catch {
+      /* optional metrics refresh */
+    }
+  }, [runId, runInfo, applyConfigurationSnapshotToLiveUi]);
+
   const formatRuntimeMutationError = useCallback((error: unknown): string => {
     if (isSimulationApiError(error)) {
-      const base = error.message;
-      if (error.status === 400) return `${base} (invalid patch payload)`;
-      if (error.status === 404) return `${base} (engine run or pattern not found)`;
-      if (error.status === 409) return `${base} (conflicting runtime update)`;
-      if (error.status === 412) return `${base} (run/config is no longer available)`;
+      let base = error.message;
+      const details = error.detailsSummary;
+      if (details && !base.includes(details)) {
+        base = `${base}\n${details}`;
+      }
+      if (error.status === 400) base = `${base}\n(invalid patch payload)`;
+      else if (error.status === 404) base = `${base}\n(engine run or pattern not found)`;
+      else if (error.status === 409) base = `${base}\n(conflicting runtime update)`;
+      else if (error.status === 412) base = `${base}\n(run/config is no longer available)`;
+      const lower = base.toLowerCase();
+      if (
+        lower.includes("host cpu capacity exceeded") ||
+        lower.includes("host memory capacity exceeded") ||
+        lower.includes("cannot place") ||
+        lower.includes("capacity exceeded")
+      ) {
+        base = `${base}\n\nTry "Expand capacity if needed" under Placement strategy if you want the engine to grow host capacity (or add hosts) before applying this patch.`;
+      }
       return base;
     }
     if (error instanceof Error) return error.message;
@@ -2814,16 +2982,27 @@ export default function SimulationRunPage() {
       kind: "services",
       method: "PATCH",
       endpoint: `/api/v1/simulation/runs/${runId}/configuration`,
-      payload: { services: payload.value },
-      summary: `Patch ${payload.value.length} service row(s)`,
+      payload: { placement_strategy: servicePatchPlacementStrategy, services: payload.value },
+      summary: `Patch ${payload.value.length} service row(s) · ${placementStrategyLabel(servicePatchPlacementStrategy)}`,
       validationOk: true,
       status: "submitted",
     });
     setConfigUpdateLoading(true);
     setConfigUpdateError(null);
     try {
-      await patchRunConfiguration(runId, { services: payload.value });
-      updateRuntimeOperation(opId, { status: "accepted" });
+      const patchResp = await patchRunConfiguration(runId, {
+        placement_strategy: servicePatchPlacementStrategy,
+        services: payload.value,
+      });
+      const admissionLines = [
+        `Strategy: ${placementStrategyLabel(servicePatchPlacementStrategy)}`,
+        ...summarizePatchAdmissionResponse(patchResp),
+      ];
+      updateRuntimeOperation(opId, {
+        status: "accepted",
+        admissionLines,
+      });
+      void refreshLiveStateAfterServiceConfigurationPatch();
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingServiceObservationById((prev) => {
           const next = { ...prev };
@@ -2838,7 +3017,11 @@ export default function SimulationRunPage() {
     } catch (e) {
       updateRuntimeOperation(opId, {
         status: "rejected",
-        errorText: e instanceof Error ? e.message : String(e),
+        errorText: isSimulationApiError(e)
+          ? [e.message, e.detailsSummary].filter(Boolean).join("\n")
+          : e instanceof Error
+            ? e.message
+            : String(e),
       });
       if (pendingTargets && Object.keys(pendingTargets).length > 0) {
         setPendingServiceObservationById((prev) => {
@@ -2852,7 +3035,18 @@ export default function SimulationRunPage() {
     } finally {
       setConfigUpdateLoading(false);
     }
-  }, [runId, liveConfig, optSteps, liveMetricsData, metricsData, recordRuntimeOperation, updateRuntimeOperation, formatRuntimeMutationError]);
+  }, [
+    runId,
+    liveConfig,
+    optSteps,
+    liveMetricsData,
+    metricsData,
+    servicePatchPlacementStrategy,
+    recordRuntimeOperation,
+    updateRuntimeOperation,
+    formatRuntimeMutationError,
+    refreshLiveStateAfterServiceConfigurationPatch,
+  ]);
 
   const applyWorkload = useCallback(async (
     workloadRows?: PatchRunConfigurationWorkloadItem[],
@@ -3106,65 +3300,8 @@ export default function SimulationRunPage() {
     void (async () => {
       try {
         const configuration = await getRunConfiguration(runId);
-        setRuntimeConfigSeed(configuration);
         setRuntimeConfigSeedNotice(null);
-        const runtimeHosts = Array.isArray(configuration.hosts) ? configuration.hosts : [];
-        const runtimeServices = Array.isArray(configuration.services)
-          ? configuration.services
-              .map((service) => ({
-                service_id: service.service_id || service.id || "",
-                replicas: service.replicas,
-                cpu_cores: service.cpu_cores,
-                memory_mb: service.memory_mb,
-              }))
-              .filter(
-                (service) =>
-                  typeof service.service_id === "string" && service.service_id.trim() !== ""
-              )
-          : [];
-        const runtimePlacements = Array.isArray(configuration.placements)
-          ? configuration.placements.filter(
-              (placement) =>
-                typeof placement.service_id === "string" &&
-                placement.service_id.trim() !== ""
-            )
-          : [];
-        const runtimeResources = {
-          hosts: runtimeHosts,
-          services: runtimeServices,
-          placements: runtimePlacements,
-        };
-        if (
-          runtimeResources.hosts.length > 0 ||
-          runtimeResources.services.length > 0 ||
-          runtimeResources.placements.length > 0
-        ) {
-          setClusterResources(runtimeResources);
-          setLivePlacementStatus(placementStatusFromFinalConfig(runtimeResources));
-        }
-        setLiveConfig((prev) => {
-          if (prev && (prev.services.length > 0 || prev.workload.length > 0)) return prev;
-          return {
-            services: (configuration.services ?? [])
-              .map((service) => ({
-                id: service.id || service.service_id,
-                replicas: service.replicas,
-                cpu_cores: service.cpu_cores,
-                memory_mb: service.memory_mb,
-              }))
-              .filter((service) => typeof service.id === "string" && service.id.trim() !== ""),
-            workload: (configuration.workload ?? [])
-              .map((item) => ({
-                pattern_key: item.pattern_key,
-                rate_rps:
-                  typeof item.rate_rps === "number" && Number.isFinite(item.rate_rps)
-                    ? item.rate_rps
-                    : 0,
-              }))
-              .filter((item) => typeof item.pattern_key === "string" && item.pattern_key.trim() !== ""),
-            policies: prev?.policies ?? DEFAULT_LIVE_CONFIG.policies,
-          };
-        });
+        applyConfigurationSnapshotToLiveUi(configuration, { preserveExistingDraftConfig: true });
       } catch (e) {
         if (isSimulationApiError(e) && e.status === 412) {
           setRuntimeConfigSeedNotice("Live runtime configuration is no longer available.");
@@ -3175,7 +3312,7 @@ export default function SimulationRunPage() {
         );
       }
     })();
-  }, [runId, isOnlineMode, status, hasEngineAssociation]);
+  }, [runId, isOnlineMode, status, hasEngineAssociation, applyConfigurationSnapshotToLiveUi]);
 
   const showMetricsSection = (status === "running" && liveMetricsData) || isTerminal;
   const displayMetrics = status === "running" && liveMetricsData ? liveMetricsData : metricsData;
@@ -3229,6 +3366,7 @@ export default function SimulationRunPage() {
     setConfigUpdateError(null);
     setLeaseRenewStatus("idle");
     setControlRoomTab("services");
+    setServicePatchPlacementStrategy("strict");
   }, [runId]);
 
   // In online mode, seed default config so user can add services/workload and apply even before first optimization step
@@ -3302,18 +3440,26 @@ export default function SimulationRunPage() {
   const onlineConfigModel: OnlineConfigModel = useMemo(() => {
     const latestStepConfig =
       [...optSteps].reverse().find((step) => step.current_config != null)?.current_config ?? null;
+    const metaObj =
+      runInfo?.metadata && typeof runInfo.metadata === "object"
+        ? (runInfo.metadata as Record<string, unknown>)
+        : null;
+    const batchLike =
+      metaObj &&
+      (isBatchOptimizationMeta(runInfo?.metadata) ||
+        metaObj.mode === "batch_recommendation" ||
+        metaObj.mode === "batch");
     return buildOnlineConfigModel({
-      runMetadata:
-        runInfo?.metadata && typeof runInfo.metadata === "object"
-          ? (runInfo.metadata as Record<string, unknown>)
-          : null,
+      runMetadata: metaObj,
+      /** Batch runs: omit generic zero-filled online `optimization_config` from locked-field sources — active batch knobs live in create-run `optimization.batch` / engine metadata. */
       optimizationConfigMetadata:
-        runInfo?.metadata &&
-        typeof runInfo.metadata === "object" &&
-        (runInfo.metadata as Record<string, unknown>).optimization_config &&
-        typeof (runInfo.metadata as Record<string, unknown>).optimization_config === "object"
-          ? ((runInfo.metadata as Record<string, unknown>).optimization_config as Record<string, unknown>)
-          : null,
+        batchLike
+          ? null
+          : metaObj &&
+              metaObj.optimization_config &&
+              typeof metaObj.optimization_config === "object"
+            ? (metaObj.optimization_config as Record<string, unknown>)
+            : null,
       latestOptimizationConfig: latestStepConfig,
       latestResources: placementSource.resources ?? null,
       scenarioServiceIds: runDerivedOptions.serviceIds,
@@ -3737,9 +3883,7 @@ export default function SimulationRunPage() {
                 const isOnlineRunMeta = isInteractiveOnlineRunMode(m.mode);
                 const fmtScore = (v: unknown, objective?: string) => {
                   if (typeof v !== "number") return String(v);
-                  return objective === "cpu_utilization" || objective === "memory_utilization"
-                    ? `${(v * 100).toFixed(2)}%`
-                    : v.toFixed(4);
+                  return formatOnlineOptimizationBestScore(v, objective);
                 };
                 return (
                   <div className="border-t border-border pt-4">
@@ -3752,6 +3896,28 @@ export default function SimulationRunPage() {
                           Batch search: interpret feasibility, violation, and efficiency —{" "}
                           <span className="text-amber-200/90">best_score</span> is a legacy efficiency-only field, not the full winner score.
                         </p>
+                        <p className="text-[11px] text-white/40 leading-relaxed">
+                          Tunables for batch runs are submitted under create-run{" "}
+                          <span className="font-mono text-white/50">optimization.batch</span> (latency caps, throughput,
+                          utilization bands, host bounds, beam settings, <span className="font-mono text-white/50">allowed_actions</span>).{" "}
+                          Generic <span className="font-mono text-white/50">metadata.optimization_config</span> often reflects online-mode
+                          placeholders and may show zeros — prefer engine summaries here or payload echoes below when the API returns them.
+                        </p>
+                        {(() => {
+                          const metaRec = m as Record<string, unknown>;
+                          const snap = metaRec.batch_config ?? metaRec.batch;
+                          if (snap == null || typeof snap !== "object") return null;
+                          return (
+                            <details className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                              <summary className="cursor-pointer text-[11px] text-white/45">
+                                Batch config echo (metadata)
+                              </summary>
+                              <pre className="mt-2 max-h-48 overflow-auto text-[10px] text-white/55 font-mono">
+                                {JSON.stringify(snap, null, 2)}
+                              </pre>
+                            </details>
+                          );
+                        })()}
                         <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3">
                           {typeof m.batch_recommendation_feasible === "boolean" && (
                             <div>
@@ -3921,8 +4087,9 @@ export default function SimulationRunPage() {
                       <>
                         {isOnlineRunMeta && (
                           <p className="text-[11px] text-white/45 mb-3">
-                            Online optimization: <span className="font-mono text-white/55">metadata.objective</span> is the
-                            same primary target as controller settings (not a separate batch metric).
+                            Online optimization: <span className="font-mono text-white/55">metadata.objective</span> matches
+                            the run&apos;s primary target (same semantics as{" "}
+                            <span className="font-mono text-white/55">optimization.objective</span> at create time).
                           </p>
                         )}
                         <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-xs">
@@ -4334,6 +4501,7 @@ export default function SimulationRunPage() {
                 payload: op.payload,
                 kind: op.kind,
                 errorText: op.errorText,
+                admissionLines: op.admissionLines,
               },
               hasError: op.status === "rejected" || Boolean(op.errorText),
             }));
@@ -4404,6 +4572,28 @@ export default function SimulationRunPage() {
               <>
                 {controlRoomTab === "services" && (
                   <div className="space-y-2">
+                    <div className="rounded border border-white/10 bg-black/25 px-3 py-2 space-y-1.5">
+                      <label className="block text-[11px] text-white/60">
+                        <span className="text-[10px] text-white/40 uppercase tracking-wide">Placement strategy</span>
+                        <select
+                          value={servicePatchPlacementStrategy}
+                          onChange={(e) =>
+                            setServicePatchPlacementStrategy(e.target.value as PatchPlacementStrategy)
+                          }
+                          disabled={configUpdateLoading}
+                          className="mt-1 w-full max-w-md rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-xs text-white"
+                        >
+                          <option value="strict">Strict — reject if the patch does not fit current host capacity</option>
+                          <option value="expand_capacity_if_needed">
+                            Expand capacity if needed — grow affected host capacity (or add hosts) before applying
+                          </option>
+                        </select>
+                      </label>
+                      <p className="text-[10px] text-white/40 leading-snug">
+                        Defaults to Strict so expansion is never silent. CPU/memory decreases can still be rejected when
+                        active requests or queued work exist, even with expansion.
+                      </p>
+                    </div>
                     <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                       <h3 className="text-xs font-medium text-white/70 uppercase tracking-wide">Services</h3>
                       <span className="text-[10px] text-white/30 font-mono">PATCH /configuration</span>
@@ -4505,7 +4695,12 @@ export default function SimulationRunPage() {
                           {servicePreviewValidation.ok ? `Valid · ${servicePreviewValidation.value.length} row(s)` : `Invalid · ${servicePreviewValidation.error}`}
                         </p>
                         <pre className="mt-1 text-[10px] text-white/70 overflow-x-auto font-mono">{JSON.stringify(
-                          servicePreviewValidation.ok ? { services: servicePreviewValidation.value } : { services: servicePreviewRows },
+                          servicePreviewValidation.ok
+                            ? {
+                                placement_strategy: servicePatchPlacementStrategy,
+                                services: servicePreviewValidation.value,
+                              }
+                            : { placement_strategy: servicePatchPlacementStrategy, services: servicePreviewRows },
                           null,
                           2
                         )}</pre>
@@ -5178,8 +5373,9 @@ export default function SimulationRunPage() {
                     </div>
                     {leaseTtlMs == null && (
                       <p className="text-xs text-white/45 bg-white/5 border border-white/10 rounded px-2 py-1">
-                        No wall-clock lease TTL was set for this run — automatic renewal is off (typical for unbounded
-                        interactive sessions). Set <span className="font-mono text-white/55">lease_ttl_ms</span> when creating a run to enable renewal timers here.
+                        No lease TTL on this run — scheduled renewal is off. Interactive real-time creates omit{" "}
+                        <span className="font-mono text-white/55">lease_ttl_ms</span>; only runs created with a positive
+                        lease TTL (or backend metadata) get renewal timers here.
                       </p>
                     )}
                     {leaseRenewError && (
@@ -5311,7 +5507,32 @@ export default function SimulationRunPage() {
                                   )}
                                 </div>
                               ) : (
-                                <pre className="mt-1 text-[10px] text-white/65 overflow-x-auto font-mono">{JSON.stringify(entry.details, null, 2)}</pre>
+                                <div className="mt-1 space-y-1">
+                                  {Array.isArray((entry.details as Record<string, unknown>).admissionLines) &&
+                                  ((entry.details as Record<string, unknown>).admissionLines as string[]).length > 0 ? (
+                                    <ul className="text-[10px] text-emerald-200/90 list-disc pl-4 space-y-0.5">
+                                      {((entry.details as Record<string, unknown>).admissionLines as string[]).map((line, i) => (
+                                        <li key={`${entry.id}-adm-${i}`}>{line}</li>
+                                      ))}
+                                    </ul>
+                                  ) : null}
+                                  {(entry.details as Record<string, unknown>).errorText ? (
+                                    <p className="text-[10px] text-red-300/90 whitespace-pre-wrap">
+                                      {String((entry.details as Record<string, unknown>).errorText)}
+                                    </p>
+                                  ) : null}
+                                  <pre className="mt-1 text-[10px] text-white/65 overflow-x-auto font-mono">
+                                    {JSON.stringify(
+                                      (() => {
+                                        const d = entry.details as Record<string, unknown>;
+                                        const { admissionLines: _al, errorText: _et, ...rest } = d;
+                                        return rest;
+                                      })(),
+                                      null,
+                                      2
+                                    )}
+                                  </pre>
+                                </div>
                               )}
                             </details>
                           </div>
@@ -5551,7 +5772,7 @@ export default function SimulationRunPage() {
                   : undefined;
                 const blocked = isOptimizerStepBlocked(step);
                 const reasonDetails = asUnknownRecord(step.reason_details);
-                const actionLabel = getOptimizationActionLabel(reasonDetails ?? undefined);
+                const actionReplay = describeOptimizerActionForReplay(reasonDetails ?? undefined);
                 const decisionReason = toStr(reasonDetails?.decision_reason);
                 const diffLines = summarizeConfigDiff(step.previous_config, step.current_config);
                 const primitiveReasonDetails = Object.entries(reasonDetails ?? {})
@@ -5562,7 +5783,7 @@ export default function SimulationRunPage() {
                   .slice(0, 4);
                 return (
                   <div
-                    key={`${step.iteration_index ?? "na"}-${actionLabel ?? step.reason ?? "step"}-${idx}`}
+                    key={`${step.iteration_index ?? "na"}-${actionReplay.primary ?? step.reason ?? "step"}-${idx}`}
                     className="rounded-lg border border-border bg-black/20 p-3 text-xs space-y-2"
                   >
                     <div className="flex items-center gap-2 flex-wrap">
@@ -5584,9 +5805,12 @@ export default function SimulationRunPage() {
                       <span className={`font-mono ${overTarget === undefined ? "text-white/45" : overTarget ? "text-red-300" : "text-emerald-300"}`}>
                         {formatTargetDelta(step.score_p95_ms, step.target_p95_ms)}
                       </span>
-                      {actionLabel && (
-                        <span className="inline-flex rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 px-2 py-0.5 font-medium">
-                          {actionLabel}
+                      {actionReplay.primary !== "—" && (
+                        <span className="inline-flex flex-col gap-0.5 rounded border border-blue-500/30 bg-blue-500/10 px-2 py-0.5">
+                          <span className="font-medium text-blue-200">{actionReplay.primary}</span>
+                          {actionReplay.diagnostic && (
+                            <span className="text-[10px] font-mono text-blue-200/55">{actionReplay.diagnostic}</span>
+                          )}
                         </span>
                       )}
                       {blocked && (

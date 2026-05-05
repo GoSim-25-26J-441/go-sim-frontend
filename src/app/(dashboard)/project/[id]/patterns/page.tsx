@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -16,6 +16,7 @@ import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesigner
 import { getAmgApdHeaders } from "@/app/features/amg-apd/api/amgApdClient";
 import type { AmgApdVersionSummary } from "@/app/features/amg-apd/types";
 import { useAmgApdStore } from "@/app/features/amg-apd/state/useAmgApdStore";
+import { usePatternsGuidesWithProfile } from "@/app/features/amg-apd/hooks/usePatternsGuidesWithProfile";
 import { useReturnToChatFromPatterns } from "@/modules/di/useReturnToChatFromPatterns";
 import { useAuth } from "@/providers/auth-context";
 import { useToast } from "@/hooks/useToast";
@@ -27,12 +28,12 @@ export default function ProjectPatternsPage({
 }) {
   const { id: projectId } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { returnToChat, returning } = useReturnToChatFromPatterns(projectId);
   const patternsGraphFullscreen = useAmgApdStore(
     (s) => s.patternsGraphFullscreen,
   );
-  const guidesActive = useAmgApdStore((s) => s.patternsGuidesEnabled);
-  const togglePatternsGuides = useAmgApdStore((s) => s.togglePatternsGuides);
+  const { guidesActive, toggleGuides } = usePatternsGuidesWithProfile();
   const { userId } = useAuth();
   const showToast = useToast((s) => s.showToast);
 
@@ -41,32 +42,55 @@ export default function ProjectPatternsPage({
     useState("");
   const [versions, setVersions] = useState<AmgApdVersionSummary[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
+  const [activeDiagramVersionId, setActiveDiagramVersionId] = useState("");
+  /** Centered loading card during compare / chat / simulation navigation */
+  const [pageTransitionLabel, setPageTransitionLabel] = useState<string | null>(
+    null,
+  );
+  const diagramVersionFromQuery = searchParams.get("diagramVersion")?.trim() || "";
+  const effectiveDiagramVersionId =
+    activeDiagramVersionId || diagramVersionFromQuery;
+  const selectedDiagramVersion = useMemo(() => {
+    if (effectiveDiagramVersionId) {
+      return versions.find((v) => v.id === effectiveDiagramVersionId) ?? null;
+    }
+    if (!versions.length) return null;
+    return versions.reduce((latest, current) =>
+      current.version_number > latest.version_number ? current : latest,
+    );
+  }, [effectiveDiagramVersionId, versions]);
+  const diagramVersionId =
+    selectedDiagramVersion?.id ?? effectiveDiagramVersionId;
+  const diagramTitle = selectedDiagramVersion?.title?.trim() || "Unknown";
+
+  const fetchVersions = useCallback(async () => {
+    if (!projectId?.trim()) return;
+    setLoadingVersions(true);
+    try {
+      const res = await fetch("/api/amg-apd/versions", {
+        headers: getAmgApdHeaders({
+          userId: userId ?? undefined,
+          chatId: projectId,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setVersions(data?.versions ?? []);
+    } catch {
+      setVersions([]);
+    } finally {
+      setLoadingVersions(false);
+    }
+  }, [projectId, userId]);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!projectId?.trim()) return;
-    (async () => {
-      setLoadingVersions(true);
-      try {
-        const res = await fetch("/api/amg-apd/versions", {
-          headers: getAmgApdHeaders({
-            userId: userId ?? undefined,
-            chatId: projectId,
-          }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (!cancelled) setVersions(data?.versions ?? []);
-      } catch {
-        if (!cancelled) setVersions([]);
-      } finally {
-        if (!cancelled) setLoadingVersions(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, userId]);
+    void fetchVersions();
+  }, [fetchVersions]);
+
+  useEffect(() => {
+    if (!diagramVersionFromQuery) return;
+    setActiveDiagramVersionId(diagramVersionFromQuery);
+  }, [diagramVersionFromQuery]);
 
   const openSimulationModal = useCallback(() => {
     setSimulationModalOpen(true);
@@ -79,6 +103,7 @@ export default function ProjectPatternsPage({
 
   function handleSimulationConfirm() {
     if (projectId && simulationSelectedVersion) {
+      setPageTransitionLabel("Starting performance simulation…");
       router.push(
         `/project/${projectId}/simulation/new?version=${encodeURIComponent(simulationSelectedVersion)}`,
       );
@@ -86,6 +111,15 @@ export default function ProjectPatternsPage({
       showToast("Please select a version first", "warning");
     }
     closeSimulationModal();
+  }
+
+  async function handleReturnToChatWithOverlay() {
+    setPageTransitionLabel("Opening project chat…");
+    try {
+      await returnToChat();
+    } finally {
+      setPageTransitionLabel(null);
+    }
   }
 
   return (
@@ -119,6 +153,18 @@ export default function ProjectPatternsPage({
                 style={{ color: "rgba(255,255,255,0.35)" }}
               >
                 Project · <span className="font-mono">{projectId}</span>
+                {(diagramVersionId || loadingVersions) && (
+                  <>
+                    {" · "}Diagram ID ·{" "}
+                    <span className="font-mono">
+                      {diagramVersionId || "Loading..."}
+                    </span>
+                    {" · "}Diagram Name ·{" "}
+                    {loadingVersions && !diagramVersionId
+                      ? "Loading..."
+                      : diagramTitle}
+                  </>
+                )}
               </span>
             </div>
           </div>
@@ -126,7 +172,11 @@ export default function ProjectPatternsPage({
             <button
               type="button"
               data-amg-designer={AMG_DESIGNER.guides}
-              onClick={() => togglePatternsGuides()}
+              onClick={() =>
+                void toggleGuides().catch(() =>
+                  showToast("Could not save guide preference", "error"),
+                )
+              }
               title={
                 guidesActive
                   ? "Hide guided highlights"
@@ -144,7 +194,7 @@ export default function ProjectPatternsPage({
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => void returnToChat()}
+                onClick={() => void handleReturnToChatWithOverlay()}
                 disabled={returning}
                 aria-label="Back to project chat"
                 className="flex items-center gap-1 rounded-md bg-emerald-600/80 px-2.5 py-1 text-xs font-medium text-white transition-all duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
@@ -168,51 +218,87 @@ export default function ProjectPatternsPage({
         </div>
       )}
 
+      {pageTransitionLabel &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[500000] flex items-center justify-center p-6"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md animate-in fade-in duration-300"
+              aria-hidden
+            />
+            <div className="relative flex w-full min-w-[min(22rem,92vw)] max-w-[min(34rem,calc(100vw-2rem))] flex-col items-stretch gap-6 rounded-xl border border-white/10 bg-zinc-900/96 px-10 py-9 text-center shadow-2xl ring-1 ring-black/35 animate-in fade-in zoom-in-95 duration-300">
+              <div
+                className="flex h-10 items-end justify-center gap-1.5"
+                aria-hidden
+              >
+                {[32, 52, 40, 64, 36, 48].map((hPct, i) => (
+                  <span
+                    key={i}
+                    className="w-1.5 rounded-sm bg-zinc-500/80 motion-safe:animate-pulse"
+                    style={{
+                      height: `${hPct}%`,
+                      animationDelay: `${i * 100}ms`,
+                      animationDuration: "1.05s",
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="space-y-2 border-t border-white/[0.07] pt-5">
+                <p className="text-sm font-semibold tracking-tight text-zinc-100">
+                  {pageTransitionLabel}
+                </p>
+                <p className="text-xs leading-relaxed text-zinc-500">
+                  Please wait while we open the next workspace.
+                </p>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
       {simulationModalOpen &&
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 z-220000 flex items-center justify-center bg-black/10 p-4 backdrop-blur-md"
+            className="fixed inset-0 z-[160000] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]"
             onClick={(e) =>
               e.target === e.currentTarget && closeSimulationModal()
             }
           >
             <div
               data-amg-designer={AMG_DESIGNER.simulationModal}
-              className="relative mx-4 flex w-full max-w-md flex-col overflow-hidden rounded-md shadow-xl bg-[#1F1F1F]"
+              className="relative mx-4 flex max-h-[min(52vh,20rem)] w-full max-w-md flex-col overflow-hidden rounded-lg border border-white/10 bg-zinc-900/98 shadow-2xl ring-1 ring-black/25"
               onClick={(e) => e.stopPropagation()}
               role="dialog"
               aria-labelledby="patterns-simulation-modal-title"
               aria-describedby="patterns-simulation-modal-desc"
             >
               <div
-                className="absolute top-0 right-0 left-0 h-px"
-                style={{
-                  background:
-                    "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)",
-                }}
+                className="absolute top-0 right-0 left-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"
+                aria-hidden
               />
 
-              <div
-                className="flex items-center justify-between px-5 py-4"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-              >
-                <div className="flex min-w-0 items-center gap-3">
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex min-w-0 items-center gap-2.5">
                   <Gauge
-                    className="h-6 w-6 shrink-0 text-white"
+                    className="h-5 w-5 shrink-0 text-gray-300"
                     aria-hidden
                   />
                   <div className="min-w-0">
                     <h2
                       id="patterns-simulation-modal-title"
-                      className="text-base font-semibold leading-none text-white"
+                      className="text-sm font-semibold leading-tight text-white sm:text-base"
                     >
                       Proceed to Performance Simulation
                     </h2>
                     <span
                       id="patterns-simulation-modal-desc"
-                      className="mt-0.5 block text-xs"
-                      style={{ color: "rgba(255,255,255,0.35)" }}
+                      className="mt-0.5 block text-[11px] text-gray-500"
                     >
                       Select a saved diagram version to load in the simulator
                     </span>
@@ -221,34 +307,34 @@ export default function ProjectPatternsPage({
                 <button
                   type="button"
                   onClick={closeSimulationModal}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-transparent bg-white text-black transition-all duration-150 hover:bg-white/80 hover:text-black/80"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
                   aria-label="Close"
                 >
-                  <X className="h-4 w-4" aria-hidden />
+                  <X className="h-3.5 w-3.5" aria-hidden />
                 </button>
               </div>
 
-              <div className="px-5 py-4">
+              <div className="min-h-0 px-4 py-2.5">
                 <div
-                  className="flex flex-col gap-2"
+                  className="flex flex-col gap-1.5"
                   data-amg-designer={AMG_DESIGNER.simulationVersionSelect}
                 >
                   <label
                     htmlFor="patterns-simulation-version-select"
-                    className="text-xs font-medium text-white/70"
+                    className="text-[11px] font-medium text-gray-400"
                   >
                     Version
                   </label>
                   <select
                     id="patterns-simulation-version-select"
-                    className="w-full rounded-lg bg-white px-4 py-2.5 text-sm text-black scheme-light focus:outline-none focus:ring-2 focus:ring-black/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-md border border-white/10 bg-zinc-800 py-1.5 pl-2.5 pr-8 text-sm text-white scheme-dark focus:outline-none focus:ring-1 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-50"
                     value={simulationSelectedVersion}
                     onChange={(e) =>
                       setSimulationSelectedVersion(e.target.value)
                     }
                     disabled={loadingVersions}
                   >
-                    <option value="" className="bg-white text-black">
+                    <option value="" className="bg-zinc-900 text-gray-400">
                       {loadingVersions
                         ? "Loading versions…"
                         : "Select version…"}
@@ -257,7 +343,7 @@ export default function ProjectPatternsPage({
                       <option
                         key={v.id}
                         value={v.id}
-                        className="bg-white text-black"
+                        className="bg-zinc-900 text-white"
                       >
                         #{v.version_number} {v.title || "Untitled"}
                       </option>
@@ -267,18 +353,13 @@ export default function ProjectPatternsPage({
               </div>
 
               <div
-                className="flex justify-end gap-2 px-4 pt-3 pb-4"
-                style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
+                className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-4 py-2.5"
                 data-amg-designer={AMG_DESIGNER.simulationModalFooter}
               >
                 <button
                   type="button"
                   onClick={closeSimulationModal}
-                  className="rounded-full px-4 py-2 text-xs font-medium text-white transition-all duration-150 hover:bg-white/10"
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    backgroundColor: "rgba(255,255,255,0.06)",
-                  }}
+                  className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-zinc-700/90"
                 >
                   Cancel
                 </button>
@@ -286,7 +367,7 @@ export default function ProjectPatternsPage({
                   type="button"
                   onClick={handleSimulationConfirm}
                   disabled={!simulationSelectedVersion}
-                  className="rounded-full px-4 py-2 text-xs font-medium text-black transition-all duration-150 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45 bg-white"
+                  className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   Proceed
                 </button>
@@ -305,10 +386,17 @@ export default function ProjectPatternsPage({
       >
         <PatternsView
           projectId={projectId}
-          onReturnToChat={() => returnToChat()}
+          onReturnToChat={() => void handleReturnToChatWithOverlay()}
           stickyToolbar={false}
           onRequestOpenSimulationModal={openSimulationModal}
           onCloseSimulationModal={closeSimulationModal}
+          onPageTransitionStart={(label) => setPageTransitionLabel(label)}
+          onActiveVersionChange={(versionId) =>
+            setActiveDiagramVersionId(versionId?.trim() || "")
+          }
+          onVersionsListShouldRefresh={() => {
+            void fetchVersions();
+          }}
         />
       </div>
     </div>

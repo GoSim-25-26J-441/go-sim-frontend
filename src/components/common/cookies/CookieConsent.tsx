@@ -63,7 +63,7 @@ export default function CookieConsent() {
               </h3>
 
               <p className="text-xs font-normal text-black/70 leading-relaxed mt-1">
-                We use essential cookies to make GO-SIM work properly and improve
+                We use essential cookies to make ArcFind work properly and improve
                 your experience. By clicking <span className="font-semibold text-black">Accept</span>,
                 you agree to our use of cookies. Learn more in our{" "}
                 <a

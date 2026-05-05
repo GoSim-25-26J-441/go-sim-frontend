@@ -60,12 +60,28 @@ const SEVERITY_EXPLANATION = `How Low, Medium, and High are set:
 export default function Legend({
   versionCount,
   showNodeTypes = true,
+  /** Project `/project/.../patterns`: blue ? when guides chrome is on */
+  projectPatternsGuidePip = false,
+  /** Project `/project/.../patterns/compare` only: gray ? but zinc/slate help modal like patterns guides */
+  patternsCompareZincAntiPatternModal = false,
+  /**
+   * Project `/project/.../patterns` only: use the same zinc/ash anti-pattern help modal as compare,
+   * even when guide pips are off (`projectPatternsGuidePip` false).
+   */
+  projectPatternsZincHelpModal = false,
 }: {
   versionCount?: number;
   showNodeTypes?: boolean;
+  projectPatternsGuidePip?: boolean;
+  patternsCompareZincAntiPatternModal?: boolean;
+  projectPatternsZincHelpModal?: boolean;
 }) {
   const [showHelp, setShowHelp] = useState(false);
   const last = useAmgApdStore((s) => s.last);
+  const helpModalZincTheme =
+    projectPatternsGuidePip ||
+    patternsCompareZincAntiPatternModal ||
+    projectPatternsZincHelpModal;
 
   const closeHelp = useCallback(() => setShowHelp(false), []);
 
@@ -100,7 +116,9 @@ export default function Legend({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
         {showNodeTypes && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-white/80 text-xs">Node types:</span>
+            <span className="font-semibold text-white/80 text-xs">
+              Node types:
+            </span>
             {Object.entries(NODE_KIND_COLOR).map(([k, c]) => (
               <span key={k} className="inline-flex items-center gap-1.5">
                 <span
@@ -113,15 +131,19 @@ export default function Legend({
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-white/80 text-xs">Anti-patterns:</span>
+          <span className="font-semibold text-white/80 text-xs">
+            Anti-patterns:
+          </span>
           <button
             type="button"
             data-amg-designer={AMG_DESIGNER.legendHelp}
             onClick={() => setShowHelp(true)}
             className={
-              versionCount === 1
-                ? "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/25 bg-white/15 text-[10px] font-semibold text-white transition-colors hover:bg-white/25"
-                : "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15"
+              projectPatternsGuidePip
+                ? "inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-800 text-[11px] font-bold text-white shadow-sm ring-2 ring-black/30 transition-colors hover:bg-blue-700"
+                : versionCount === 1
+                  ? "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/25 bg-white/15 text-[10px] font-semibold text-white transition-colors hover:bg-white/25"
+                  : "inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-white/10 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/15"
             }
             aria-label="What do these anti-patterns mean?"
             title="View explanations"
@@ -138,7 +160,9 @@ export default function Legend({
                 style={{ background: colorForDetectionKind(k) }}
                 className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white/10"
               />
-              <span className="text-white/80 text-xs">{antipatternKindLabel(k)}</span>
+              <span className="text-white/80 text-xs">
+                {antipatternKindLabel(k)}
+              </span>
             </span>
           ))}
         </div>
@@ -152,22 +176,38 @@ export default function Legend({
             onClick={(e) => e.target === e.currentTarget && closeHelp()}
           >
             <div
-              className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur-sm"
+              className={
+                helpModalZincTheme
+                  ? "flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/98 shadow-2xl shadow-black/50 ring-1 ring-black/25 backdrop-blur-sm"
+                  : "flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur-sm"
+              }
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 bg-slate-900/90 px-5 py-4">
+              <div
+                className={
+                  helpModalZincTheme
+                    ? "flex shrink-0 items-start justify-between gap-3 border-b border-white/10 bg-zinc-800/90 px-5 py-4"
+                    : "flex shrink-0 items-start justify-between gap-3 border-b border-white/10 bg-slate-900/90 px-5 py-4"
+                }
+              >
                 <div className="min-w-0 pr-2">
                   <h2 className="text-sm font-semibold text-white">
                     Anti-pattern explanations
                   </h2>
-                  <p className="mt-1 text-[11px] text-white/50">
+                  <p
+                    className={
+                      helpModalZincTheme
+                        ? "mt-1 text-[11px] text-gray-400"
+                        : "mt-1 text-[11px] text-white/50"
+                    }
+                  >
                     How we label issues in your architecture graph.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={closeHelp}
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white text-sm font-medium text-black shadow-sm transition-colors hover:bg-gray-200"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-sm font-medium text-gray-900 shadow-sm transition-colors hover:bg-gray-100"
                   aria-label="Close"
                 >
                   ✕
@@ -175,11 +215,29 @@ export default function Legend({
               </div>
 
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-5 scrollbar-dark">
-                <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-                  <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                <section
+                  className={
+                    helpModalZincTheme
+                      ? "rounded-xl border border-white/10 bg-zinc-800/60 p-4"
+                      : "rounded-xl border border-white/10 bg-white/[0.04] p-4"
+                  }
+                >
+                  <h3
+                    className={
+                      helpModalZincTheme
+                        ? "mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400"
+                        : "mb-2 text-[10px] font-semibold uppercase tracking-wider text-white/50"
+                    }
+                  >
                     Low, medium &amp; high severity
                   </h3>
-                  <pre className="font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-white/65">
+                  <pre
+                    className={
+                      helpModalZincTheme
+                        ? "font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-gray-300"
+                        : "font-sans text-[11px] leading-relaxed whitespace-pre-wrap text-white/65"
+                    }
+                  >
                     {SEVERITY_EXPLANATION}
                   </pre>
                 </section>
@@ -188,7 +246,11 @@ export default function Legend({
                   {kinds.map((k) => (
                     <li
                       key={k}
-                      className="flex items-start gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-3"
+                      className={
+                        helpModalZincTheme
+                          ? "flex items-start gap-3 rounded-xl border border-white/10 bg-zinc-800/70 p-3"
+                          : "flex items-start gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-3"
+                      }
                     >
                       <span
                         style={{ background: colorForDetectionKind(k) }}
@@ -208,7 +270,7 @@ export default function Legend({
               </div>
             </div>
           </div>,
-          document.body
+          document.body,
         )}
     </>
   );

@@ -1,6 +1,6 @@
 # go-sim-frontend
 
-Next.js 15 frontend for GO-SIM: project and diagram workflows, AMG-APD graph editing, and simulation run configuration (including the scenario behavior editor).
+Next.js 15 frontend for ArcFind: project and diagram workflows, AMG-APD graph editing, and simulation run configuration (including the scenario behavior editor).
 
 ## Requirements
 

@@ -20,12 +20,25 @@ export default function VersionSidebar({
   refreshTrigger = 0,
   projectId,
   designerTourForceOpenNonce = 0,
+  projectPatternsPage = false,
+  guidesActive = false,
+  /** Project patterns: invoked when user clicks Compare (before navigation). */
+  onCompareNavigate,
+  /** After a version graph is loaded from the API (same or different id). Remount canvas to avoid Cytoscape patch drift (e.g. duplicate nodes). */
+  onVersionGraphApplied,
 }: {
   refreshTrigger?: number;
   /** When provided, all API calls use this as X-Chat-Id for project-scoped versions */
   projectId?: string;
   /** Incremented by the designer tour to open the versions menu */
   designerTourForceOpenNonce?: number;
+  /** Project `/project/.../patterns` layout chrome */
+  projectPatternsPage?: boolean;
+  /** When true on project page, count badge is replaced by a blue ? (guides active) */
+  guidesActive?: boolean;
+  /** Project patterns: invoked when user clicks Compare (before navigation). */
+  onCompareNavigate?: () => void;
+  onVersionGraphApplied?: (versionId?: string) => void;
 } = {}) {
   const { userId } = useAuth();
   const headers = () =>
@@ -82,6 +95,12 @@ export default function VersionSidebar({
       if (buttonRef.current?.contains(target)) return;
       const portal = document.getElementById("versions-dropdown-portal");
       if (portal?.contains(target)) return;
+      if (
+        target instanceof HTMLElement &&
+        target.closest("[data-amg-apd-designer-tour-popover]")
+      ) {
+        return;
+      }
       setOpen(false);
     }
     if (open) {
@@ -134,8 +153,7 @@ export default function VersionSidebar({
       const v = await versionRes.json();
       const yamlContent = v?.yaml_content;
       const graph = v?.graph;
-      if (!yamlContent || !graph)
-        throw new Error("Version has no YAML or graph content");
+      if (!graph) throw new Error("Version has no graph content");
 
       // Load this version into the canvas without creating a new version (no analyze-upload).
       const data: AnalysisResult = {
@@ -148,8 +166,9 @@ export default function VersionSidebar({
       };
 
       setLast(data);
-      setEditedYaml(yamlContent);
+      setEditedYaml(typeof yamlContent === "string" ? yamlContent : "");
       commitGraphBaseline();
+      onVersionGraphApplied?.(v?.id);
       showToast("Switched to version successfully", "success");
     } catch (e: any) {
       showToast(
@@ -294,14 +313,18 @@ export default function VersionSidebar({
           document.body,
         )}
       <div className="relative inline-flex">
-        {versions.length > 0 && (
+        {/*
+          Project patterns + guides: chapter (?) pip is rendered by PatternsDesignerTour
+          on the same `data-amg-designer` anchor — avoid a second overlapping badge here.
+        */}
+        {!guidesActive && versions.length > 0 ? (
           <span
-            className="absolute -top-3 -right-3 z-10 inline-flex items-center justify-center min-w-[1rem] h-4 px-1.5 rounded-sm text-[10px] font-semibold tabular-nums bg-red-800 text-white ring-2 ring-black/30"
+            className="absolute -top-3 -right-3 z-10 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-sm bg-red-800 px-1.5 text-[10px] font-semibold tabular-nums text-white ring-2 ring-black/30"
             aria-label={`${versions.length} version(s)`}
           >
             {versions.length}
           </span>
-        )}
+        ) : null}
         <button
           ref={buttonRef}
           type="button"
@@ -318,11 +341,21 @@ export default function VersionSidebar({
         createPortal(
           <div
             id="versions-dropdown-portal"
-            className="fixed z-99999 w-80 rounded-md  bg-black text-white shadow-2xl shadow-black/50 overflow-hidden"
+            className={
+              projectPatternsPage
+                ? "fixed z-99999 w-80 overflow-hidden rounded-md border border-white/10 bg-zinc-900 text-gray-100 shadow-2xl shadow-black/50"
+                : "fixed z-99999 w-80 overflow-hidden rounded-md bg-black text-white shadow-2xl shadow-black/50"
+            }
             style={{ top: position.top, left: position.left }}
           >
-            <div className="flex items-center justify-between gap-2 bg-black/10 px-4 py-3">
-              <span className="text-xs font-semibold uppercase tracking-wider">
+            <div
+              className={
+                projectPatternsPage
+                  ? "flex items-center justify-between gap-2 border-b border-white/10 bg-zinc-900/95 px-4 py-3"
+                  : "flex items-center justify-between gap-2 bg-black/10 px-4 py-3"
+              }
+            >
+              <span className="text-xs font-semibold uppercase tracking-wider text-white/90">
                 Versions
               </span>
               <Link
@@ -332,8 +365,15 @@ export default function VersionSidebar({
                     : "/dashboard/patterns/compare"
                 }
                 data-amg-designer={AMG_DESIGNER.versionCompare}
-                className="inline-flex items-center rounded-md border border-white/20 bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-gray-200"
-                onClick={closePanel}
+                className={
+                  projectPatternsPage
+                    ? "inline-flex items-center rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                    : "inline-flex items-center rounded-md border border-white/20 bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-gray-200"
+                }
+                onClick={() => {
+                  onCompareNavigate?.();
+                  closePanel();
+                }}
               >
                 Compare
               </Link>
@@ -385,14 +425,22 @@ export default function VersionSidebar({
                             disabled={
                               savingTitleId === v.id || !editingTitle.trim()
                             }
-                            className="rounded-lg bg-[#9AA4B2] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className={
+                              projectPatternsPage
+                                ? "rounded-md bg-white px-2.5 py-1 text-[10px] font-semibold text-black shadow-sm hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                : "rounded-lg bg-[#9AA4B2] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#9AA4B2]/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                            }
                           >
                             {savingTitleId === v.id ? "Saving…" : "Save"}
                           </button>
                           <button
                             type="button"
                             onClick={cancelRename}
-                            className="rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-white/10"
+                            className={
+                              projectPatternsPage
+                                ? "rounded-md border border-white/10 bg-zinc-800 px-2.5 py-1 text-[10px] font-medium text-gray-200 hover:bg-zinc-700/90"
+                                : "rounded-lg border border-white/20 px-2.5 py-1 text-[10px] text-white/70 hover:bg-white/10"
+                            }
                           >
                             Cancel
                           </button>

@@ -1,6 +1,7 @@
 "use client";
 
-import { Maximize2, Minimize2, RotateCcw } from "lucide-react";
+import type { KeyboardEvent } from "react";
+import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
 import type { AnalysisResult } from "@/app/features/amg-apd/types";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
 
@@ -47,6 +48,19 @@ type Props = {
   /** Toggle guided highlights (welcome + ? markers). */
   guidesActive?: boolean;
   onGuidesToggle?: () => void;
+
+  /** Project `/project/.../patterns` only: stepped zoom next to Fit. */
+  patternsPageZoom?: {
+    displayPercent: number;
+    fieldEditing: boolean;
+    fieldDraft: string;
+    onMinus: () => void;
+    onPlus: () => void;
+    onFieldClick: () => void;
+    onFieldChange: (value: string) => void;
+    onFieldBlur: () => void;
+    onFieldKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
+  };
 };
 
 export default function ControlPanel({
@@ -62,6 +76,7 @@ export default function ControlPanel({
   fullscreenButton,
   onResetCanvas,
   resetDisabled = false,
+  patternsPageZoom,
 }: Props) {
   const {
     services,
@@ -100,6 +115,51 @@ export default function ControlPanel({
           >
             Fit to Screen
           </button>
+          {patternsPageZoom && (
+            <div
+              data-amg-designer={AMG_DESIGNER.layoutZoom}
+              className="inline-flex items-stretch overflow-hidden rounded-md border border-white/15 bg-[#1F1F1F] text-white shrink-0"
+              title="Zoom (10% per step; scroll the canvas also steps by 10%)"
+            >
+              <button
+                type="button"
+                onClick={patternsPageZoom.onMinus}
+                className="flex items-center justify-center px-2 py-1 text-sm font-semibold leading-none hover:bg-white/10 active:bg-white/5"
+                aria-label="Zoom out 10%"
+              >
+                <Minus className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+              </button>
+              {patternsPageZoom.fieldEditing ? (
+                <input
+                  autoFocus
+                  type="text"
+                  inputMode="numeric"
+                  value={patternsPageZoom.fieldDraft}
+                  onChange={(e) => patternsPageZoom.onFieldChange(e.target.value)}
+                  onBlur={patternsPageZoom.onFieldBlur}
+                  onKeyDown={patternsPageZoom.onFieldKeyDown}
+                  className="w-[3.25rem] border-x border-white/10 bg-[#141414] px-1 py-1 text-center text-[11px] font-semibold tabular-nums text-white outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-500/60"
+                  aria-label="Zoom percent"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={patternsPageZoom.onFieldClick}
+                  className="min-w-[3.25rem] border-x border-white/10 bg-[#141414] px-1 py-1 text-center text-[11px] font-semibold tabular-nums text-white hover:bg-white/5"
+                >
+                  {patternsPageZoom.displayPercent}%
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={patternsPageZoom.onPlus}
+                className="flex items-center justify-center px-2 py-1 text-sm font-semibold leading-none hover:bg-white/10 active:bg-white/5"
+                aria-label="Zoom in 10%"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+              </button>
+            </div>
+          )}
         </div>
 
         {!readOnly && (

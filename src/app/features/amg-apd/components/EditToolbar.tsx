@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
 import type {
   EditTool,
@@ -133,6 +133,10 @@ type Props = {
   ) => (e: ReactDragEvent<HTMLButtonElement>) => void;
   onToolDragEnd?: () => void;
   draggingAntiPatternKind?: DetectionKind | null;
+  /** Project patterns + guides: anti-pattern toolbox rows use white primary chrome */
+  projectPatternsGuideAntiChrome?: boolean;
+  /** Scroll list scrollbar class (project patterns uses gray workspace scrollbar). */
+  scrollbarClassName?: string;
 };
 
 export default function EditToolbar({
@@ -147,12 +151,71 @@ export default function EditToolbar({
   onAntiPatternDragStart,
   onToolDragEnd,
   draggingAntiPatternKind = null,
+  projectPatternsGuideAntiChrome = false,
+  scrollbarClassName = "scrollbar-toolbox",
 }: Props) {
   void _defaultCallProtocol;
   void _defaultCallSync;
   void _onDefaultCallChange;
 
   const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const e = ev as CustomEvent<{
+        action?: string;
+        step?: "search" | "nodes" | "anti";
+      }>;
+      const root = document.querySelector(
+        "[data-amg-designer-toolbox-scroll]",
+      ) as HTMLElement | null;
+      const run = (fn: () => void) => {
+        requestAnimationFrame(() => requestAnimationFrame(fn));
+      };
+      if (e.detail?.action === "reset") {
+        setSearchQuery("");
+        if (root) root.scrollTop = 0;
+        searchInputRef.current?.blur();
+        return;
+      }
+      if (e.detail?.action !== "step" || !e.detail.step) return;
+      setSearchQuery("");
+      const step = e.detail.step;
+      if (step === "search") {
+        if (root) root.scrollTo({ top: 0, behavior: "smooth" });
+        run(() => {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        });
+        return;
+      }
+      if (step === "nodes") {
+        if (root) root.scrollTo({ top: 0, behavior: "smooth" });
+        run(() => {
+          document
+            .querySelector(`[data-amg-designer="${AMG_DESIGNER.editToolboxNodes}"]`)
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth", inline: "nearest" });
+        });
+        return;
+      }
+      if (step === "anti") {
+        run(() => {
+          document
+            .querySelector(
+              `[data-amg-designer="${AMG_DESIGNER.editToolboxAntiPatterns}"]`,
+            )
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth", inline: "nearest" });
+        });
+      }
+    };
+    window.addEventListener("amg-apd-edit-toolbox-tour", handler as EventListener);
+    return () =>
+      window.removeEventListener(
+        "amg-apd-edit-toolbox-tour",
+        handler as EventListener,
+      );
+  }, []);
 
   const query = useMemo(
     () => searchQuery.trim().toLowerCase(),
@@ -262,11 +325,12 @@ export default function EditToolbar({
 
   const scrollOuterClass =
     variant === "sidebar"
-      ? "flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable]"
-      : `flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 scrollbar-toolbox pr-2 [scrollbar-gutter:stable] ${scrollListMaxTwoThirds}`;
+      ? `flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 ${scrollbarClassName} pr-2 [scrollbar-gutter:stable]`
+      : `flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden overscroll-contain sm:gap-2 ${scrollbarClassName} pr-2 [scrollbar-gutter:stable] ${scrollListMaxTwoThirds}`;
 
   const scrollArea = (
     <div
+      data-amg-designer-toolbox-scroll=""
       className={scrollOuterClass}
       onWheel={(e) => e.stopPropagation()}
     >
@@ -293,6 +357,16 @@ export default function EditToolbar({
             const isDragging =
               draggingAntiPatternKind === kind || pendingAntiPatternKind === kind;
             const ac = toneRowClasses.anti;
+            const projectAntiIdle = `${rowBase} cursor-pointer border border-white/20 bg-white text-black shadow-sm hover:bg-gray-100`;
+            const projectAntiPending = `${rowBase} cursor-pointer border border-rose-500 bg-white text-black shadow-sm ring-2 ring-rose-400/45`;
+            const rowClass =
+              projectPatternsGuideAntiChrome
+                ? isDragging
+                  ? projectAntiPending
+                  : projectAntiIdle
+                : isDragging
+                  ? ac.pending
+                  : ac.idle;
             return (
               <button
                 key={kind}
@@ -301,11 +375,17 @@ export default function EditToolbar({
                 title={`Drag and drop a sample graph that triggers ${antipatternKindLabel(kind)}.`}
                 onDragStart={onAntiPatternDragStart?.(kind)}
                 onDragEnd={onToolDragEnd}
-                className={isDragging ? ac.pending : ac.idle}
+                className={rowClass}
               >
                 <span
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md sm:h-10 sm:w-10 ${
-                    isDragging ? ac.iconWrapPending : ac.iconWrapIdle
+                    projectPatternsGuideAntiChrome
+                      ? isDragging
+                        ? "bg-rose-100/90"
+                        : "bg-slate-100/90"
+                      : isDragging
+                        ? ac.iconWrapPending
+                        : ac.iconWrapIdle
                   }`}
                 >
                   {/* Native img: reliable src swap on error for SVG→PNG fallback */}
@@ -337,7 +417,13 @@ export default function EditToolbar({
                   </span>
                   <span
                     className={`truncate text-[9px] sm:text-[10px] ${
-                      isDragging ? ac.hintPending : "text-black/80"
+                      projectPatternsGuideAntiChrome
+                        ? isDragging
+                          ? "text-rose-900/75"
+                          : "text-black/75"
+                        : isDragging
+                          ? ac.hintPending
+                          : "text-black/80"
                     }`}
                   >
                     Drag to canvas
@@ -362,6 +448,7 @@ export default function EditToolbar({
   const searchBlock = (
     <div className="mb-2 shrink-0" data-amg-designer={AMG_DESIGNER.editToolboxSearch}>
       <input
+        ref={searchInputRef}
         type="search"
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}

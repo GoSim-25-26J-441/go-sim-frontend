@@ -4,10 +4,12 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
 import { createPortal } from "react-dom";
@@ -84,6 +86,9 @@ import {
 } from "@/app/features/amg-apd/components/graph/recomputeStats";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AMG_DESIGNER } from "@/app/features/amg-apd/components/patternsDesignerTour/anchors";
+import {
+  padDataUrlToSquareWhite,
+} from "@/app/features/amg-apd/utils/architectureReportMedia";
 import { AntiPatternTourDiagram } from "@/app/features/amg-apd/components/patternsDesignerTour/AntiPatternTourDiagrams";
 import { ANTI_PATTERN_TOUR_HELP } from "@/app/features/amg-apd/components/patternsDesignerTour/antiPatternTourCopy";
 import { antipatternKindLabel } from "@/app/features/amg-apd/utils/displayNames";
@@ -114,6 +119,11 @@ function cyAlive(cy: cytoscape.Core | null): cy is cytoscape.Core {
   if (typeof anyCy.destroyed === "function" && anyCy.destroyed()) return false;
   if (typeof anyCy.container === "function" && !anyCy.container()) return false;
   return true;
+}
+
+/** Match Cytoscape minZoom/maxZoom on project patterns canvas (0.2–3). */
+function clampCyZoomLevel(z: number): number {
+  return Math.min(3, Math.max(0.2, Math.round(z * 100) / 100));
 }
 
 const CY_EXPORT_LABEL_KEYS = [
@@ -361,10 +371,25 @@ type GraphCanvasProps = {
   onResetCanvas?: () => void;
   /** Called when cy is ready; pass a function that returns PNG data URL or null (async ok) */
   onExportImageReady?: (exportPng: () => string | null | Promise<string | null>) => void;
+  /** Project patterns: square viewport-only PNG for the architecture PDF (no header strip). */
+  onExportReportDiagramReady?: (
+    exportPng: () => string | null | Promise<string | null>,
+  ) => void;
   /** Called when cy is ready; parent can call getter to export graph JSON including node x/y from the canvas */
   onExportGraphJsonReady?: (getGraph: () => Graph | null) => void;
   /** When renaming to a name that already exists, called with that name (replaces alert) */
   onDuplicateName?: (name: string) => void;
+  /** Project `/project/.../patterns` with guides on: gray/white action chrome in toolbox + preset modal */
+  projectPatternsGuideChrome?: boolean;
+  /** Set when PatternsView is scoped to a project (not dashboard-only patterns) */
+  projectPatternsPage?: boolean;
+  /** Project patterns: PNG download is viewport canvas only, square-padded (no legend/header strip). */
+  projectPatternsImageExportCanvasOnly?: boolean;
+  /**
+   * Main project Patterns designer (`/project/.../patterns` via PatternsView) only — not compare.
+   * Solid regeneration overlay + hide graph until Cytoscape styles/layout settle (avoids huge default arrows).
+   */
+  patternsDesignerLoadingPolish?: boolean;
 };
 
 function GraphCanvasInner({
@@ -375,6 +400,7 @@ function GraphCanvasInner({
   layoutMode = "default",
   onGenerateGraph,
   onExportImageReady,
+  onExportReportDiagramReady,
   onExportGraphJsonReady,
   onDuplicateName,
   onResetCanvas,
@@ -384,6 +410,10 @@ function GraphCanvasInner({
   onGuidesToggle,
   designerTourWorkspaceNonce = 0,
   designerTourExpandDetailsNonce = 0,
+  projectPatternsGuideChrome = false,
+  projectPatternsPage = false,
+  projectPatternsImageExportCanvasOnly = false,
+  patternsDesignerLoadingPolish = false,
 }: GraphCanvasProps & { data: AnalysisResult }) {
   const analysis = data;
   /** Fullscreen: fill remaining column height so toolbox/details scroll inside instead of clipping. */
@@ -433,7 +463,16 @@ function GraphCanvasInner({
 
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [zoomDisplayPercent, setZoomDisplayPercent] = useState(100);
+  const [zoomFieldDraft, setZoomFieldDraft] = useState("100");
+  const [zoomFieldEditing, setZoomFieldEditing] = useState(false);
+  const zoomEditingRef = useRef(false);
   const setEditedYaml = useAmgApdStore((s) => s.setEditedYaml);
+
+  /** Patterns designer (main page only): hide Cytoscape until reciprocal lanes + edge styles are applied. */
+  const [patternsGraphLayerReady, setPatternsGraphLayerReady] = useState(
+    () => !patternsDesignerLoadingPolish,
+  );
 
   const [stats, setStats] = useState<GraphStats>(() =>
     computeStatsFromData(analysis),
@@ -453,6 +492,98 @@ function GraphCanvasInner({
     setAntiPatternExpandNonce((n) => n + 1);
     setExportYamlExpandNonce((n) => n + 1);
   }, [designerTourExpandDetailsNonce]);
+
+  const syncZoomUiFromCy = useCallback(() => {
+    const c = cyRef.current;
+    if (!cyAlive(c)) return;
+    try {
+      const p = Math.round(c.zoom() * 100);
+      setZoomDisplayPercent(p);
+      if (!zoomEditingRef.current) setZoomFieldDraft(String(p));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const applyZoomAtRendered = useCallback(
+    (level: number, rx: number, ry: number) => {
+      const c = cyRef.current;
+      if (!cyAlive(c)) return;
+      const z = clampCyZoomLevel(level);
+      try {
+        c.zoom({ level: z, renderedPosition: { x: rx, y: ry } });
+      } catch {
+        try {
+          c.zoom(z);
+        } catch {
+          // ignore
+        }
+      }
+      queueMicrotask(syncZoomUiFromCy);
+    },
+    [syncZoomUiFromCy],
+  );
+
+  const patternsZoomStep = useCallback(
+    (dir: -1 | 1) => {
+      const c = cyRef.current;
+      const wrap = containerRef.current;
+      if (!cyAlive(c) || !wrap) return;
+      const r = wrap.getBoundingClientRect();
+      const z = c.zoom();
+      applyZoomAtRendered(z + dir * 0.1, r.width / 2, r.height / 2);
+    },
+    [applyZoomAtRendered],
+  );
+
+  const patternsZoomCommitDraft = useCallback(() => {
+    zoomEditingRef.current = false;
+    const c = cyRef.current;
+    const wrap = containerRef.current;
+    if (!cyAlive(c) || !wrap) return;
+    const digits = zoomFieldDraft.replace(/\D/g, "");
+    const raw = parseInt(digits, 10);
+    const pct = Number.isFinite(raw)
+      ? Math.min(300, Math.max(20, raw))
+      : 100;
+    const r = wrap.getBoundingClientRect();
+    applyZoomAtRendered(pct / 100, r.width / 2, r.height / 2);
+    setZoomFieldEditing(false);
+  }, [zoomFieldDraft, applyZoomAtRendered]);
+
+  useEffect(() => {
+    if (!projectPatternsPage) return;
+    const c = cyRef.current;
+    if (!cyAlive(c)) return;
+    syncZoomUiFromCy();
+    const onVp = () => syncZoomUiFromCy();
+    c.on("zoom pan", onVp);
+    return () => {
+      c.off("zoom pan", onVp);
+    };
+  }, [cy, projectPatternsPage, syncZoomUiFromCy]);
+
+  useEffect(() => {
+    if (!projectPatternsPage) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return;
+      const c = cyRef.current;
+      if (!cyAlive(c)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const z = c.zoom();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const next = clampCyZoomLevel(z + delta);
+      const rect = el.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
+      const ry = e.clientY - rect.top;
+      applyZoomAtRendered(next, rx, ry);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, true);
+  }, [projectPatternsPage, cy, applyZoomAtRendered]);
 
   useEffect(() => {
     if (!antiPresetDropKind) return;
@@ -516,10 +647,22 @@ function GraphCanvasInner({
         cy.style().update();
         cy.resize();
       } catch {}
+
+      if (patternsDesignerLoadingPolish) {
+        setPatternsGraphLayerReady(
+          !isGenerating && !showRegeneratingOverlay,
+        );
+      }
     });
 
     return () => cancelAnimationFrame(id);
-  }, [cy, elements]);
+  }, [
+    cy,
+    elements,
+    patternsDesignerLoadingPolish,
+    isGenerating,
+    showRegeneratingOverlay,
+  ]);
 
   const phaseKey = useMemo(() => {
     const n = Object.keys(analysis.graph?.nodes ?? {}).length;
@@ -655,9 +798,31 @@ function GraphCanvasInner({
     containerRef,
   });
 
+  const analysisGraphIdentity = useMemo(() => {
+    const ids = Object.keys(analysis?.graph?.nodes ?? {}).sort().join("\0");
+    const v = analysis?.version_id ?? "";
+    const d = Array.isArray(analysis?.detections)
+      ? analysis.detections.length
+      : 0;
+    return `${v}\0${ids}\0${d}`;
+  }, [
+    analysis?.version_id,
+    analysis?.graph?.nodes,
+    analysis?.detections,
+  ]);
+
+  useEffect(() => {
+    if (!patternsDesignerLoadingPolish) setPatternsGraphLayerReady(true);
+  }, [patternsDesignerLoadingPolish]);
+
+  useLayoutEffect(() => {
+    if (!patternsDesignerLoadingPolish) return;
+    setPatternsGraphLayerReady(false);
+  }, [patternsDesignerLoadingPolish, analysisGraphIdentity]);
+
   useEffect(() => {
     setLocalAdditions([]);
-  }, [data]);
+  }, [analysisGraphIdentity]);
 
   useCyInteractions({
     cy,
@@ -823,6 +988,21 @@ function GraphCanvasInner({
       const detections = analysis.detections;
 
       return (async (): Promise<string | null> => {
+        if (projectPatternsImageExportCanvasOnly) {
+          try {
+            c.resize();
+            const uri = c.png({
+              bg: "#ffffff",
+              full: false,
+              scale: 2,
+            } as any);
+            const squared = await padDataUrlToSquareWhite(uri);
+            return squared ?? uri;
+          } catch {
+            return null;
+          }
+        }
+
         let graphCanvas: HTMLCanvasElement | null = null;
 
         if (wrap) {
@@ -868,7 +1048,35 @@ function GraphCanvasInner({
         }
       })();
     });
-  }, [cy, onExportImageReady, analysis]);
+  }, [
+    cy,
+    onExportImageReady,
+    analysis,
+    projectPatternsImageExportCanvasOnly,
+  ]);
+
+  useEffect(() => {
+    if (!projectPatternsPage || !onExportReportDiagramReady || !cyAlive(cy))
+      return;
+    onExportReportDiagramReady(() => {
+      const c = cyRef.current;
+      if (!c || !cyAlive(c)) return null;
+      return (async (): Promise<string | null> => {
+        try {
+          c.resize();
+          const uri = c.png({
+            bg: "#ffffff",
+            full: true,
+            scale: 2,
+          } as any);
+          const squared = await padDataUrlToSquareWhite(uri);
+          return squared ?? uri;
+        } catch {
+          return null;
+        }
+      })();
+    });
+  }, [cy, projectPatternsPage, onExportReportDiagramReady]);
 
   useEffect(() => {
     if (!onExportGraphJsonReady) return;
@@ -1015,6 +1223,7 @@ function GraphCanvasInner({
       cy.resize();
       cy.fit(cy.elements(), 40);
     } catch {}
+    if (projectPatternsPage) queueMicrotask(syncZoomUiFromCy);
   }
 
   function handleToggleEdit() {
@@ -1273,6 +1482,57 @@ function GraphCanvasInner({
         "This structure is flagged because it matches a known risky pattern in your architecture model.")
       : "";
 
+  const patternsPageZoomUi = useMemo(
+    () =>
+      projectPatternsPage
+        ? {
+            displayPercent: zoomDisplayPercent,
+            fieldEditing: zoomFieldEditing,
+            fieldDraft: zoomFieldDraft,
+            onMinus: () => patternsZoomStep(-1),
+            onPlus: () => patternsZoomStep(1),
+            onFieldClick: () => {
+              zoomEditingRef.current = true;
+              setZoomFieldEditing(true);
+              setZoomFieldDraft(String(zoomDisplayPercent));
+            },
+            onFieldChange: (v: string) => setZoomFieldDraft(v),
+            onFieldBlur: () => {
+              if (!zoomEditingRef.current) return;
+              patternsZoomCommitDraft();
+            },
+            onFieldKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                patternsZoomCommitDraft();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                zoomEditingRef.current = false;
+                setZoomFieldEditing(false);
+                syncZoomUiFromCy();
+              }
+            },
+          }
+        : undefined,
+    [
+      projectPatternsPage,
+      zoomDisplayPercent,
+      zoomFieldDraft,
+      zoomFieldEditing,
+      patternsZoomStep,
+      patternsZoomCommitDraft,
+      syncZoomUiFromCy,
+    ],
+  );
+
+  const projectPatternsEditDetails =
+    projectPatternsPage && effectiveEditMode;
+
+  const workspaceScrollbarClass = projectPatternsPage
+    ? "scrollbar-patterns-workspace"
+    : "scrollbar-toolbox";
+
   return (
     <>
     <div
@@ -1294,12 +1554,13 @@ function GraphCanvasInner({
         fullscreenButton={fullscreenButton}
         guidesActive={guidesActive}
         onGuidesToggle={onGuidesToggle}
+        patternsPageZoom={patternsPageZoomUi}
       />
 
       <div
         className={`flex flex-1 min-h-0 min-w-0 gap-4 relative overflow-hidden ${layoutMode === "fullscreen" ? "items-stretch" : "items-start"}`}
       >
-        {showRegeneratingOverlay && (
+        {showRegeneratingOverlay && !patternsDesignerLoadingPolish && (
           <div
             className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/35 backdrop-blur-[2px]"
             aria-busy
@@ -1375,6 +1636,10 @@ function GraphCanvasInner({
                   onAntiPatternDragStart={handleAntiPatternDragStart}
                   onToolDragEnd={clearToolDragState}
                   draggingAntiPatternKind={draggingAntiPatternKind}
+                  projectPatternsGuideAntiChrome={
+                    projectPatternsPage && projectPatternsGuideChrome
+                  }
+                  scrollbarClassName={workspaceScrollbarClass}
                 />
               </div>
             </aside>
@@ -1445,8 +1710,44 @@ function GraphCanvasInner({
             aria-hidden
             style={DIAGRAM_CANVAS_GRID_STYLE}
           />
-          <div className="absolute inset-0 z-[1] min-h-0 min-w-0">
+          {patternsDesignerLoadingPolish && showRegeneratingOverlay && (
+            <div
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 border border-slate-800/80 bg-zinc-900/96 backdrop-blur-sm"
+              aria-busy
+              aria-live="polite"
+            >
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-200" />
+              <span className="text-sm font-medium text-zinc-200">
+                Regenerating graph…
+              </span>
+              <span className="text-xs text-zinc-500 px-4 text-center max-w-sm">
+                Loading YAML, building graph, and detecting anti-patterns
+              </span>
+            </div>
+          )}
+          {patternsDesignerLoadingPolish &&
+            !patternsGraphLayerReady &&
+            !showRegeneratingOverlay && (
+              <div
+                className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 border border-slate-800/80 bg-zinc-900/96 backdrop-blur-sm"
+                aria-busy
+                aria-live="polite"
+              >
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-200" />
+                <span className="text-xs font-medium text-zinc-400">
+                  Rendering graph…
+                </span>
+              </div>
+            )}
+          <div
+            className={`absolute inset-0 z-[1] min-h-0 min-w-0 ${
+              patternsDesignerLoadingPolish && !patternsGraphLayerReady
+                ? "opacity-0 pointer-events-none"
+                : ""
+            }`}
+          >
           <CytoscapeComponent
+            key={`amg-cy-${analysis?.version_id ?? "none"}-${phaseKey}`}
             cy={(c) => {
               if (mountedCyRef.current === c) return;
               mountedCyRef.current = c;
@@ -1460,7 +1761,7 @@ function GraphCanvasInner({
             autounselectify={false}
             boxSelectionEnabled={true}
             userPanningEnabled={true}
-            userZoomingEnabled={true}
+            userZoomingEnabled={!projectPatternsPage}
             style={{
               width: "100%",
               height: "100%",
@@ -1615,8 +1916,10 @@ function GraphCanvasInner({
                 </button>
               </div>
               {/* Single scroll surface — matches main diagram Inspector */}
-              <div className="isolate flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1 [scrollbar-gutter:stable] scrollbar-toolbox">
-                {!readOnly && effectiveEditMode && (
+              <div
+                className={`isolate flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1 [scrollbar-gutter:stable] ${workspaceScrollbarClass}`}
+              >
+                {!readOnly && effectiveEditMode && !projectPatternsEditDetails && (
                   <div
                     className="space-y-2 text-xs"
                     data-amg-designer={AMG_DESIGNER.connectionTools}
@@ -1655,6 +1958,7 @@ function GraphCanvasInner({
                           : "Selection"
                     }
                     forceExpandKey={nodeDetailsExpandNonce}
+                    alwaysOpen={projectPatternsEditDetails}
                   >
                     <SelectionDetailsMain
                       data={analysis}
@@ -1664,6 +1968,21 @@ function GraphCanvasInner({
                       onRenameNode={handleRenameNode}
                       onRenameNodeLive={handleRenameNodeLive}
                       onUpdateEdge={handleUpdateEdge}
+                      connectionToolsPack={
+                        projectPatternsEditDetails
+                          ? {
+                              currentTool: tool,
+                              onToolChange: handleToolChange,
+                              defaultCallProtocol,
+                              defaultCallSync,
+                              onDefaultCallChange: (kind, sync) => {
+                                setDefaultCallProtocol(kind);
+                                setDefaultCallSync(sync);
+                              },
+                              defaultsOnly: true,
+                            }
+                          : null
+                      }
                     />
                   </CollapsibleDetailsSection>
                 </div>
@@ -1691,6 +2010,7 @@ function GraphCanvasInner({
                       cy={cy}
                       graphFallback={analysis.graph}
                       graphRev={phaseKey}
+                      scrollbarClassName={workspaceScrollbarClass}
                     />
                   </CollapsibleDetailsSection>
                 </div>
@@ -1701,7 +2021,7 @@ function GraphCanvasInner({
     </div>
     {typeof document !== "undefined" &&
       antiPresetDropKind &&
-      createPortal(
+        createPortal(
         <div
           className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md"
           onClick={(e) => {
@@ -1709,14 +2029,30 @@ function GraphCanvasInner({
           }}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
+            className={
+              projectPatternsGuideChrome
+                ? "w-full max-w-md rounded-2xl border border-white/10 bg-zinc-900/98 shadow-2xl shadow-black/50 ring-1 ring-black/25"
+                : "w-full max-w-md rounded-2xl border border-white/12 bg-slate-950/98 shadow-2xl shadow-black/50 ring-1 ring-white/5"
+            }
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-labelledby="anti-preset-drop-title"
           >
-            <div className="border-b border-white/10 px-5 py-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
+            <div
+              className={
+                projectPatternsGuideChrome
+                  ? "border-b border-white/10 px-5 py-4"
+                  : "border-b border-white/10 px-5 py-4"
+              }
+            >
+              <p
+                className={
+                  projectPatternsGuideChrome
+                    ? "text-[10px] font-semibold uppercase tracking-wider text-gray-400"
+                    : "text-[10px] font-semibold uppercase tracking-wider text-sky-400/90"
+                }
+              >
                 Guides
               </p>
               <h2
@@ -1725,7 +2061,13 @@ function GraphCanvasInner({
               >
                 {antipatternKindLabel(antiPresetDropKind)} sample placed
               </h2>
-              <p className="mt-2 text-[12px] leading-relaxed text-white/65">
+              <p
+                className={
+                  projectPatternsGuideChrome
+                    ? "mt-2 text-[12px] leading-relaxed text-gray-300"
+                    : "mt-2 text-[12px] leading-relaxed text-white/65"
+                }
+              >
                 You dropped a preset subgraph that illustrates this anti-pattern. The analyzer reports it
                 because the shape matches what the detectors look for in real architectures, not because the
                 template is random noise.
@@ -1735,13 +2077,25 @@ function GraphCanvasInner({
               <div className="flex justify-center">
                 <AntiPatternTourDiagram kind={antiPresetDropKind} />
               </div>
-              <p className="mt-3 text-[12px] leading-relaxed text-white/70">{antiPresetExplain}</p>
+              <p
+                className={
+                  projectPatternsGuideChrome
+                    ? "mt-3 text-[12px] leading-relaxed text-gray-300"
+                    : "mt-3 text-[12px] leading-relaxed text-white/70"
+                }
+              >
+                {antiPresetExplain}
+              </p>
             </div>
             <div className="border-t border-white/10 px-5 py-4">
               <button
                 type="button"
                 onClick={() => setAntiPresetDropKind(null)}
-                className="w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+                className={
+                  projectPatternsGuideChrome
+                    ? "w-full rounded-md bg-white py-2.5 text-sm font-semibold text-black shadow-sm transition-colors hover:bg-gray-100"
+                    : "w-full rounded-lg border border-sky-500/40 bg-sky-600/90 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500/95"
+                }
               >
                 Got it
               </button>

@@ -7,7 +7,7 @@ export default function Loading() {
   return (
     <div className="min-h-dvh grid place-items-center bg-linear-to-b from-black/10 to-black">
       <div className="relative animate-pulse-glow">
-        <Image src={logo} alt="GO-SIM Logo" width={50} height={50} />
+        <Image src={logo} alt="ArcFind Logo" width={50} height={50} />
       </div>
 
       <style jsx>{`

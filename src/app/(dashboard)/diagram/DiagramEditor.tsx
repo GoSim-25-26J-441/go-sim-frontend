@@ -340,7 +340,7 @@ function graphKindToCanvasType(kind: string): string {
   switch (k) {
     case "API_GATEWAY":
     case "GATEWAY":
-      return "gateway";
+      return "api_gateway";
     case "DATABASE":
     case "DATASTORE":
       return "db";
@@ -1176,7 +1176,8 @@ export function DiagramEditor({
     const kindToType = (kind: NodeKind): string => {
       if (kind === "database") return "db";
       if (kind === "topic") return "topic";
-      if (kind === "gateway") return "gateway";
+      // Match AMG / YAML canonical vocabulary (see backend mapper.CanonicalServiceTypeForYAML).
+      if (kind === "gateway") return "api_gateway";
       if (kind === "external") return "external";
       if (kind === "client") return "client";
       if (kind === "user") return "user_actor";
@@ -1322,7 +1323,8 @@ export function DiagramEditor({
         const t = (node.type || "service").toLowerCase();
         if (t === "db" || t === "database") kind = "database";
         else if (t === "topic") kind = "topic";
-        else if (t === "gateway") kind = "gateway";
+        else if (t === "gateway" || t === "api_gateway" || t === "api-gateway")
+          kind = "gateway";
         else if (t === "external") kind = "external";
         else if (t === "client") kind = "client";
         else if (t === "user" || t === "user_actor") kind = "user";
@@ -1381,13 +1383,31 @@ export function DiagramEditor({
         }
       });
 
+      // Legacy merged diagram_json can contain duplicate (from→to) pairs and reused edge ids
+      // (e.g. edge-0 twice). Dedupe pairs and force unique ids so the canvas and React stay stable.
+      const seenPairs = new Set<string>();
+      const usedEdgeIds = new Set<string>();
+      let edgeIdSerial = 0;
+      const fixedEdges: DiagramEdge[] = [];
+      for (const e of newEdges) {
+        const pairKey = `${e.fromId}\t${e.toId}`;
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+        let id = e.id;
+        while (usedEdgeIds.has(id)) {
+          id = `edge-${edgeIdSerial++}`;
+        }
+        usedEdgeIds.add(id);
+        fixedEdges.push(id === e.id ? e : { ...e, id });
+      }
+
       setNodes(newNodes);
-      setEdges(newEdges);
+      setEdges(fixedEdges);
       setDiagramLoaded(true);
-      setBaselineSnapshot(newNodes, newEdges);
+      setBaselineSnapshot(newNodes, fixedEdges);
       lastDraftSnapshotRef.current = JSON.stringify({
         nodes: newNodes,
-        edges: newEdges,
+        edges: fixedEdges,
       });
       return;
     }
@@ -2636,6 +2656,8 @@ export function DiagramEditor({
                 const to = nodes.find((n) => n.id === edge.toId);
                 if (!from || !to) return null;
 
+                const edgeReactKey = `${edge.id}-${edgeIndex}`;
+
                 const { x1, y1, x2, y2 } = edgeLineEndpoints(from, to);
                 const midX = (x1 + x2) / 2;
                 const midY = (y1 + y2) / 2;
@@ -2668,7 +2690,7 @@ export function DiagramEditor({
                 ).toFixed(2);
 
                 return (
-                  <g key={edge.id} data-edge>
+                  <g key={edgeReactKey} data-edge>
                     <line
                       x1={x1}
                       y1={y1}

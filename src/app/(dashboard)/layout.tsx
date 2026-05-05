@@ -7,6 +7,7 @@ import { AuthGuard } from "@/components/auth/AuthGuard";
 import { ConnectionMonitor } from "@/components/connection/ConnectionMonitor";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import { DesktopOnlyNotice } from "./DesktopOnlyNotice";
 import { ReduxProvider } from "../store/uidp/ReduxProvider";
 
 function isDiagramFullViewPath(pathname: string | null): boolean {
@@ -38,17 +39,31 @@ export default function DashboardLayout({
           ) : (
             <div className="h-screen overflow-hidden grid grid-rows-[80px_minmax(0,1fr)] bg-linear-to-b from-[#1F1F1F] to-black">
               <Topbar />
-              <div className="min-h-0 overflow-hidden grid md:max-[1919px]:grid-cols-[236px_minmax(0,1fr)] min-[1920px]:grid-cols-[320px_minmax(0,1fr)]">
-                <Sidebar />
-                <main className="relative min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col scrollbar-subtle">
-                  <img
-                    src="/logo/logo.png"
-                    alt="logo"
-                    className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-18 h-18 opacity-10"
-                  />
+              <div className="min-h-0 overflow-hidden grid grid-cols-1 lg:max-[1919px]:grid-cols-[236px_minmax(0,1fr)] min-[1920px]:grid-cols-[320px_minmax(0,1fr)]">
+                {/* Phones & tablets: message only; top bar remains for sign-out. */}
+                <div className="flex h-full min-h-0 flex-col lg:hidden">
+                  <DesktopOnlyNotice />
+                </div>
+                <div className="hidden min-h-0 lg:contents">
+                  <Sidebar />
+                  <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                    {/* Watermark: fixed within the main pane (does not scroll with page content). */}
+                    <div
+                      className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center p-4"
+                      aria-hidden
+                    >
+                      <img
+                        src="/logo/logo.png"
+                        alt=""
+                        className="h-18 w-18 select-none opacity-10"
+                      />
+                    </div>
 
-                  <div className="relative z-10 min-h-full flex flex-col">{children}</div>
-                </main>
+                    <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 scrollbar-subtle">
+                      {children}
+                    </div>
+                  </main>
+                </div>
               </div>
             </div>
           )}

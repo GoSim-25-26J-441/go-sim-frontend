@@ -25,7 +25,7 @@ interface Run {
   project_id?: string;
   run_id?: string;
   requestNumber: number;
-  workload: number;
+  workload: number | null;
   preferred_vcpu: number;
   preferred_memory_gb: number;
   created_at: string;
@@ -43,11 +43,11 @@ interface ApiResponseRow {
   project_id?: string;
   run_id?: string;
   created_at: string;
-  request: {
-    design: {
-      workload: { concurrent_users: number };
-      preferred_vcpu: number;
-      preferred_memory_gb: number;
+  request?: {
+    design?: {
+      workload?: { concurrent_users?: number };
+      preferred_vcpu?: number;
+      preferred_memory_gb?: number;
     };
   };
   best_candidate: any;
@@ -73,14 +73,17 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
         setLoading(true);
         const data = await fetchDesignsList(uid);
         const runList: Run[] = data.rows.map(
-          (row: ApiResponseRow, index: number) => ({
+          (row: ApiResponseRow, index: number) => {
+            const design = row.request?.design;
+            const cu = design?.workload?.concurrent_users;
+            return {
             id: row.id,
             project_id: row.project_id,
             run_id: row.run_id,
             requestNumber: index + 1,
-            workload: row.request.design.workload.concurrent_users,
-            preferred_vcpu: row.request.design.preferred_vcpu,
-            preferred_memory_gb: row.request.design.preferred_memory_gb,
+            workload: typeof cu === "number" && !Number.isNaN(cu) ? cu : null,
+            preferred_vcpu: design?.preferred_vcpu ?? 0,
+            preferred_memory_gb: design?.preferred_memory_gb ?? 0,
             created_at: new Date(row.created_at).toLocaleDateString("en-US", {
               year: "numeric",
               month: "short",
@@ -90,7 +93,8 @@ export default function CostPage({ projectId = PROJECT_ID }: CostPageProps) {
             }),
             best_candidate: row.best_candidate,
             all_candidates: row.response || [],
-          }),
+          };
+          },
         );
 
         setRuns(runList.filter((r) => (r.project_id || "") === projectId));
