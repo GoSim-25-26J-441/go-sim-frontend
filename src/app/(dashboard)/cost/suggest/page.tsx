@@ -12,6 +12,7 @@ import {
 import {
     mapRunCandidatesToSuggest,
     type MappedSuggestionCandidate,
+    restoreSuggestionResponseCandidateSpecs,
 } from '@/lib/simulation/map-run-candidates-to-suggest';
 import {
     resolveCandidateNodes,
@@ -81,6 +82,47 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
+}
+
+function shouldHideConflictingResourceSuggestion(
+    suggestion: string,
+    candidate: Candidate,
+): boolean {
+    const lower = suggestion.toLowerCase();
+    const hasVcpu = lower.includes('vcpu');
+    const hasMemory = lower.includes('memory');
+    if (!hasVcpu && !hasMemory) return false;
+
+    const toMatch = lower.match(/\bto\s+(\d+(?:\.\d+)?)/i);
+    if (!toMatch) return false;
+    const recommended = Number(toMatch[1]);
+    if (!Number.isFinite(recommended)) return false;
+
+    if (hasVcpu) return recommended !== candidate.spec.vcpu;
+    if (hasMemory) return recommended !== candidate.spec.memory_gb;
+    return false;
+}
+
+function sanitizeResourceSuggestions(
+    response: SuggestionResponse,
+): SuggestionResponse {
+    return {
+        ...response,
+        best: response.best
+            ? {
+                ...response.best,
+                suggestions: (response.best.suggestions ?? []).filter(
+                    (s) => !shouldHideConflictingResourceSuggestion(s, response.best.candidate),
+                ),
+            }
+            : response.best,
+        all_scores: (response.all_scores ?? []).map((score) => ({
+            ...score,
+            suggestions: (score.suggestions ?? []).filter(
+                (s) => !shouldHideConflictingResourceSuggestion(s, score.candidate),
+            ),
+        })),
+    };
 }
 
 export default function SuggestPage({ projectId: projectIdProp }: SuggestPageProps = {}) {
@@ -213,8 +255,13 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                         mappedCandidates,
                     )) as SuggestionResponse;
                     if (cancelled) return;
-                    setSuggestionData(data);
-                    setDesign(normalizeDesignFromApi(data.design) ?? fallbackDesign);
+                    const restoredData = restoreSuggestionResponseCandidateSpecs(
+                        data,
+                        mappedCandidates,
+                    );
+                    const sanitizedData = sanitizeResourceSuggestions(restoredData);
+                    setSuggestionData(sanitizedData);
+                    setDesign(normalizeDesignFromApi(sanitizedData.design) ?? fallbackDesign);
                     return;
                 }
 
@@ -281,9 +328,14 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     runIdFromQuery,
                 )) as SuggestionResponse;
                 if (cancelled) return;
-                setSuggestionData(data);
+                const restoredData = restoreSuggestionResponseCandidateSpecs(
+                    data,
+                    decodedCandidates,
+                );
+                const sanitizedData = sanitizeResourceSuggestions(restoredData);
+                setSuggestionData(sanitizedData);
                 setDesign(
-                    normalizeDesignFromApi(data.design) ?? resolvedDesign,
+                    normalizeDesignFromApi(sanitizedData.design) ?? resolvedDesign,
                 );
             } catch (err) {
                 if (cancelled) return;

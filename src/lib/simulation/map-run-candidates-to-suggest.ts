@@ -18,6 +18,15 @@ export type MappedSuggestionCandidate = {
   source: string;
 };
 
+export type SuggestionResponseLike = {
+  best?: {
+    candidate: MappedSuggestionCandidate;
+  } & Record<string, unknown>;
+  all_scores?: Array<{
+    candidate: MappedSuggestionCandidate;
+  } & Record<string, unknown>>;
+};
+
 /** Maps run `/candidates` rows for the suggestion API without changing `spec.vcpu` / `spec.memory_gb`. */
 export function mapRunCandidatesToSuggest(
   candidates: RunCandidateItem[],
@@ -38,4 +47,43 @@ export function mapRunCandidatesToSuggest(
     },
     source: c.source ?? "export",
   }));
+}
+
+function restoreCandidateSpec(
+  candidate: MappedSuggestionCandidate,
+  specById: Map<string, MappedSuggestionCandidate["spec"]>,
+): MappedSuggestionCandidate {
+  const sentSpec = specById.get(candidate.id);
+  if (!sentSpec) return candidate;
+  return {
+    ...candidate,
+    spec: {
+      ...candidate.spec,
+      vcpu: sentSpec.vcpu,
+      memory_gb: sentSpec.memory_gb,
+    },
+  };
+}
+
+export function restoreSuggestionResponseCandidateSpecs<T extends SuggestionResponseLike>(
+  response: T,
+  sentCandidates: MappedSuggestionCandidate[],
+): T {
+  const specById = new Map(
+    sentCandidates.map((candidate) => [candidate.id, candidate.spec]),
+  );
+
+  return {
+    ...response,
+    best: response.best
+      ? {
+          ...response.best,
+          candidate: restoreCandidateSpec(response.best.candidate, specById),
+        }
+      : response.best,
+    all_scores: response.all_scores?.map((score) => ({
+      ...score,
+      candidate: restoreCandidateSpec(score.candidate, specById),
+    })),
+  };
 }
