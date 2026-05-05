@@ -33,7 +33,11 @@ interface StoredRequest {
       preferred_memory_gb: number;
       workload: { concurrent_users: number };
     };
-    simulation: { nodes: number };
+    simulation: {
+      nodes: number;
+      candidate_nodes?: number;
+      requested_nodes?: number;
+    };
   };
   response: Array<{
     candidate: Candidate;
@@ -120,6 +124,9 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
   const { request, response: allScores, best_candidate: best } = data;
   const design = request.design;
   const simulation = request.simulation;
+  const requestedNodesSummary =
+    simulation.requested_nodes ?? simulation.nodes;
+  const candidateNodesSummary = simulation.candidate_nodes;
   const targetUsers = design.workload?.concurrent_users ?? 0;
 
   return (
@@ -168,8 +175,18 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
               <p className="mt-0.5 text-sm font-semibold text-white">{targetUsers} users</p>
             </div>
             <div className="min-w-0 py-3 md:px-4 md:py-2">
-              <p className="text-xs text-white/60">Cluster Nodes</p>
-              <p className="mt-0.5 text-sm font-semibold text-white">{simulation.nodes} nodes</p>
+              <p className="text-xs text-white/60">Requested nodes</p>
+              <p className="mt-0.5 text-sm font-semibold text-white">
+                {requestedNodesSummary} nodes
+              </p>
+              {candidateNodesSummary != null && (
+                <>
+                  <p className="mt-3 text-xs text-white/60">Candidate nodes</p>
+                  <p className="mt-0.5 text-sm font-semibold text-white">
+                    {candidateNodesSummary} nodes
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -200,8 +217,12 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
                     </p>
                   </div>
                   <div className="min-w-0 px-3 py-3 md:py-3">
-                    <p className="text-xs text-white/60">Cluster Size</p>
-                    <p className="mt-0.5 text-sm font-semibold text-white">{simulation.nodes} nodes</p>
+                    <p className="text-xs text-white/60">Final scenario nodes</p>
+                    <p className="mt-0.5 text-sm font-semibold text-white">
+                      {candidateNodesSummary != null
+                        ? `${candidateNodesSummary} nodes`
+                        : "—"}
+                    </p>
                   </div>
                 </div>
               </div>

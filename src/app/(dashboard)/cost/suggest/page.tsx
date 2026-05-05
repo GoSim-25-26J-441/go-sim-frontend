@@ -10,6 +10,11 @@ import {
     resolveClusterNodeCountFromRunCandidates,
     type RunCandidateItem,
 } from '@/app/api/asm/routes';
+import {
+    resolveCandidateNodes,
+    resolveEffectiveCostNodes,
+    resolveRequestedNodes,
+} from '@/lib/simulation/simulation-node-counts';
 import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft, Loader2 } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
@@ -57,6 +62,11 @@ interface DesignRequirements {
 interface SimulationRequirements {
     nodes: number;
 }
+
+type AnalysisRequestSimulation = SimulationRequirements & {
+    candidate_nodes?: number;
+    requested_nodes?: number;
+};
 
 type SuggestPageProps = {
     projectId?: string;
@@ -113,7 +123,10 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [design, setDesign] = useState<DesignRequirements | null>(null);
-    const [simulation, setSimulation] = useState<SimulationRequirements | null>(null);
+    /** Effective cluster size sent to suggest APIs (candidate topology when known, else requested). */
+    const [simulationForApi, setSimulationForApi] = useState<SimulationRequirements | null>(null);
+    const [requestedNodesSummary, setRequestedNodesSummary] = useState<number | null>(null);
+    const [candidateNodesSummary, setCandidateNodesSummary] = useState<number | null>(null);
     const [, setCandidates] = useState<Candidate[]>([]);
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -150,11 +163,28 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                     console.log('[cost/suggest] fetchRunCandidates:result', runData);
                     if (cancelled) return;
 
-                    const clusterNodes = resolveClusterNodeCountFromRunCandidates(runData);
-                    const initialNodes = clusterNodes > 0 ? clusterNodes : 1;
+                    let storedAnalysis: Awaited<ReturnType<typeof fetchDesignByProjectRun>> | null =
+                        null;
+                    try {
+                        storedAnalysis = await fetchDesignByProjectRun(
+                            firebaseUid,
+                            resolvedProjectId,
+                            runIdFromQuery,
+                        );
+                    } catch {
+                        storedAnalysis = null;
+                    }
+                    const analysisReq = storedAnalysis?.request as
+                        | { simulation?: AnalysisRequestSimulation }
+                        | undefined;
+
+                    const divisorBase =
+                        resolveEffectiveCostNodes(runData, analysisReq) ??
+                        Math.max(1, resolveClusterNodeCountFromRunCandidates(runData));
+
                     let mappedCandidates = mapRunCandidatesToSuggest(
                         runData.candidates ?? [],
-                        initialNodes,
+                        divisorBase,
                     );
                     let emptyPolls = 0;
                     while (
@@ -171,11 +201,12 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             candidateCount: (runData.candidates ?? []).length,
                         });
                         if (cancelled) return;
-                        const polledNodes = resolveClusterNodeCountFromRunCandidates(runData);
-                        const divisor = polledNodes > 0 ? polledNodes : initialNodes;
+                        const polledDivisor =
+                            resolveEffectiveCostNodes(runData, analysisReq) ??
+                            Math.max(1, resolveClusterNodeCountFromRunCandidates(runData));
                         mappedCandidates = mapRunCandidatesToSuggest(
                             runData.candidates ?? [],
-                            divisor,
+                            polledDivisor,
                         );
                         emptyPolls += 1;
                     }
@@ -187,19 +218,28 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             'No candidates were found for this run after waiting. Try again once the simulation has finished exporting candidates.',
                         );
                         setDesign(null);
-                        setSimulation({
-                            nodes:
-                                resolveClusterNodeCountFromRunCandidates(runData) ||
-                                initialNodes,
-                        });
+                        const requested = resolveRequestedNodes(runData, analysisReq);
+                        const candidate = resolveCandidateNodes(runData, analysisReq);
+                        const effectiveFallback =
+                            resolveEffectiveCostNodes(runData, analysisReq) ??
+                            Math.max(1, resolveClusterNodeCountFromRunCandidates(runData));
+                        setRequestedNodesSummary(requested ?? null);
+                        setCandidateNodesSummary(candidate ?? null);
+                        setSimulationForApi({ nodes: Math.max(1, effectiveFallback) });
                         setSuggestionData(null);
                         return;
                     }
 
                     setCandidates(mappedCandidates);
-                    const resolvedNodes = resolveClusterNodeCountFromRunCandidates(runData);
-                    const sim = { nodes: resolvedNodes > 0 ? resolvedNodes : initialNodes };
-                    setSimulation(sim);
+                    const requested = resolveRequestedNodes(runData, analysisReq);
+                    const candidate = resolveCandidateNodes(runData, analysisReq);
+                    const effective =
+                        resolveEffectiveCostNodes(runData, analysisReq) ??
+                        Math.max(1, resolveClusterNodeCountFromRunCandidates(runData));
+                    setRequestedNodesSummary(requested ?? null);
+                    setCandidateNodesSummary(candidate ?? null);
+                    const sim = { nodes: Math.max(1, effective) };
+                    setSimulationForApi(sim);
                     const fallbackDesign: DesignRequirements = {
                         preferred_vcpu: mappedCandidates[0]?.spec.vcpu ?? 0,
                         preferred_memory_gb: mappedCandidates[0]?.spec.memory_gb ?? 0,
@@ -226,7 +266,9 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 if (!runIdFromQuery || !candidatesParam) {
                     if (cancelled) return;
                     setDesign(null);
-                    setSimulation(null);
+                    setSimulationForApi(null);
+                    setRequestedNodesSummary(null);
+                    setCandidateNodesSummary(null);
                     setSuggestionData(null);
                     setError(
                         'Open this page from a simulation run, or provide both run ID and candidates in the URL.',
@@ -239,38 +281,40 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 ) as Candidate[];
                 setCandidates(decodedCandidates);
 
-                const stored = await fetchDesignByProjectRun(
-                    firebaseUid,
-                    resolvedProjectId,
-                    runIdFromQuery,
-                );
+                const [stored, runCandResult] = await Promise.all([
+                    fetchDesignByProjectRun(
+                        firebaseUid,
+                        resolvedProjectId,
+                        runIdFromQuery,
+                    ),
+                    fetchRunCandidates(runIdFromQuery).catch(() => null),
+                ]);
                 if (cancelled) return;
 
                 const storedRequest = stored.request as {
                     design: DesignRequirements;
-                    simulation?: SimulationRequirements;
+                    simulation?: AnalysisRequestSimulation;
                 };
 
                 const resolvedDesign = storedRequest.design;
-                let runSimulationFromCandidates: SimulationRequirements | null =
-                    null;
-                try {
-                    const runCand = await fetchRunCandidates(
-                        runIdFromQuery,
-                    );
-                    const n = resolveClusterNodeCountFromRunCandidates(runCand);
-                    if (n > 0) {
-                        runSimulationFromCandidates = { nodes: n };
-                    }
-                } catch {
-                }
-                const resolvedSimulation =
-                    runSimulationFromCandidates ??
-                    storedRequest.simulation ??
-                    { nodes: 0 };
+
+                const requested = resolveRequestedNodes(runCandResult, storedRequest);
+                const candidate = resolveCandidateNodes(runCandResult, storedRequest);
+                const effective =
+                    resolveEffectiveCostNodes(runCandResult, storedRequest) ??
+                    (runCandResult != null
+                        ? Math.max(1, resolveClusterNodeCountFromRunCandidates(runCandResult))
+                        : undefined) ??
+                    Math.max(1, storedRequest.simulation?.nodes ?? 1);
+
+                setRequestedNodesSummary(requested ?? null);
+                setCandidateNodesSummary(candidate ?? null);
+                const resolvedSimulation: SimulationRequirements = {
+                    nodes: Math.max(1, effective),
+                };
+                setSimulationForApi(resolvedSimulation);
 
                 setDesign(resolvedDesign);
-                setSimulation(resolvedSimulation);
 
                 const data = (await fetchSuggestions(
                     firebaseUid,
@@ -290,7 +334,9 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 console.error('Error fetching suggestions:', err);
                 setError(err instanceof Error ? err.message : 'An error occurred');
                 setDesign(null);
-                setSimulation(null);
+                setSimulationForApi(null);
+                setRequestedNodesSummary(null);
+                setCandidateNodesSummary(null);
                 setSuggestionData(null);
             } finally {
                 if (!cancelled) {
@@ -374,7 +420,7 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                 )}
 
                 {/* Requirements Summary */}
-                {design && simulation && (
+                {design && simulationForApi && (
                     <div className="space-y-3">
                         <h2 className="text-sm font-semibold text-white">Design Requirements</h2>
                         <div className="grid grid-cols-1 divide-y divide-white/40 md:grid-cols-5 md:divide-x md:divide-y-0">
@@ -401,15 +447,27 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                 <p className="mt-0.5 text-sm font-semibold text-white">{design.workload.concurrent_users} users</p>
                             </div>
                             <div className="min-w-0 py-3 md:px-4 md:py-2">
-                                <p className="text-xs text-white/60">Cluster Nodes</p>
-                                <p className="mt-0.5 text-sm font-semibold text-white">{simulation.nodes} nodes</p>
+                                <p className="text-xs text-white/60">Requested nodes</p>
+                                <p className="mt-0.5 text-sm font-semibold text-white">
+                                    {requestedNodesSummary != null
+                                        ? `${requestedNodesSummary} nodes`
+                                        : "—"}
+                                </p>
+                                {candidateNodesSummary != null && (
+                                    <>
+                                        <p className="mt-3 text-xs text-white/60">Candidate nodes</p>
+                                        <p className="mt-0.5 text-sm font-semibold text-white">
+                                            {candidateNodesSummary} nodes
+                                        </p>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>
                 )}
 
                 {/* Results Display */}
-                {suggestionData && design && simulation && (
+                {suggestionData && design && simulationForApi && (
                     <div className="space-y-5">
                         {/* Best Candidate */}
                         <div className="space-y-4 border-t border-white/40 pt-5">
@@ -439,9 +497,11 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                 </p>
                                             </div>
                                             <div className="min-w-0 px-3 py-3 md:py-3">
-                                                <p className="text-xs text-white/60">Cluster Size</p>
+                                                <p className="text-xs text-white/60">Final scenario nodes</p>
                                                 <p className="mt-0.5 text-sm font-semibold text-white">
-                                                    {simulation.nodes} nodes
+                                                    {candidateNodesSummary != null
+                                                        ? `${candidateNodesSummary} nodes`
+                                                        : "—"}
                                                 </p>
                                             </div>
                                         </div>

@@ -27,6 +27,8 @@ export interface DesignPayload {
 
 export interface SimulationPayload {
   nodes: number;
+  candidate_nodes?: number;
+  requested_nodes?: number;
 }
 
 export interface SaveDesignRequest {

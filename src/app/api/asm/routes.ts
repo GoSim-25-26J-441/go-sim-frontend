@@ -1,4 +1,5 @@
 import { authenticatedFetch } from "@/lib/api-client/http";
+import { resolveCandidateNodes } from "@/lib/simulation/simulation-node-counts";
 
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE;
 
@@ -313,7 +314,8 @@ export interface RunCandidatesResponse {
   candidates: RunCandidateItem[];
   project_id: string;
   run_id: string;
-  simulation?: { nodes: number };
+  /** Candidate/evaluated topology cluster size (`nodes`) plus optional original requirement echo (`requested_nodes`). */
+  simulation?: { nodes: number; requested_nodes?: number };
   user_id: string;
 }
 
@@ -338,13 +340,7 @@ export interface RunCandidateItem {
 export function resolveClusterNodeCountFromRunCandidates(
   runData: RunCandidatesResponse,
 ): number {
-  const meta = runData.simulation?.nodes ?? 0;
-  if (meta > 0) return meta;
-  for (const c of runData.candidates ?? []) {
-    const hosts = c.spec?.hosts;
-    if (Array.isArray(hosts) && hosts.length > 0) return hosts.length;
-  }
-  return 0;
+  return resolveCandidateNodes(runData, undefined) ?? 0;
 }
 
 // Fetch candidates for a simulation run (uses auth for 401 avoidance)

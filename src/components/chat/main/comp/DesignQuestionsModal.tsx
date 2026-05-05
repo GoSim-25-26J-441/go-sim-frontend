@@ -15,6 +15,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { DesignByProjectRunResponse, Question } from "@/app/store/designApi";
+import { resolveRequestedNodes } from "@/lib/simulation/simulation-node-counts";
 import {
   useGetRequirementsQuestionsQuery,
   useSaveDesignMutation,
@@ -235,7 +236,7 @@ export default function DesignQuestionsModal({
       initialDesign,
     );
     const rawNodes =
-      designByRunData?.request?.simulation?.nodes ??
+      resolveRequestedNodes(undefined, designByRunData?.request) ??
       initialSimulation?.nodes ??
       undefined;
     const normalizedNodes =
@@ -253,21 +254,22 @@ export default function DesignQuestionsModal({
       prev === normalizedNodes ? prev : normalizedNodes,
     );
 
-    const simulationFromRequest = designByRunData?.request?.simulation;
+    const requestedNodesFromSaved = resolveRequestedNodes(
+      undefined,
+      designByRunData?.request,
+    );
     const mergedDesign = design ?? {};
     const shouldNotify =
       Object.keys(mergedDesign).length > 0 ||
-      (typeof simulationFromRequest?.nodes === "number" &&
-        simulationFromRequest.nodes >= 1);
+      (requestedNodesFromSaved != null && requestedNodesFromSaved >= 1);
 
     const deferNotifyPendingFetch = Boolean(userId && projectId && designLoading);
 
     const notifyPayload = {
       design: mergedDesign,
       simulation:
-        typeof simulationFromRequest?.nodes === "number" &&
-        simulationFromRequest.nodes >= 1
-          ? { nodes: Math.floor(simulationFromRequest.nodes) }
+        requestedNodesFromSaved != null && requestedNodesFromSaved >= 1
+          ? { nodes: requestedNodesFromSaved }
           : undefined,
     };
 
@@ -629,7 +631,7 @@ export default function DesignQuestionsModal({
                       hostFieldFilled ? "text-white/30" : "text-white"
                     }`}
                   >
-                    Host count
+                    Requested nodes
                   </label>
                   {hostFieldFilled && (
                     <span
@@ -645,7 +647,7 @@ export default function DesignQuestionsModal({
                   )}
                 </div>
                 <p className="pb-2 text-xs text-white/60">
-                  Number of hosts or cluster nodes to model (integer, minimum 1).
+                  Original cluster size requirement for modeling (integer, minimum 1).
                 </p>
                 <div className="relative flex items-center pb-3">
                   <div className="relative flex items-center w-full">
