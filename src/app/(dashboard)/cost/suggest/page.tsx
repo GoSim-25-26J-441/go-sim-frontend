@@ -8,8 +8,11 @@ import {
     fetchRunCandidates,
     fetchSuggestionsFromRun,
     resolveClusterNodeCountFromRunCandidates,
-    type RunCandidateItem,
 } from '@/app/api/asm/routes';
+import {
+    mapRunCandidatesToSuggest,
+    type MappedSuggestionCandidate,
+} from '@/lib/simulation/map-run-candidates-to-suggest';
 import {
     resolveCandidateNodes,
     resolveEffectiveCostNodes,
@@ -18,22 +21,7 @@ import {
 import { Cpu, MemoryStick, AlertCircle, ChevronDown, ArrowLeft, Loader2 } from 'lucide-react';
 import { useAuth } from "@/providers/auth-context";
 
-interface Candidate {
-    id: string;
-    spec: {
-        vcpu: number;
-        memory_gb: number;
-        label: string;
-    };
-    metrics: {
-        cpu_util_pct: number;
-        mem_util_pct: number;
-    };
-    sim_workload: {
-        concurrent_users: number;
-    };
-    source: string;
-}
+type Candidate = MappedSuggestionCandidate;
 
 interface SuggestionResponse {
     best: {
@@ -95,31 +83,6 @@ function delay(ms: number): Promise<void> {
     });
 }
 
-function mapRunCandidatesToSuggest(
-    candidates: RunCandidateItem[],
-    nodeCount: number,
-): Candidate[] {
-    const normalizedNodes = nodeCount > 0 ? nodeCount : 1;
-    return candidates.map((c) => {
-        const rawVcpu = c.spec.vcpu / normalizedNodes;
-        return {
-            id: c.id,
-            spec: {
-                vcpu: Math.max(0, rawVcpu === 5 ? 5 : Math.floor(rawVcpu)),
-                memory_gb: c.spec.memory_gb / normalizedNodes,
-                label: c.spec.label ?? c.id,
-            },
-            metrics: {
-                cpu_util_pct: c.metrics.cpu_util_pct,
-                mem_util_pct: c.metrics.mem_util_pct,
-            },
-            sim_workload: {
-                concurrent_users: c.sim_workload?.concurrent_users ?? 0,
-            },
-            source: c.source ?? 'export',
-        };
-    });
-}
 export default function SuggestPage({ projectId: projectIdProp }: SuggestPageProps = {}) {
     const [loading, setLoading] = useState(false);
     const [suggestionData, setSuggestionData] = useState<SuggestionResponse | null>(null);
@@ -180,13 +143,8 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                         | { simulation?: AnalysisRequestSimulation }
                         | undefined;
 
-                    const divisorBase =
-                        resolveEffectiveCostNodes(runData, analysisReq) ??
-                        Math.max(1, resolveClusterNodeCountFromRunCandidates(runData));
-
                     let mappedCandidates = mapRunCandidatesToSuggest(
                         runData.candidates ?? [],
-                        divisorBase,
                     );
                     let emptyPolls = 0;
                     while (
@@ -203,12 +161,8 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                             candidateCount: (runData.candidates ?? []).length,
                         });
                         if (cancelled) return;
-                        const polledDivisor =
-                            resolveEffectiveCostNodes(runData, analysisReq) ??
-                            Math.max(1, resolveClusterNodeCountFromRunCandidates(runData));
                         mappedCandidates = mapRunCandidatesToSuggest(
                             runData.candidates ?? [],
-                            polledDivisor,
                         );
                         emptyPolls += 1;
                     }
