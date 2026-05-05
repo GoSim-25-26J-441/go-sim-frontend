@@ -495,7 +495,9 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                             <div className="min-w-0 px-3 py-3 md:py-3">
                                                 <p className="text-xs text-white/60">Specification</p>
                                                 <p className="mt-0.5 text-sm font-semibold text-white">
-                                                    {suggestionData.best.candidate.spec.vcpu} vCPU / {suggestionData.best.candidate.spec.memory_gb} GB
+                                                    {requestedNodesSummary != null && requestedNodesSummary > 0
+                                                        ? `${(suggestionData.best.candidate.spec.vcpu / requestedNodesSummary).toFixed(2)} vCPU / ${(suggestionData.best.candidate.spec.memory_gb / requestedNodesSummary).toFixed(2)} GB per node`
+                                                        : "N/A (requested nodes must be > 0)"}
                                                 </p>
                                             </div>
                                             <div className="min-w-0 px-3 py-3 md:py-3">
@@ -661,13 +663,17 @@ export default function SuggestPage({ projectId: projectIdProp }: SuggestPagePro
                                                     <div className="flex items-center gap-1.5">
                                                         <Cpu className="h-3.5 w-3.5 shrink-0 text-white/50" />
                                                         <p className="text-white/80">
-                                                            {score.candidate.spec.vcpu} vCPU
+                                                            {requestedNodesSummary != null && requestedNodesSummary > 0
+                                                                ? `${(score.candidate.spec.vcpu / requestedNodesSummary).toFixed(2)} vCPU/node`
+                                                                : "N/A"}
                                                         </p>
                                                     </div>
                                                     <div className="mt-0.5 flex items-center gap-1.5">
                                                         <MemoryStick className="h-3.5 w-3.5 shrink-0 text-white/50" />
                                                         <p className="text-[11px] text-white/45">
-                                                            {score.candidate.spec.memory_gb} GB RAM
+                                                            {requestedNodesSummary != null && requestedNodesSummary > 0
+                                                                ? `${(score.candidate.spec.memory_gb / requestedNodesSummary).toFixed(2)} GB RAM/node`
+                                                                : "N/A"}
                                                         </p>
                                                     </div>
                                                 </td>

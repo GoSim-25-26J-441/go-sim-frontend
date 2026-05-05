@@ -210,9 +210,7 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
                   </div>
                   <div className="min-w-0 px-3 py-3 md:py-3">
                     <p className="text-xs text-white/60">Specification</p>
-                    <p className="mt-0.5 text-sm font-semibold text-white">
-                      {best.candidate.spec.vcpu} vCPU / {best.candidate.spec.memory_gb} GB
-                    </p>
+                    ({best.candidate.spec.vcpu} / {requestedNodesSummary}) vCPU / ({best.candidate.spec.memory_gb} / {requestedNodesSummary}) GB
                   </div>
                   <div className="min-w-0 px-3 py-3 md:py-3">
                     <p className="text-xs text-white/60">Workload Performance</p>
@@ -457,11 +455,10 @@ export function ViewMetricsAnalysisContent({ id, projectId }: ViewMetricsAnalysi
                         const isSurplus = diff >= 0;
                         return (
                           <span
-                            className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                              isSurplus
+                            className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${isSurplus
                                 ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                                 : "border-red-500/30 bg-red-500/10 text-red-300"
-                            }`}
+                              }`}
                           >
                             {isSurplus ? "Surplus" : "Shortfall"}: {isSurplus ? "+" : ""}{diff} users
                           </span>
