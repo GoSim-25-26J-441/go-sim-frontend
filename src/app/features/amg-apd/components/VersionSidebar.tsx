@@ -38,7 +38,7 @@ export default function VersionSidebar({
   guidesActive?: boolean;
   /** Project patterns: invoked when user clicks Compare (before navigation). */
   onCompareNavigate?: () => void;
-  onVersionGraphApplied?: () => void;
+  onVersionGraphApplied?: (versionId?: string) => void;
 } = {}) {
   const { userId } = useAuth();
   const headers = () =>
@@ -168,7 +168,7 @@ export default function VersionSidebar({
       setLast(data);
       setEditedYaml(typeof yamlContent === "string" ? yamlContent : "");
       commitGraphBaseline();
-      onVersionGraphApplied?.();
+      onVersionGraphApplied?.(v?.id);
       showToast("Switched to version successfully", "success");
     } catch (e: any) {
       showToast(
